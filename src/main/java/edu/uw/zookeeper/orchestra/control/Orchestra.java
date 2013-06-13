@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.CreateMode;
@@ -183,8 +184,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 return get().toString();
             }
 
-            @ZNode(label="backend", type=EnsembleView.class)
+            @ZNode(type=EnsembleView.class)
             public static class Backend extends Control.TypedValueZNode<EnsembleView<ServerInetAddressView>> {
+
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("backend");
                 
                 public static Entity.Backend get(Ensembles.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Backend.class, entity, materializer);
@@ -203,9 +207,12 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
             }
             
-            @ZNode(label="conductors")
+            @ZNode
             public static class Conductors extends Control.ControlZNode {
 
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("conductors");
+                
                 public static Entity.Conductors of(Ensembles.Entity parent) {
                     return new Conductors(parent);
                 }
@@ -239,15 +246,52 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
             }
             
-            @ZNode(label="leader", type=Identifier.class, createMode=CreateMode.EPHEMERAL)
+            @ZNode(type=Identifier.class, createMode=CreateMode.EPHEMERAL)
             public static class Leader extends Control.TypedValueZNode<Identifier> {
 
-                public static Entity.Leader get(Ensembles.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
-                    return get(Entity.Leader.class, entity, materializer);
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("leader");
+                
+                public static Entity.Leader get(Ensembles.Entity parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return get(Entity.Leader.class, parent, materializer);
                 }
                 
-                public static Entity.Leader create(Identifier value, Ensembles.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
-                    return create(Entity.Leader.class, value, entity, materializer);
+                public static Entity.Leader create(Identifier value, Ensembles.Entity parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return create(Entity.Leader.class, value, parent, materializer);
+                }
+                
+                public static class Proposer implements Callable<Entity.Leader> {
+
+                    protected final Identifier value;
+                    protected final Ensembles.Entity parent;
+                    protected final Materializer materializer;
+                    
+                    public Proposer(Identifier value, Ensembles.Entity parent, Materializer materializer) {
+                        this.value = value;
+                        this.parent = parent;
+                        this.materializer = materializer;
+                    }
+                    
+                    @Override
+                    public Leader call() throws InterruptedException, ExecutionException, KeeperException {
+                        Materializer.Operator operator = materializer.operator();
+                        Entity.Leader instance = of(value, parent);
+                        Entity.Leader leader = null;
+                        while (leader == null) {
+                            operator.create(instance.path(), instance.get()).submit();
+                            operator.sync(instance.path()).submit();
+                            Operation.SessionResult result = operator.getData(instance.path(), true).submit().get();
+                            Operation.Reply reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, result.toString());
+                            if (reply instanceof Operation.Response) {
+                                Materializer.MaterializedNode node = materializer.get(instance.path());
+                                if (node != null) {
+                                    leader = Entity.Leader.of((Identifier) node.get().get(), parent);
+                                }
+                            }
+                        }
+                        return leader;
+                    }
+                    
                 }
                 
                 public static Entity.Leader of(Identifier value, Ensembles.Entity parent) {
@@ -312,8 +356,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 return get().toString();
             }
             
-            @ZNode(label="volume", type=VolumeDescriptor.class)
+            @ZNode(type=VolumeDescriptor.class)
             public static class Volume extends Control.TypedValueZNode<VolumeDescriptor> {
+
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("volume");
                 
                 public static Entity.Volume get(Volumes.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Volume.class, entity, materializer);
@@ -332,9 +379,12 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
             }
 
-            @ZNode(label="ensemble", type=Identifier.class)
+            @ZNode(type=Identifier.class)
             public static class Ensemble extends Control.TypedValueZNode<Identifier> {
 
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("ensemble");
+                
                 public static Entity.Ensemble get(Volumes.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Ensemble.class, entity, materializer);
                 }

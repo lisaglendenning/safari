@@ -19,7 +19,7 @@ public enum MainApplicationModule implements ParameterizedFactory<RuntimeModule,
     public Application get(RuntimeModule runtime) {
         NettyModule netModule = NettyModule.newInstance(runtime);
         AbstractMain.monitors(runtime.serviceMonitor()).apply(
-                Bootstrap.newInstance(runtime, 
+                Conductor.newInstance(runtime, 
                         netModule.clientConnectionFactory(),
                         netModule.serverConnectionFactory()));
         return ServiceApplication.newInstance(runtime.serviceMonitor());

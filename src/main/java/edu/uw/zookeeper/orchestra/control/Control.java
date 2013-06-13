@@ -46,8 +46,6 @@ public abstract class Control {
         return ControlZNode.path(element);
     }
 
-    public static final String ADDRESS_PATTERN = "[^:]+:\\d+";
-    
     public static enum SchemaHolder implements Reference<Schema> {
         INSTANCE(Schema.of(Schema.ZNodeSchema.getDefault()));
         
@@ -112,13 +110,17 @@ public abstract class Control {
         protected ControlZNode(Object parent) {
             this.parent = (parent == null) ? getClass().getEnclosingClass() : parent;
         }
+        
+        public Object parent() {
+            return parent;
+        }
 
         public ZNodeLabel.Component label() {
             return path(getClass()).tail();
         }
 
         public ZNodeLabel.Path path() {
-            return ZNodeLabel.Path.of(path(parent), label());
+            return ZNodeLabel.Path.of(path(parent()), label());
         }
 
         @Override
@@ -251,7 +253,7 @@ public abstract class Control {
             this.predicate = predicate;
             
             task().register(this);
-            task().operator().sync(root).submit().get();
+            task().operator().sync(root).submit();
             new Updater(root);
         }
 

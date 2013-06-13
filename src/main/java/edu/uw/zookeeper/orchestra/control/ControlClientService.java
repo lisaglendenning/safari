@@ -28,7 +28,6 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.util.Arguments;
 import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.DefaultsFactory;
-import edu.uw.zookeeper.util.Publisher;
 
 public class ControlClientService extends ClientProtocolExecutorService {
 
@@ -40,7 +39,7 @@ public class ControlClientService extends ClientProtocolExecutorService {
                 clientModule.xids(), 
                 controlView, 
                 clientModule.timeOut());
-        return new ControlClientService(controlFactory, runtime.publisherFactory().get());
+        return new ControlClientService(controlFactory);
     }
     
     public static enum ControlEnsembleViewFactory implements DefaultsFactory<Configuration, EnsembleRoleView<InetSocketAddress, ServerInetAddressView>> {
@@ -86,17 +85,13 @@ public class ControlClientService extends ClientProtocolExecutorService {
     }
     
     protected final EnsembleViewFactory view;
-    protected final Materializer materializer;
+    protected volatile Materializer materializer;
 
     protected ControlClientService(
-            EnsembleViewFactory view, Publisher publisher) {
+            EnsembleViewFactory view) {
         super(view);
         this.view = view;
-        this.materializer = Materializer.newInstance(
-                Control.getSchema(),
-                Control.getByteCodec(),
-                publisher, 
-                this);
+        this.materializer = null;
     }
     
     public Materializer materializer() {
@@ -106,11 +101,17 @@ public class ControlClientService extends ClientProtocolExecutorService {
     public EnsembleViewFactory view() {
         return view;
     }
-    
+
     @Override
     protected void startUp() throws Exception {
         super.startUp();
 
+        this.materializer = Materializer.newInstance(
+                Control.getSchema(),
+                Control.getByteCodec(),
+                get(), 
+                this);
+        
         createPrefix();
     }
 
