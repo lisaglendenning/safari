@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra;
 
-import edu.uw.zookeeper.AbstractMain;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.AssignXidProcessor;
 import edu.uw.zookeeper.client.ClientApplicationModule;
@@ -15,12 +14,12 @@ import edu.uw.zookeeper.util.Factory;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.TimeValue;
 
-public class ClientModule {
+public class ClientConnectionsModule {
     
-    public static ClientModule newInstance(
+    public static ClientConnectionsModule newInstance(
             RuntimeModule runtime, 
             ParameterizedFactory<CodecFactory<Message.ClientSessionMessage, Message.ServerSessionMessage, PingingClientCodecConnection>, Factory<ChannelClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection>>> clientConnectionFactory) {
-        return new ClientModule(runtime, clientConnectionFactory);
+        return new ClientConnectionsModule(runtime, clientConnectionFactory);
     }
     
     protected final ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections;
@@ -28,7 +27,7 @@ public class ClientModule {
     protected final Connection.CodecFactory<Message.ClientSessionMessage, Message.ServerSessionMessage, PingingClientCodecConnection> codecFactory;
     protected final AssignXidProcessor xids;
     
-    public ClientModule(
+    public ClientConnectionsModule(
             RuntimeModule runtime, 
             ParameterizedFactory<CodecFactory<Message.ClientSessionMessage, Message.ServerSessionMessage, PingingClientCodecConnection>, Factory<ChannelClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection>>> clientConnectionFactory) {
         // Common framework for ZooKeeper client connections
@@ -37,7 +36,7 @@ public class ClientModule {
                 PingingClientCodecConnection.factory(
                         timeOut, runtime.executors().asScheduledExecutorServiceFactory().get()));
         this.xids = AssignXidProcessor.newInstance();
-        this.clientConnections = AbstractMain.monitors(runtime.serviceMonitor()).apply(clientConnectionFactory.get(codecFactory).get());
+        this.clientConnections = clientConnectionFactory.get(codecFactory).get();
     }
     
     public ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections() {

@@ -1,9 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
-import java.net.SocketAddress;
-import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.AbstractIdleService;
-import edu.uw.zookeeper.AbstractMain;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
@@ -11,65 +8,41 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
-import edu.uw.zookeeper.net.Connection;
-import edu.uw.zookeeper.net.Connection.CodecFactory;
-import edu.uw.zookeeper.netty.ChannelClientConnectionFactory;
-import edu.uw.zookeeper.netty.ChannelServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
-import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.client.PingingClientCodecConnection;
-import edu.uw.zookeeper.protocol.server.ServerCodecConnection;
-import edu.uw.zookeeper.util.Factories;
-import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.Publisher;
 
 public class Conductor extends AbstractIdleService implements Publisher {
 
     public static Conductor newInstance(
-            final RuntimeModule runtime,
-            final ParameterizedFactory<CodecFactory<Message.ClientSessionMessage, Message.ServerSessionMessage, PingingClientCodecConnection>, Factory<ChannelClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection>>> clientConnectionFactory,
-            final ParameterizedFactory<Connection.CodecFactory<Message.ServerMessage, Message.ClientMessage, ServerCodecConnection>, ParameterizedFactory<SocketAddress, ChannelServerConnectionFactory<Message.ServerMessage, ServerCodecConnection>>> serverConnectionFactory) {
-        final ClientModule clientModule = ClientModule.newInstance(runtime, clientConnectionFactory);
-        final ControlClientService controlClient = AbstractMain.monitors(runtime.serviceMonitor()).apply(
-                ControlClientService.newInstance(runtime, clientModule));
-        Factories.LazyHolder<BackendService> backend = Factories.synchronizedLazyFrom(new Factory<BackendService>() {
-            @Override
-            public BackendService get() {
-                BackendService backend;
-                try {
-                    backend = AbstractMain.monitors(runtime.serviceMonitor()).apply(
-                            BackendService.newInstance(runtime, clientModule));
-                } catch (Exception e) {
-                    throw Throwables.propagate(e);
-                }
-                backend.startAndWait();
-                return backend;
-            }
-        });
-        FrontendService frontend = FrontendService.newInstance(runtime, serverConnectionFactory);
-        return new Conductor(runtime, controlClient, frontend, backend);
+            RuntimeModule runtime,
+            ClientConnectionsModule clientModule,
+            ServerConnectionsModule serverModule) {
+        ControlClientService controlClient = 
+                ControlClientService.newInstance(runtime, clientModule);
+        ClientService clientService = ClientService.newInstance(runtime, clientModule, serverModule);
+        Conductor conductor = new Conductor(runtime, controlClient, clientService);
+        runtime.serviceMonitor().add(controlClient);
+        runtime.serviceMonitor().add(conductor);
+        runtime.serviceMonitor().add(clientService);
+        return conductor;
     }
     
     protected final RuntimeModule runtime;
     protected final Publisher publisher;
     protected final ControlClientService controlClient;
-    protected final FrontendService frontend;
-    protected final Factories.LazyHolder<BackendService> backend;
     protected final WatchPromiseTrie watches;
+    protected final ClientService clientService;
     protected volatile EnsembleMember member;
 
     public Conductor(
             RuntimeModule runtime,
-            ControlClientService controlClient, 
-            FrontendService frontend,
-            Factories.LazyHolder<BackendService> backend) {
+            ControlClientService controlClient,
+            ClientService clientService) {
         this.runtime = runtime;
         this.controlClient = controlClient;
-        this.backend = backend;
-        this.frontend = frontend;
+        this.clientService = clientService;
         this.publisher = runtime.publisherFactory().get();
         this.watches = WatchPromiseTrie.newInstance();
         this.member = null;
@@ -83,14 +56,6 @@ public class Conductor extends AbstractIdleService implements Publisher {
         return controlClient;
     }
     
-    public FrontendService frontend() {
-        return frontend;
-    }
-    
-    public BackendService backend() {
-        return backend.get();
-    }
-    
     public WatchPromiseTrie watches() {
         return watches;
     }
@@ -101,14 +66,16 @@ public class Conductor extends AbstractIdleService implements Publisher {
     
     @Override
     protected void startUp() throws Exception {
+        clientService.backend().startAndWait();
+        BackendView backendView = clientService.backend().view();
+        
         this.register(watches);
         WatchEventPublisher.newInstance(this, controlClient());
         
         Materializer materializer = controlClient().materializer();
         Materializer.Operator operator = materializer.operator();
 
-        ServerInetAddressView myAddress = frontend().address();
-        BackendView backendView = backend().view();
+        ServerInetAddressView myAddress = clientService.frontend().address();
 
         // Create my entity
         Orchestra.Conductors.Entity myEntity = Orchestra.Conductors.Entity.create(myAddress, materializer);
@@ -131,11 +98,7 @@ public class Conductor extends AbstractIdleService implements Publisher {
         // Start ensemble member
         this.member = new EnsembleMember(this, myEntity.get(), myEnsemble.get());
         runtime().serviceMonitor().add(member);
-        member.startAndWait();
-        
-        // TODO: server (?)
-        runtime().serviceMonitor().add(frontend());
-        frontend().startAndWait();
+        member.start().get();
     }
 
     @Override

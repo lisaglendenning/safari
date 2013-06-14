@@ -1,7 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
 
-import edu.uw.zookeeper.AbstractMain;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.util.Application;
@@ -18,10 +17,9 @@ public enum MainApplicationModule implements ParameterizedFactory<RuntimeModule,
     @Override
     public Application get(RuntimeModule runtime) {
         NettyModule netModule = NettyModule.newInstance(runtime);
-        AbstractMain.monitors(runtime.serviceMonitor()).apply(
-                Conductor.newInstance(runtime, 
-                        netModule.clientConnectionFactory(),
-                        netModule.serverConnectionFactory()));
+        ClientConnectionsModule clientModule = ClientConnectionsModule.newInstance(runtime, netModule.clientConnectionFactory());
+        ServerConnectionsModule serverModule = ServerConnectionsModule.newInstance(runtime, netModule.serverConnectionFactory());
+        Conductor.newInstance(runtime, clientModule, serverModule);
         return ServiceApplication.newInstance(runtime.serviceMonitor());
     }
 }

@@ -23,8 +23,11 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Schema;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
-import edu.uw.zookeeper.orchestra.ClientModule;
+import edu.uw.zookeeper.net.ClientConnectionFactory;
+import edu.uw.zookeeper.orchestra.ClientConnectionsModule;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.client.PingingClientCodecConnection;
 import edu.uw.zookeeper.util.Arguments;
 import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.DefaultsFactory;
@@ -32,10 +35,13 @@ import edu.uw.zookeeper.util.DefaultsFactory;
 public class ControlClientService extends ClientProtocolExecutorService {
 
     public static ControlClientService newInstance(
-            RuntimeModule runtime, ClientModule clientModule) {
+            RuntimeModule runtime, ClientConnectionsModule clientModule) {
+        ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections = clientModule.clientConnections();
+        runtime.serviceMonitor().add(clientConnections);
+
         EnsembleRoleView<InetSocketAddress, ServerInetAddressView> controlView  = ControlEnsembleViewFactory.getInstance().get(runtime.configuration());
         EnsembleViewFactory controlFactory = EnsembleViewFactory.newInstance(
-                clientModule.clientConnections(),
+                clientConnections,
                 clientModule.xids(), 
                 controlView, 
                 clientModule.timeOut());
