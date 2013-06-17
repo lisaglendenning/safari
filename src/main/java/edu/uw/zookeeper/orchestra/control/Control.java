@@ -26,8 +26,8 @@ import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.ZNodeSchema.Builder.ZNodeTraversal;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.Records.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
+import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
 import edu.uw.zookeeper.util.Reference;
@@ -189,7 +189,7 @@ public abstract class Control {
         public static <T, C extends TypedValueZNode<T>> C create(Class<C> cls, T value, Object parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
             C instance = newInstance(cls, value, parent);
             Operation.SessionResult result = materializer.operator().create(instance.path(), instance.get()).submit().get();
-            Operation.Reply reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+            Operation.Response reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
             if (reply instanceof Operation.Error) {
                 return get(cls, parent, materializer);
             } else {
@@ -260,7 +260,7 @@ public abstract class Control {
         @Subscribe
         public void handleReply(Operation.SessionReply message) {
             if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
-                WatchEvent event = WatchEvent.of((IWatcherEvent) ((Operation.RecordHolder<?>)message.reply()).asRecord());
+                WatchEvent event = WatchEvent.of((IWatcherEvent) message.reply());
                 if (root.prefixOf(event.path())) {
                     new Updater(event.path());
                 }

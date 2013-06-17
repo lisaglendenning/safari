@@ -141,7 +141,7 @@ public class ControlClientService extends ClientProtocolExecutorService {
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
             Operation.SessionResult result = operator.exists(node.path()).submit().get();
-            Operation.Reply reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, result.toString());
+            Operation.Response reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, result.toString());
             if (reply instanceof Operation.Error) {
                 result = operator.create(node.path()).submit().get();
                 reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());

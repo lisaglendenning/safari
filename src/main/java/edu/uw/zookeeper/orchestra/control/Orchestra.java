@@ -281,8 +281,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                             operator.create(instance.path(), instance.get()).submit();
                             operator.sync(instance.path()).submit();
                             Operation.SessionResult result = operator.getData(instance.path(), true).submit().get();
-                            Operation.Reply reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, result.toString());
-                            if (reply instanceof Operation.Response) {
+                            Operation.Response reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, result.toString());
+                            if (! (reply instanceof Operation.Error)) {
                                 Materializer.MaterializedNode node = materializer.get(instance.path());
                                 if (node != null) {
                                     leader = Entity.Leader.of((Identifier) node.get().get(), parent);

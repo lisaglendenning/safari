@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.module.SimpleDeserializers;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.module.SimpleSerializers;
 import com.fasterxml.jackson.databind.ser.std.StdScalarSerializer;
+import com.fasterxml.jackson.module.mrbean.MrBeanModule;
 import com.google.common.collect.ImmutableMap;
 
 import edu.uw.zookeeper.EnsembleRoleView;
@@ -117,6 +118,7 @@ public class JacksonModule extends SimpleModule {
         private ObjectMapperHolder(ObjectMapper instance) {
             this.instance = instance;
             instance.registerModule(Holder.INSTANCE.get());
+            instance.registerModule(new MrBeanModule());
         }
         
         @Override
