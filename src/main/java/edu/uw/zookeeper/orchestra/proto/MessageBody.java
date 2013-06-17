@@ -2,6 +2,8 @@ package edu.uw.zookeeper.orchestra.proto;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
+import java.util.Arrays;
+
 import com.google.common.collect.BiMap;
 import com.google.common.collect.EnumHashBiMap;
 import com.google.common.collect.Maps;
@@ -14,7 +16,7 @@ public abstract class MessageBody {
 
     public static Class<? extends MessageBody> register(Class<? extends MessageBody> cls) {
         MessageBodyType annotation = cls.getAnnotation(MessageBodyType.class);
-        checkArgument(annotation != null);
+        checkArgument(annotation != null, cls);
         return types.put(annotation.type(), cls);
     }
     

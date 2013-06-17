@@ -14,14 +14,16 @@ import edu.uw.zookeeper.protocol.Codec;
 public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
 
     public static MessagePacketCodec newInstance(ObjectMapper mapper) {
-        return new MessagePacketCodec(mapper);
-    }
-    
-    static {
+
         for (Class<? extends MessageBody> cls: ImmutableList.of(
                 HandshakeMessage.class, SessionMessage.class)) {
             MessageBody.register(cls);
         }
+        
+        return new MessagePacketCodec(mapper);
+    }
+    
+    static {
     }
     
     protected final ObjectMapper mapper;
