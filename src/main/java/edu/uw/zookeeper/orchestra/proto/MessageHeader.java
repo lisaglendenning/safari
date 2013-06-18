@@ -1,12 +1,19 @@
 package edu.uw.zookeeper.orchestra.proto;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import io.netty.buffer.ByteBuf;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import java.io.IOException;
+
 import com.google.common.base.Objects;
 
-public class MessageHeader {
+import edu.uw.zookeeper.protocol.Encodable;
+
+public class MessageHeader implements Encodable {
+
+    public static MessageHeader decode(ByteBuf input) {
+        return MessageHeader.of(MessageType.valueOf(input.readInt()));
+    }
     
     public static MessageHeader of(MessageType type) {
         return new MessageHeader(type);
@@ -14,18 +21,17 @@ public class MessageHeader {
     
     private final MessageType type;
     
-    @JsonCreator
-    public MessageHeader(@JsonProperty("type") MessageType type) {
+    public MessageHeader(MessageType type) {
         this.type = checkNotNull(type);
     }
     
-    public MessageType getType() {
+    public MessageType type() {
         return type;
     }
 
     @Override
     public String toString() {
-        return getType().toString();
+        return type().toString();
     }
 
     @Override
@@ -37,11 +43,16 @@ public class MessageHeader {
             return false;
         }
         MessageHeader other = (MessageHeader) obj;
-        return Objects.equal(getType(), other.getType());
+        return Objects.equal(type(), other.type());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(getType());
+        return Objects.hashCode(type());
+    }
+
+    @Override
+    public void encode(ByteBuf output) throws IOException {
+        output.writeInt(type().intValue());
     }
 }

@@ -22,9 +22,11 @@ public class Conductor extends AbstractIdleService implements Publisher {
         ControlClientService controlClient = 
                 ControlClientService.newInstance(runtime, clientModule);
         ClientService clientService = ClientService.newInstance(runtime, clientModule, serverModule);
-        Conductor conductor = new Conductor(runtime, controlClient, clientService);
+        ConductorConnections conductorConnections = ConductorConnections.newInstance(runtime, clientModule, serverModule);
+        Conductor conductor = new Conductor(runtime, controlClient, clientService, conductorConnections);
         runtime.serviceMonitor().add(controlClient);
         runtime.serviceMonitor().add(conductor);
+        runtime.serviceMonitor().add(conductorConnections);
         runtime.serviceMonitor().add(clientService);
         return conductor;
     }
@@ -34,15 +36,18 @@ public class Conductor extends AbstractIdleService implements Publisher {
     protected final ControlClientService controlClient;
     protected final WatchPromiseTrie watches;
     protected final ClientService clientService;
+    protected final ConductorConnections conductorConnections;
     protected volatile EnsembleMember member;
 
     public Conductor(
             RuntimeModule runtime,
             ControlClientService controlClient,
-            ClientService clientService) {
+            ClientService clientService,
+            ConductorConnections conductorConnections) {
         this.runtime = runtime;
         this.controlClient = controlClient;
         this.clientService = clientService;
+        this.conductorConnections = conductorConnections;
         this.publisher = runtime.publisherFactory().get();
         this.watches = WatchPromiseTrie.newInstance();
         this.member = null;
@@ -66,37 +71,46 @@ public class Conductor extends AbstractIdleService implements Publisher {
     
     @Override
     protected void startUp() throws Exception {
-        clientService.backend().startAndWait();
+        clientService.backend().start().get();
         BackendView backendView = clientService.backend().view();
         
         this.register(watches);
         WatchEventPublisher.newInstance(this, controlClient());
         
         Materializer materializer = controlClient().materializer();
-        Materializer.Operator operator = materializer.operator();
 
-        ServerInetAddressView myAddress = clientService.frontend().address();
+        ServerInetAddressView clientAddress = clientService.frontend().address();
+        ServerInetAddressView conductorAddress = conductorConnections.address();
 
         // Create my entity
-        Orchestra.Conductors.Entity myEntity = Orchestra.Conductors.Entity.create(myAddress, materializer);
+        Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.create(conductorAddress, materializer);
         
         // Register presence
-        Orchestra.Conductors.Entity.Presence entityPresence = Orchestra.Conductors.Entity.Presence.of(myEntity);
-        Operation.SessionResult result = operator.create(entityPresence.path()).submit().get();
+        Orchestra.Conductors.Entity.Presence presenceNode = Orchestra.Conductors.Entity.Presence.of(entityNode);
+        Operation.SessionResult result = materializer.operator().create(presenceNode.path()).submit().get();
         Operations.unlessError(result.reply().reply(), result.toString());
         
         // Register backend
-        Orchestra.Conductors.Entity.Backend entityBackend = Orchestra.Conductors.Entity.Backend.create(backendView, myEntity, materializer);
-        if (! backendView.equals(entityBackend.get())) {
-            throw new IllegalStateException(entityBackend.get().toString());
+        Orchestra.Conductors.Entity.Backend backendNode = Orchestra.Conductors.Entity.Backend.create(backendView, entityNode, materializer);
+        if (! backendView.equals(backendNode.get())) {
+            throw new IllegalStateException(backendNode.get().toString());
         }
+        
+        // Register client address
+        Orchestra.Conductors.Entity.ClientAddress clientAddressNode = Orchestra.Conductors.Entity.ClientAddress.create(clientAddress, entityNode, materializer);
+        if (! clientAddress.equals(clientAddressNode.get())) {
+            throw new IllegalStateException(clientAddressNode.get().toString());
+        }
+        
+        // Start listening
+        conductorConnections.start().get();
         
         // Find my ensemble
         EnsembleView<ServerInetAddressView> myView = backendView.getEnsemble();
-        Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.create(myView, materializer);
+        Orchestra.Ensembles.Entity ensembleNode = Orchestra.Ensembles.Entity.create(myView, materializer);
         
         // Start ensemble member
-        this.member = new EnsembleMember(this, myEntity.get(), myEnsemble.get());
+        this.member = new EnsembleMember(this, entityNode.get(), ensembleNode.get());
         runtime().serviceMonitor().add(member);
         member.start().get();
     }

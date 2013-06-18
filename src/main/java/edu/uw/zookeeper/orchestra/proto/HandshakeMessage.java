@@ -36,7 +36,7 @@ public class HandshakeMessage extends MessageBody {
         if (this == obj) {
             return true;
         }
-        if (! (obj instanceof MessageHeader)) {
+        if (! (obj instanceof HandshakeMessage)) {
             return false;
         }
         HandshakeMessage other = (HandshakeMessage) obj;

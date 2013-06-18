@@ -43,7 +43,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                     Operation.SessionResult result = operator.create(entity.path()).submit().get();
                     Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
                     
-                    Orchestra.Conductors.Entity.Address address = Orchestra.Conductors.Entity.Address.create(value, entity, materializer);
+                    Orchestra.Conductors.Entity.ConductorAddress address = Orchestra.Conductors.Entity.ConductorAddress.create(value, entity, materializer);
                     if (! value.equals(address.get())) {
                         entity = null;
                         hashed = hashed.rehash();
@@ -86,26 +86,50 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
             }
             
-            @ZNode(label="address", type=ServerInetAddressView.class)
-            public static class Address extends Control.TypedValueZNode<ServerInetAddressView> {
+            @ZNode(label="clientAddress", type=ServerInetAddressView.class)
+            public static class ClientAddress extends Control.TypedValueZNode<ServerInetAddressView> {
                 
-                public static Entity.Address get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
-                    return get(Entity.Address.class, entity, materializer);
+                public static ClientAddress get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return get(ClientAddress.class, entity, materializer);
                 }
                 
-                public static Entity.Address create(ServerInetAddressView value, Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
-                    return create(Entity.Address.class, value, entity, materializer);
+                public static ClientAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return create(ClientAddress.class, value, entity, materializer);
                 }
                 
-                public static Entity.Address valueOf(String label, Conductors.Entity parent) {
+                public static ClientAddress valueOf(String label, Conductors.Entity parent) {
                     return of(ServerInetAddressView.fromString(label), parent);
                 }
                 
-                public static Entity.Address of(ServerInetAddressView address, Conductors.Entity parent) {
-                    return new Address(address, parent);
+                public static ClientAddress of(ServerInetAddressView address, Conductors.Entity parent) {
+                    return new ClientAddress(address, parent);
                 }
                 
-                public Address(ServerInetAddressView address, Conductors.Entity parent) {
+                public ClientAddress(ServerInetAddressView address, Conductors.Entity parent) {
+                    super(address, parent);
+                }
+            }
+            
+            @ZNode(label="conductorAddress", type=ServerInetAddressView.class)
+            public static class ConductorAddress extends Control.TypedValueZNode<ServerInetAddressView> {
+                
+                public static ConductorAddress get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return get(ConductorAddress.class, entity, materializer);
+                }
+                
+                public static ConductorAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return create(ConductorAddress.class, value, entity, materializer);
+                }
+                
+                public static ConductorAddress valueOf(String label, Conductors.Entity parent) {
+                    return of(ServerInetAddressView.fromString(label), parent);
+                }
+                
+                public static ConductorAddress of(ServerInetAddressView address, Conductors.Entity parent) {
+                    return new ConductorAddress(address, parent);
+                }
+                
+                public ConductorAddress(ServerInetAddressView address, Conductors.Entity parent) {
                     super(address, parent);
                 }
             }
@@ -134,7 +158,6 @@ public abstract class Orchestra extends Control.ControlZNode {
 
     @ZNode(label="ensembles")
     public static abstract class Ensembles extends Control.ControlZNode {
-        
         
         @ZNode
         public static class Entity extends Control.TypedLabelZNode<Identifier> {

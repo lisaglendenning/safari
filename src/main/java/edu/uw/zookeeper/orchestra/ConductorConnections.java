@@ -9,24 +9,25 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.server.ServerCodecConnection;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 
-public class EnsembleConnections extends AbstractIdleService {
+public class ConductorConnections extends AbstractIdleService {
 
-    public static EnsembleConnections newInstance(
+    public static ConductorConnections newInstance(
             RuntimeModule runtime,
             ClientConnectionsModule clientConnectionsModule,
             ServerConnectionsModule serverConnectionsModule) {
         ServerInetAddressView clientAddress = 
-                ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance().get(runtime.configuration());
+                ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
+                        "conductorAddress", "ConductorAddress", "", "", 2281).get(runtime.configuration());
         ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections = 
                 serverConnectionsModule.serverConnections().get(clientAddress.get());
-        return new EnsembleConnections(runtime, clientAddress, serverConnections);
+        return new ConductorConnections(runtime, clientAddress, serverConnections);
     }
     
     protected final RuntimeModule runtime;
     protected final ServerInetAddressView address;
     protected final ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections;
     
-    protected EnsembleConnections(
+    protected ConductorConnections(
             RuntimeModule runtime,
             ServerInetAddressView address,
             ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections) {

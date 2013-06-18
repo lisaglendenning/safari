@@ -59,7 +59,7 @@ public class ControlClientService extends ClientProtocolExecutorService {
         public static final String CONFIG_KEY = "Control";
 
         public static final String DEFAULT_ADDRESS = "localhost";
-        public static final int DEFAULT_PORT = 2182;
+        public static final int DEFAULT_PORT = 2381;
         
         public static final String CONFIG_PATH = "";
         
@@ -91,13 +91,17 @@ public class ControlClientService extends ClientProtocolExecutorService {
     }
     
     protected final EnsembleViewFactory view;
-    protected volatile Materializer materializer;
+    protected final Materializer materializer;
 
     protected ControlClientService(
             EnsembleViewFactory view) {
         super(view);
         this.view = view;
-        this.materializer = null;
+        this.materializer = Materializer.newInstance(
+                        Control.getSchema(),
+                        Control.getByteCodec(),
+                        this, 
+                        this);
     }
     
     public Materializer materializer() {
@@ -112,12 +116,6 @@ public class ControlClientService extends ClientProtocolExecutorService {
     protected void startUp() throws Exception {
         super.startUp();
 
-        this.materializer = Materializer.newInstance(
-                Control.getSchema(),
-                Control.getByteCodec(),
-                get(), 
-                this);
-        
         createPrefix();
     }
 
