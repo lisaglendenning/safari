@@ -33,21 +33,32 @@ import edu.uw.zookeeper.util.Automatons;
 
 public class EnsembleMember extends AbstractIdleService {
 
-    protected final Conductor conductor;
+    public static EnsembleMember newInstance(ServiceManager manager) throws InterruptedException, ExecutionException, KeeperException {
+        Identifier myId = manager.conductor().view().id();
+        Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(EnsembleConfiguration.get(manager));
+        Orchestra.Ensembles.Entity.Conductors.Member myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(myId, 
+                Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));
+        return new EnsembleMember(manager, myMember, myEnsemble);
+    }
+    
+    protected final ServiceManager manager;
     protected final Orchestra.Ensembles.Entity.Conductors.Member myMember;
     protected final Orchestra.Ensembles.Entity myEnsemble;
     protected final RoleOverseer role;
     
-    public EnsembleMember(Conductor conductor, Identifier myId, Identifier ensembleId) {
-        this.conductor = conductor;
-        this.myEnsemble = Orchestra.Ensembles.Entity.of(ensembleId);
-        this.myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(myId, Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));
+    public EnsembleMember(
+            ServiceManager manager, 
+            Orchestra.Ensembles.Entity.Conductors.Member myMember, 
+            Orchestra.Ensembles.Entity myEnsemble) {
+        this.manager = manager;
+        this.myEnsemble = myEnsemble;
+        this.myMember = myMember;
         this.role = new RoleOverseer();
     }
     
     @Override
     protected void startUp() throws Exception {        
-        Materializer materializer = conductor.controlClient().materializer();
+        Materializer materializer = manager.controlClient().materializer();
         Materializer.Operator operator = materializer.operator();
 
         // Register my identifier
@@ -122,15 +133,11 @@ public class EnsembleMember extends AbstractIdleService {
             }
         };
         Control.FetchUntil.newInstance(Control.path(Orchestra.Volumes.class), allAssigned, materializer, MoreExecutors.sameThreadExecutor()).get();
-
     }
 
     @Override
     protected void shutDown() throws Exception {
-        // TODO Auto-generated method stub
-        
     }
-    
 
     protected class RoleOverseer implements FutureCallback<WatchEvent> {
     
@@ -142,12 +149,12 @@ public class EnsembleMember extends AbstractIdleService {
         public RoleOverseer() {
             this.leaderPath = ZNodeLabel.Path.of(myEnsemble.path(), Orchestra.Ensembles.Entity.Leader.LABEL);
             this.myRole = Automatons.createSynchronizedEventful(
-                    conductor, Automatons.createSimple(EnsembleRole.LOOKING));
+                    manager.controlClient(), Automatons.createSimple(EnsembleRole.LOOKING));
             this.leader = StampedReference.Updater.newInstance(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(0L, null));
-            this.proposer = new Orchestra.Ensembles.Entity.Leader.Proposer(myMember.get(), myEnsemble, conductor.controlClient().materializer());
+            this.proposer = new Orchestra.Ensembles.Entity.Leader.Proposer(myMember.get(), myEnsemble, manager.controlClient().materializer());
             
             myRole.register(this);
-            conductor.controlClient().materializer().register(this);
+            manager.controlClient().materializer().register(this);
             subscribeLeaderWatch();
         }
         
@@ -163,11 +170,11 @@ public class EnsembleMember extends AbstractIdleService {
                 case NodeCreated:
                 case NodeDataChanged:
                     subscribeLeaderWatch();
-                    conductor.controlClient().materializer().operator().getData(leaderPath, true).submit();
+                    manager.controlClient().materializer().operator().getData(leaderPath, true).submit();
                     break;
                 case NodeDeleted:
                     subscribeLeaderWatch();
-                    conductor.controlClient().materializer().operator().exists(leaderPath, true).submit();
+                    manager.controlClient().materializer().operator().exists(leaderPath, true).submit();
                     break;
                 case NodeChildrenChanged:
                     throw new AssertionError();
@@ -185,7 +192,7 @@ public class EnsembleMember extends AbstractIdleService {
         @Subscribe
         public void handleViewUpdate(ZNodeResponseCache.ViewUpdate event) {
             if (leaderPath.equals(event.path())) {
-                Materializer.MaterializedNode node = conductor.controlClient().materializer().get(leaderPath);
+                Materializer.MaterializedNode node = manager.controlClient().materializer().get(leaderPath);
                 Orchestra.Ensembles.Entity.Leader value = (node != null) ? (Orchestra.Ensembles.Entity.Leader) node.get().get() : null;
                 setLeader(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(event.updatedValue().stamp(), value));
             }
@@ -231,7 +238,7 @@ public class EnsembleMember extends AbstractIdleService {
         }
 
         protected void subscribeLeaderWatch() {
-            Futures.addCallback(conductor.watches().subscribe(leaderPath, EnumSet.allOf(Watcher.Event.EventType.class)), this);
+            Futures.addCallback(manager.controlClient().watches().subscribe(leaderPath, EnumSet.allOf(Watcher.Event.EventType.class)), this);
         }
     }
 }

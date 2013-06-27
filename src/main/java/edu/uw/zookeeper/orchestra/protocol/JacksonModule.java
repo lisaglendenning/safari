@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.control;
+package edu.uw.zookeeper.orchestra.protocol;
 
 import java.io.IOException;
 import java.util.Properties;

@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.proto;
+package edu.uw.zookeeper.orchestra.protocol;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import io.netty.buffer.ByteBuf;

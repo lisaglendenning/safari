@@ -25,6 +25,7 @@ import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.ZNodeSchema.Builder.ZNodeTraversal;
+import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;

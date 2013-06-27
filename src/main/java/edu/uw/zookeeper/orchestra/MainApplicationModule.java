@@ -16,10 +16,7 @@ public enum MainApplicationModule implements ParameterizedFactory<RuntimeModule,
 
     @Override
     public Application get(RuntimeModule runtime) {
-        NettyModule netModule = NettyModule.newInstance(runtime);
-        ClientConnectionsModule clientModule = ClientConnectionsModule.newInstance(runtime, netModule.clients());
-        ServerConnectionsModule serverModule = ServerConnectionsModule.newInstance(runtime, netModule.servers());
-        Conductor.newInstance(runtime, clientModule, serverModule);
+        ServiceManager.newInstance(runtime, NettyModule.newInstance(runtime));
         return ServiceApplication.newInstance(runtime.serviceMonitor());
     }
 }

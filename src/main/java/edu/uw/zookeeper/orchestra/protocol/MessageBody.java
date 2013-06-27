@@ -1,8 +1,6 @@
-package edu.uw.zookeeper.orchestra.proto;
+package edu.uw.zookeeper.orchestra.protocol;
 
 import static com.google.common.base.Preconditions.checkArgument;
-
-import java.util.Arrays;
 
 import com.google.common.collect.BiMap;
 import com.google.common.collect.EnumHashBiMap;
