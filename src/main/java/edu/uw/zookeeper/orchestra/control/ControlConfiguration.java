@@ -13,13 +13,19 @@ import edu.uw.zookeeper.ServerRoleView;
 import edu.uw.zookeeper.util.Arguments;
 import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.DefaultsFactory;
+import edu.uw.zookeeper.util.Factories;
 
-public abstract class ControlConfiguration {
+public class ControlConfiguration extends Factories.Holder<EnsembleRoleView<InetSocketAddress, ServerInetAddressView>> {
     
-    public static EnsembleRoleView<InetSocketAddress, ServerInetAddressView> get(RuntimeModule runtime) {
-        return factory().get(runtime.configuration());
+    public static ControlConfiguration fromRuntime(RuntimeModule runtime) {
+        return new ControlConfiguration(factory().get(runtime.configuration()));
     }
     
+    public ControlConfiguration(
+            EnsembleRoleView<InetSocketAddress, ServerInetAddressView> instance) {
+        super(instance);
+    }
+
     public static ControlEnsembleViewFactory factory() {
         return ControlEnsembleViewFactory.getInstance();
     }

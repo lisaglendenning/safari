@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra.control;
 
-import java.net.InetSocketAddress;
 import java.util.Iterator;
 import java.util.concurrent.ExecutionException;
 
@@ -9,10 +8,12 @@ import org.apache.zookeeper.KeeperException;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.AbstractIdleService;
-import edu.uw.zookeeper.EnsembleRoleView;
+import com.google.inject.AbstractModule;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
-import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerView;
 import edu.uw.zookeeper.client.AssignXidProcessor;
 import edu.uw.zookeeper.client.ClientApplicationModule;
@@ -36,14 +37,54 @@ import edu.uw.zookeeper.util.TimeValue;
 
 public class ControlClientService extends ClientProtocolExecutorService {
 
-    public static ControlClientService newInstance(
-            RuntimeModule runtime, 
-            NettyClientModule clientModule) {
-        ConnectionFactory factory = ConnectionFactory.newInstance(runtime, clientModule);
-        runtime.serviceMonitor().addOnStart(factory);
-        return new ControlClientService(factory);
+    public static Module module() {
+        return new Module();
     }
     
+    public static class Module extends AbstractModule {
+
+        public Module() {}
+        
+        @Override
+        protected void configure() {
+        }
+
+        @Provides @Singleton
+        public ControlConfiguration getControlConfiguration(RuntimeModule runtime) {
+            return ControlConfiguration.fromRuntime(runtime);
+        }
+
+        @Provides @Singleton
+        public ConnectionFactory getConnectionFactory(
+                ControlConfiguration configuration,
+                RuntimeModule runtime, 
+                NettyClientModule clientModule) {
+            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance("Control").get(runtime.configuration());
+            AssignXidProcessor xids = AssignXidProcessor.newInstance();
+            ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections = clientModule.get(
+                    PingingClientCodecConnection.codecFactory(), 
+                    PingingClientCodecConnection.factory(timeOut, runtime.executors().asScheduledExecutorServiceFactory().get())).get();
+            runtime.serviceMonitor().addOnStart(clientConnections);
+            EnsembleViewFactory factory = EnsembleViewFactory.newInstance(
+                    clientConnections,
+                    xids, 
+                    configuration.get(), 
+                    timeOut);
+            ConnectionFactory instance = new ConnectionFactory(clientConnections, factory);
+            runtime.serviceMonitor().addOnStart(instance);
+            return instance;
+        }
+
+        @Provides @Singleton
+        public ControlClientService getControlClientService(
+                ConnectionFactory factory,
+                RuntimeModule runtime) {
+            ControlClientService instance = new ControlClientService(factory);
+            runtime.serviceMonitor().addOnStart(instance);
+            return instance;
+        }
+    }
+
     public static void createPrefix(Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
         // The prefix is small enough that there's no need to get fancy here
         final Predicate<Schema.SchemaNode> isPrefix = new Predicate<Schema.SchemaNode>() {
@@ -115,26 +156,8 @@ public class ControlClientService extends ClientProtocolExecutorService {
         createPrefix(materializer());
     }
 
-    public static class ConnectionFactory extends AbstractIdleService implements Factory<ClientProtocolExecutor> {
-        
-        public static ConnectionFactory newInstance(
-                RuntimeModule runtime, 
-                NettyClientModule clientModule) {
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance("Control").get(runtime.configuration());
-            AssignXidProcessor xids = AssignXidProcessor.newInstance();
-            ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections = clientModule.get(
-                    PingingClientCodecConnection.codecFactory(), 
-                    PingingClientCodecConnection.factory(timeOut, runtime.executors().asScheduledExecutorServiceFactory().get())).get();
-            runtime.serviceMonitor().addOnStart(clientConnections);
-            EnsembleRoleView<InetSocketAddress, ServerInetAddressView> view  = ControlConfiguration.get(runtime);
-            EnsembleViewFactory factory = EnsembleViewFactory.newInstance(
-                    clientConnections,
-                    xids, 
-                    view, 
-                    timeOut);
-            return new ConnectionFactory(clientConnections, factory);
-        }
-        
+    protected static class ConnectionFactory extends AbstractIdleService implements Factory<ClientProtocolExecutor> {
+
         protected final ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections;
         protected final EnsembleViewFactory factory;
         

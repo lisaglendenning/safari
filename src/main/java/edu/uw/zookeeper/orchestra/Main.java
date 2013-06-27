@@ -12,6 +12,6 @@ public class Main extends AbstractMain {
     }
 
     public Main(Configuration configuration) {
-        super(configuration, MainApplicationModule.getInstance());
+        super(configuration, MainApplicationModule.main());
     }
 }

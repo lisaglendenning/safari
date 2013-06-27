@@ -5,11 +5,17 @@ import java.util.concurrent.ExecutionException;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.util.concurrent.AbstractIdleService;
+import com.google.inject.AbstractModule;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
+import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.server.ServerCodecConnection;
 import edu.uw.zookeeper.server.AssignZxidProcessor;
@@ -22,35 +28,59 @@ import edu.uw.zookeeper.server.SessionParametersPolicy;
 
 public class FrontendServerService extends AbstractIdleService {
 
-    public static FrontendServerService newInstance(ServiceManager manager) {
-        ServerInetAddressView clientAddress = FrontendConfiguration.get(manager.runtime());
-        ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections = 
-                manager.netModule().servers().get(
-                        ServerCodecConnection.codecFactory(),
-                        ServerCodecConnection.factory()).get(clientAddress.get());
-        manager.runtime().serviceMonitor().addOnStart(serverConnections);
-
-        SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(manager.runtime().configuration());
-        ExpiringSessionManager sessions = ExpiringSessionManager.newInstance(manager.runtime().publisherFactory().get(), policy);
-        ExpireSessionsTask expires = ExpireSessionsTask.newInstance(sessions, manager.runtime().executors().asScheduledExecutorServiceFactory().get(), manager.runtime().configuration());
-        AssignZxidProcessor zxids = AssignZxidProcessor.newInstance();
-        ServerExecutor serverExecutor = ServerExecutor.newInstance(manager.runtime().executors().asListeningExecutorServiceFactory().get(), manager.runtime().publisherFactory(), sessions);
-        ServerConnectionListener server = ServerConnectionListener.newInstance(serverConnections, serverExecutor, serverExecutor, serverExecutor);
-
-        return new FrontendServerService(clientAddress, serverConnections, manager);
+    public static Module module() {
+        return new Module();
     }
+    
+    public static class Module extends AbstractModule {
 
-    protected final ServiceManager manager;
+        public Module() {}
+        
+        @Override
+        protected void configure() {
+        }
+
+        @Provides @Singleton
+        public FrontendConfiguration getFrontendConfiguration(RuntimeModule runtime) throws Exception {
+            return FrontendConfiguration.fromRuntime(runtime);
+        }
+
+        @Provides @Singleton
+        public FrontendServerService getFrontendServerService(
+                FrontendConfiguration configuration, 
+                ServiceLocator locator,
+                NettyModule netModule,
+                RuntimeModule runtime) throws Exception {
+            ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections = 
+                    netModule.servers().get(
+                            ServerCodecConnection.codecFactory(),
+                            ServerCodecConnection.factory()).get(configuration.get().get());
+            runtime.serviceMonitor().addOnStart(serverConnections);
+
+            SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
+            ExpiringSessionManager sessions = ExpiringSessionManager.newInstance(runtime.publisherFactory().get(), policy);
+            ExpireSessionsTask expires = ExpireSessionsTask.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());
+            AssignZxidProcessor zxids = AssignZxidProcessor.newInstance();
+            ServerExecutor serverExecutor = ServerExecutor.newInstance(runtime.executors().asListeningExecutorServiceFactory().get(), runtime.publisherFactory(), sessions);
+            ServerConnectionListener server = ServerConnectionListener.newInstance(serverConnections, serverExecutor, serverExecutor, serverExecutor);
+
+            FrontendServerService instance = new FrontendServerService(configuration.get(), serverConnections, locator);
+            runtime.serviceMonitor().addOnStart(instance);
+            return instance;
+        }
+    }
+    
+    protected final ServiceLocator locator;
     protected final ServerInetAddressView address;
     protected final ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections;
     
     protected FrontendServerService(
             ServerInetAddressView address,
             ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections,
-            ServiceManager manager) {
+            ServiceLocator locator) {
         this.address = address;
         this.serverConnections = serverConnections;
-        this.manager = manager;
+        this.locator = locator;
     }
     
     public ServerInetAddressView address() {
@@ -62,8 +92,8 @@ public class FrontendServerService extends AbstractIdleService {
     }
     
     public void register() throws InterruptedException, ExecutionException, KeeperException {
-        Materializer materializer = manager.controlClient().materializer();
-        Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.of(manager.conductor().view().id());
+        Materializer materializer = locator.getInstance(ControlClientService.class).materializer();
+        Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.of(locator.getInstance(ConductorService.class).view().id());
         Orchestra.Conductors.Entity.ClientAddress clientAddressNode = Orchestra.Conductors.Entity.ClientAddress.create(address(), entityNode, materializer);
         if (! address().equals(clientAddressNode.get())) {
             throw new IllegalStateException(clientAddressNode.get().toString());

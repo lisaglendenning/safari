@@ -32,22 +32,11 @@ import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
 import edu.uw.zookeeper.util.Arguments;
 import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.DefaultsFactory;
+import edu.uw.zookeeper.util.Factories;
 
-public class BackendConfiguration implements Callable<BackendView> {
+public class BackendConfiguration extends Factories.Holder<BackendView> {
     
-    public static BackendView get(RuntimeModule runtime) throws Exception {
-        BackendConfiguration instance = new BackendConfiguration(runtime);
-        return instance.call();
-    }
-    
-    protected final RuntimeModule runtime;
-
-    public BackendConfiguration(RuntimeModule runtime) {
-        this.runtime = runtime;
-    }
-    
-    @Override
-    public BackendView call() throws Exception {
+    public static BackendConfiguration fromRuntime(RuntimeModule runtime) throws Exception {
         ServerInetAddressView clientAddress = BackendAddressDiscovery.call(runtime);
         
         EnsembleRoleView<InetSocketAddress, ServerInetAddressView> ensembleView = BackendEnsembleViewFactory.getInstance().get(runtime.configuration());
@@ -61,9 +50,13 @@ public class BackendConfiguration implements Callable<BackendView> {
                     }
                     
                 }));
-        return BackendView.of(clientAddress, EnsembleView.from(ensemble));
+        return new BackendConfiguration(BackendView.of(clientAddress, EnsembleView.from(ensemble)));
     }
-
+    
+    public BackendConfiguration(BackendView value) {
+        super(value);
+    }
+    
     public static class BackendAddressDiscovery implements Callable<ServerInetAddressView> {
         
         public static ServerInetAddressView call(RuntimeModule runtime) throws Exception {
