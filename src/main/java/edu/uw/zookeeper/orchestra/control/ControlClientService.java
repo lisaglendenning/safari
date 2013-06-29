@@ -16,7 +16,6 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerView;
 import edu.uw.zookeeper.client.AssignXidProcessor;
-import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.ClientProtocolExecutorService;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.Materializer;
@@ -33,7 +32,6 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.ClientProtocolExecutor;
 import edu.uw.zookeeper.protocol.client.PingingClientCodecConnection;
 import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.TimeValue;
 
 public class ControlClientService extends ClientProtocolExecutorService {
 
@@ -47,11 +45,7 @@ public class ControlClientService extends ClientProtocolExecutorService {
         
         @Override
         protected void configure() {
-        }
-
-        @Provides @Singleton
-        public ControlConfiguration getControlConfiguration(RuntimeModule runtime) {
-            return ControlConfiguration.fromRuntime(runtime);
+            install(ControlConfiguration.module());
         }
 
         @Provides @Singleton
@@ -59,17 +53,15 @@ public class ControlClientService extends ClientProtocolExecutorService {
                 ControlConfiguration configuration,
                 RuntimeModule runtime, 
                 NettyClientModule clientModule) {
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance("Control").get(runtime.configuration());
-            AssignXidProcessor xids = AssignXidProcessor.newInstance();
             ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections = clientModule.get(
                     PingingClientCodecConnection.codecFactory(), 
-                    PingingClientCodecConnection.factory(timeOut, runtime.executors().asScheduledExecutorServiceFactory().get())).get();
+                    PingingClientCodecConnection.factory(configuration.getTimeOut(), runtime.executors().asScheduledExecutorServiceFactory().get())).get();
             runtime.serviceMonitor().addOnStart(clientConnections);
             EnsembleViewFactory factory = EnsembleViewFactory.newInstance(
                     clientConnections,
-                    xids, 
-                    configuration.get(), 
-                    timeOut);
+                    AssignXidProcessor.factory(), 
+                    configuration.getEnsemble(), 
+                    configuration.getTimeOut());
             ConnectionFactory instance = new ConnectionFactory(clientConnections, factory);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;

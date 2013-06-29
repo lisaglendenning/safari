@@ -48,22 +48,16 @@ public class EnsembleMemberService extends AbstractIdleService {
         
         @Override
         protected void configure() {
+            install(EnsembleConfiguration.module());
         }
 
-        @Provides @Singleton
-        public EnsembleConfiguration getEnsembleConfiguration(
-                BackendConfiguration backendConfiguration, 
-                ControlClientService controlClient) throws InterruptedException, ExecutionException, KeeperException {
-            return EnsembleConfiguration.fromRuntime(backendConfiguration, controlClient);
-        }
-        
         @Provides @Singleton
         public EnsembleMemberService getEnsembleMember(
                 EnsembleConfiguration ensembleConfiguration,
                 ConductorConfiguration conductorConfiguration,
                 ServiceLocator locator,
                 RuntimeModule runtime) {
-            Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.get());
+            Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             Orchestra.Ensembles.Entity.Conductors.Member myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(
                     conductorConfiguration.get().id(), 
                     Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));

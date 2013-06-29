@@ -11,7 +11,6 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.AssignXidProcessor;
-import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.ClientProtocolExecutorsService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ServerViewFactory;
@@ -23,9 +22,8 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.client.ClientProtocolExecutor;
 import edu.uw.zookeeper.protocol.client.PingingClientCodecConnection;
 import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.TimeValue;
 
-public class BackendClientService extends ClientProtocolExecutorsService {
+public class BackendConnectionsService extends ClientProtocolExecutorsService {
 
     public static Module module() {
         return new Module();
@@ -37,11 +35,7 @@ public class BackendClientService extends ClientProtocolExecutorsService {
         
         @Override
         protected void configure() {
-        }
-
-        @Provides @Singleton
-        public BackendConfiguration getBackendConfiguration(RuntimeModule runtime) throws Exception {
-            return BackendConfiguration.fromRuntime(runtime);
+            install(BackendConfiguration.module());
         }
 
         @Provides @Singleton
@@ -49,28 +43,26 @@ public class BackendClientService extends ClientProtocolExecutorsService {
                 BackendConfiguration configuration,
                 RuntimeModule runtime, 
                 NettyClientModule clientModule) throws Exception {
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance("Backend").get(runtime.configuration());
-            AssignXidProcessor xids = AssignXidProcessor.newInstance();
             ClientConnectionFactory<Message.ClientSessionMessage, PingingClientCodecConnection> clientConnections = clientModule.get(
                     PingingClientCodecConnection.codecFactory(), 
-                    PingingClientCodecConnection.factory(timeOut, runtime.executors().asScheduledExecutorServiceFactory().get())).get();
+                    PingingClientCodecConnection.factory(configuration.getTimeOut(), runtime.executors().asScheduledExecutorServiceFactory().get())).get();
             ServerViewFactory factory = ServerViewFactory.newInstance(
                     clientConnections,
-                    xids, 
-                    configuration.get().getClientAddress(), 
-                    timeOut);
+                    AssignXidProcessor.factory(), 
+                    configuration.getView().getClientAddress(), 
+                    configuration.getTimeOut());
             runtime.serviceMonitor().addOnStart(clientConnections);
-            ConnectionFactory instance = new ConnectionFactory(clientConnections, factory, configuration.get());
+            ConnectionFactory instance = new ConnectionFactory(clientConnections, factory, configuration.getView());
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
 
         @Provides @Singleton
-        public BackendClientService getBackendClientService(
+        public BackendConnectionsService getBackendClientService(
                 ConnectionFactory factory, 
                 ServiceLocator locator,
                 RuntimeModule runtime) throws Exception {
-            BackendClientService instance = new BackendClientService(factory, locator);
+            BackendConnectionsService instance = new BackendConnectionsService(factory, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -78,7 +70,7 @@ public class BackendClientService extends ClientProtocolExecutorsService {
     
     protected final ServiceLocator locator;
     
-    protected BackendClientService(
+    protected BackendConnectionsService(
             ConnectionFactory factory,
             ServiceLocator locator) {
         super(factory);

@@ -17,7 +17,7 @@ public class ConductorConfiguration extends Factories.Holder<ConductorAddressVie
     public static ConductorConfiguration fromRuntime(ControlClientService controlClient, RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
         Materializer materializer = controlClient.materializer();
         ServerInetAddressView conductorAddress = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
-                        "conductorAddress", "ConductorAddress", "", "", 2281).get(runtime.configuration());
+                        "Conductor", "address", "conductorAddress", "", 2281).get(runtime.configuration());
         Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.create(conductorAddress, materializer);
         return new ConductorConfiguration(ConductorAddressView.of(entityNode.get(), conductorAddress));
     }

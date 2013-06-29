@@ -37,11 +37,7 @@ public class FrontendServerService extends AbstractIdleService {
         
         @Override
         protected void configure() {
-        }
-
-        @Provides @Singleton
-        public FrontendConfiguration getFrontendConfiguration(RuntimeModule runtime) throws Exception {
-            return FrontendConfiguration.fromRuntime(runtime);
+            install(FrontendConfiguration.module());
         }
 
         @Provides @Singleton
@@ -57,7 +53,7 @@ public class FrontendServerService extends AbstractIdleService {
         @Provides @Singleton
         public ProxyServerExecutor getServerExecutor(
                 ExpiringSessionManager sessions,
-                BackendClientService backend,
+                BackendConnectionsService backend,
                 RuntimeModule runtime) {
             AssignZxidProcessor zxids = AssignZxidProcessor.newInstance();
             ProxyServerExecutor serverExecutor = ProxyServerExecutor.newInstance(

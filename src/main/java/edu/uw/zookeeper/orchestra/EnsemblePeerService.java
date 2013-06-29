@@ -74,9 +74,9 @@ public class EnsemblePeerService extends AbstractIdleService {
     public Identifier getPeerForEnsemble(Identifier ensemble) throws InterruptedException, ExecutionException, KeeperException {
         Identifier peer = ensemblePeers.get(ensemble);
         if (peer == null) {
-            EnsembleMemberService member = locator.getInstance(EnsembleMemberService.class);
-            if (ensemble.equals(member.ensemble())) {
-                peer = member.id();
+            Identifier myEnsemble = locator.getInstance(EnsembleConfiguration.class).getEnsemble();
+            if (ensemble.equals(myEnsemble)) {
+                peer = locator.getInstance(ConductorConfiguration.class).get().id();
             } else {
                 Orchestra.Ensembles.Entity.Conductors conductors = Orchestra.Ensembles.Entity.Conductors.of(Orchestra.Ensembles.Entity.of(ensemble));
                 List<Orchestra.Ensembles.Entity.Conductors.Member> members = conductors.lookup(controlClient.materializer());

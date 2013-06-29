@@ -4,10 +4,8 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.AbstractMap;
 import java.util.Map;
-import java.util.SortedSet;
 import java.util.concurrent.Callable;
 
-import javax.annotation.Nullable;
 import javax.management.MBeanServerConnection;
 import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
@@ -19,7 +17,10 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
+import com.google.inject.AbstractModule;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
 import com.typesafe.config.Config;
 
 import edu.uw.zookeeper.EnsembleRoleView;
@@ -27,36 +28,55 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
+import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
 import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
 import edu.uw.zookeeper.util.Arguments;
 import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.DefaultsFactory;
-import edu.uw.zookeeper.util.Factories;
+import edu.uw.zookeeper.util.TimeValue;
 
-public class BackendConfiguration extends Factories.Holder<BackendView> {
+public class BackendConfiguration {
+
+    public static Module module() {
+        return new Module();
+    }
     
-    public static BackendConfiguration fromRuntime(RuntimeModule runtime) throws Exception {
-        ServerInetAddressView clientAddress = BackendAddressDiscovery.call(runtime);
+    public static class Module extends AbstractModule {
+
+        public Module() {}
         
-        EnsembleRoleView<InetSocketAddress, ServerInetAddressView> ensembleView = BackendEnsembleViewFactory.getInstance().get(runtime.configuration());
-        SortedSet<ServerInetAddressView> ensemble = 
-                ImmutableSortedSet.copyOf(Iterables.transform(ensembleView, new Function<ServerRoleView<InetSocketAddress, ServerInetAddressView>, ServerInetAddressView>() {
-                    @Override
-                    @Nullable
-                    public ServerInetAddressView apply(
-                            ServerRoleView<InetSocketAddress, ServerInetAddressView> input) {
-                        return input.first();
-                    }
-                    
-                }));
-        return new BackendConfiguration(BackendView.of(clientAddress, EnsembleView.from(ensemble)));
+        @Override
+        protected void configure() {
+        }
+
+        @Provides @Singleton
+        public BackendConfiguration getBackendConfiguration(RuntimeModule runtime) throws Exception {
+            ServerInetAddressView clientAddress = BackendAddressDiscovery.call(runtime);
+            EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(runtime.configuration());
+            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(runtime.configuration());
+            return new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
+        }
     }
     
-    public BackendConfiguration(BackendView value) {
-        super(value);
+    public static final String CONFIG_PATH = "Backend";
+    
+    private final BackendView view;
+    private final TimeValue timeOut;
+    
+    public BackendConfiguration(BackendView view, TimeValue timeOut) {
+        this.view = view;
+        this.timeOut = timeOut;
     }
     
+    public BackendView getView() {
+        return view;
+    }
+    
+    public TimeValue getTimeOut() {
+        return timeOut;
+    }
+
     public static class BackendAddressDiscovery implements Callable<ServerInetAddressView> {
         
         public static ServerInetAddressView call(RuntimeModule runtime) throws Exception {
@@ -103,8 +123,7 @@ public class BackendConfiguration extends Factories.Holder<BackendView> {
         }
     
         public static final String ARG = "backend";
-        public static final String CONFIG_KEY = "Backend";
-        public static final String CONFIG_PATH = "";
+        public static final String CONFIG_KEY = "ClientAddress";
         
         @Override
         public ServerInetAddressView get() {
@@ -147,7 +166,7 @@ public class BackendConfiguration extends Factories.Holder<BackendView> {
         }
     }
 
-    public static enum BackendEnsembleViewFactory implements DefaultsFactory<Configuration, EnsembleRoleView<InetSocketAddress, ServerInetAddressView>> {
+    public static enum BackendEnsembleViewFactory implements DefaultsFactory<Configuration, EnsembleView<ServerInetAddressView>> {
         INSTANCE;
         
         public static BackendEnsembleViewFactory getInstance() {
@@ -156,17 +175,25 @@ public class BackendConfiguration extends Factories.Holder<BackendView> {
         
         public static final String ARG = "ensemble";
         public static final String CONFIG_KEY = "Ensemble";
-        public static final String CONFIG_PATH = "";
         
         @Override
-        public EnsembleRoleView<InetSocketAddress, ServerInetAddressView> get() {        
+        public EnsembleView<ServerInetAddressView> get() {        
             DefaultsFactory<String, JMXServiceURL> urlFactory = SunAttachQueryJmx.getInstance();
             JMXServiceURL url = urlFactory.get();
             JMXConnector connector = null;
             try {
                 connector = JMXConnectorFactory.connect(url);
                 MBeanServerConnection mbeans = connector.getMBeanServerConnection();
-                return ServerViewJmxQuery.ensembleViewOf(mbeans);
+                EnsembleRoleView<InetSocketAddress, ServerInetAddressView> roles = ServerViewJmxQuery.ensembleViewOf(mbeans);
+                return EnsembleView.from(ImmutableSortedSet.copyOf(Iterators.transform(
+                        roles.iterator(), 
+                        new Function<ServerRoleView<InetSocketAddress, ServerInetAddressView>, ServerInetAddressView>() {
+                            @Override
+                            public ServerInetAddressView apply(
+                                    ServerRoleView<InetSocketAddress, ServerInetAddressView> input) {
+                                return input.first();
+                            }
+                        })));
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             } finally {
@@ -182,7 +209,7 @@ public class BackendConfiguration extends Factories.Holder<BackendView> {
     
         @SuppressWarnings("unchecked")
         @Override
-        public EnsembleRoleView<InetSocketAddress, ServerInetAddressView> get(Configuration value) {
+        public EnsembleView<ServerInetAddressView> get(Configuration value) {
             Arguments arguments = value.asArguments();
             if (! arguments.has(ARG)) {
                 arguments.add(arguments.newOption(ARG, "Ensemble"));
@@ -192,7 +219,7 @@ public class BackendConfiguration extends Factories.Holder<BackendView> {
             Config config = value.withArguments(CONFIG_PATH, args);
             if (config.hasPath(CONFIG_KEY)) {
                 String input = config.getString(CONFIG_KEY);
-                return EnsembleRoleView.fromStringRoles(input);
+                return EnsembleView.fromString(input);
             } else {
                 return get();
             }
