@@ -28,6 +28,8 @@ public class ConductorService extends AbstractIdleService {
         
         @Override
         protected void configure() {
+            install(EnsemblePeerService.module());
+            install(EnsembleMemberService.module());
         }
 
         @Provides @Singleton

@@ -23,7 +23,6 @@ import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
 import edu.uw.zookeeper.server.ExpireSessionsTask;
 import edu.uw.zookeeper.server.ExpiringSessionManager;
 import edu.uw.zookeeper.server.ServerConnectionListener;
-import edu.uw.zookeeper.server.ServerExecutor;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
 
 public class FrontendServerService extends AbstractIdleService {
@@ -46,8 +45,30 @@ public class FrontendServerService extends AbstractIdleService {
         }
 
         @Provides @Singleton
+        public ExpiringSessionManager getSessionManager(
+                RuntimeModule runtime) {
+            SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
+            ExpiringSessionManager sessions = ExpiringSessionManager.newInstance(runtime.publisherFactory().get(), policy);
+            ExpireSessionsTask expires = ExpireSessionsTask.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());   
+            runtime.serviceMonitor().add(expires);
+            return sessions;
+        }
+
+        @Provides @Singleton
+        public ProxyServerExecutor getServerExecutor(
+                ExpiringSessionManager sessions,
+                BackendClientService backend,
+                RuntimeModule runtime) {
+            AssignZxidProcessor zxids = AssignZxidProcessor.newInstance();
+            ProxyServerExecutor serverExecutor = ProxyServerExecutor.newInstance(
+                    runtime.executors().asListeningExecutorServiceFactory().get(), runtime.publisherFactory(), sessions, backend);
+            return serverExecutor;
+        }
+        
+        @Provides @Singleton
         public FrontendServerService getFrontendServerService(
                 FrontendConfiguration configuration, 
+                ProxyServerExecutor serverExecutor,
                 ServiceLocator locator,
                 NettyModule netModule,
                 RuntimeModule runtime) throws Exception {
@@ -56,14 +77,7 @@ public class FrontendServerService extends AbstractIdleService {
                             ServerCodecConnection.codecFactory(),
                             ServerCodecConnection.factory()).get(configuration.get().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
-
-            SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
-            ExpiringSessionManager sessions = ExpiringSessionManager.newInstance(runtime.publisherFactory().get(), policy);
-            ExpireSessionsTask expires = ExpireSessionsTask.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());
-            AssignZxidProcessor zxids = AssignZxidProcessor.newInstance();
-            ServerExecutor serverExecutor = ServerExecutor.newInstance(runtime.executors().asListeningExecutorServiceFactory().get(), runtime.publisherFactory(), sessions);
             ServerConnectionListener server = ServerConnectionListener.newInstance(serverConnections, serverExecutor, serverExecutor, serverExecutor);
-
             FrontendServerService instance = new FrontendServerService(configuration.get(), serverConnections, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
@@ -103,8 +117,6 @@ public class FrontendServerService extends AbstractIdleService {
     @Override
     protected void startUp() throws Exception {
         serverConnections().start().get();
-        
-        //runtime.serviceMonitor().add(expires);
         
         register();
     }

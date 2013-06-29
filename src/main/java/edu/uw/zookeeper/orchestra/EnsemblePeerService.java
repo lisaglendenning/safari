@@ -45,6 +45,7 @@ public class EnsemblePeerService extends AbstractIdleService {
         
         @Override
         protected void configure() {
+            install(ConductorPeerService.module());
         }
 
         @Provides @Singleton
