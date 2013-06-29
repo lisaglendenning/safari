@@ -1,13 +1,17 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.collect.ImmutableList;
+
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.data.Label;
 import edu.uw.zookeeper.data.Operations;
@@ -74,20 +78,31 @@ public abstract class Orchestra extends Control.ControlZNode {
                 return get().toString();
             }
             
-            @ZNode(label="presence", createMode=CreateMode.EPHEMERAL)
+            @ZNode(createMode=CreateMode.EPHEMERAL)
             public static class Presence extends Control.ControlZNode {
 
-                public static Entity.Presence of(Conductors.Entity parent) {
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("presence");
+
+                public static Presence of(Conductors.Entity parent) {
                     return new Presence(parent);
                 }
                 
                 public Presence(Conductors.Entity parent) {
                     super(parent);
                 }
+                
+                public boolean exists(ClientExecutor client) throws InterruptedException, ExecutionException {
+                    Operation.SessionResult result = client.submit(Operations.Requests.exists().setPath(path()).build()).get();
+                    return ! (result.reply().reply() instanceof Operation.Error);
+                }
             }
             
-            @ZNode(label="clientAddress", type=ServerInetAddressView.class)
+            @ZNode(type=ServerInetAddressView.class)
             public static class ClientAddress extends Control.TypedValueZNode<ServerInetAddressView> {
+
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("clientAddress");
                 
                 public static ClientAddress get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(ClientAddress.class, entity, materializer);
@@ -110,8 +125,31 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
             }
             
-            @ZNode(label="conductorAddress", type=ServerInetAddressView.class)
+            @ZNode(type=ServerInetAddressView.class)
             public static class ConductorAddress extends Control.TypedValueZNode<ServerInetAddressView> {
+
+                @Label
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("conductorAddress");
+                
+                public static ConductorAddress lookup(Conductors.Entity entity, Materializer materializer) throws KeeperException, InterruptedException, ExecutionException {
+                    Materializer.MaterializedNode parent = materializer.get(entity.path());
+                    if (parent == null) {
+                        Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().reply().reply(), KeeperException.Code.NONODE);
+                        parent = materializer.get(entity.path());
+                        if (parent == null) {
+                            return null;
+                        }
+                    }
+                    Materializer.MaterializedNode child = parent.get(LABEL);
+                    if (child == null) {
+                        Operations.maybeError(materializer.operator().getData(ZNodeLabel.Path.of(entity.path(), LABEL)).submit().get().reply().reply(), KeeperException.Code.NONODE);
+                        child = parent.get(LABEL);
+                        if (child == null) {
+                            return null;
+                        }            
+                    }
+                    return of((ServerInetAddressView) child.get().get(), entity);
+                }
                 
                 public static ConductorAddress get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(ConductorAddress.class, entity, materializer);
@@ -243,7 +281,32 @@ public abstract class Orchestra extends Control.ControlZNode {
                 public Conductors(Ensembles.Entity parent) {
                     super(parent);
                 }
+                
+                public List<Member> lookup(Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    Materializer.MaterializedNode parent = materializer.get(path());
+                    if (parent == null || parent.isEmpty()) {
+                        return get(materializer);
+                    } else {
+                        ImmutableList.Builder<Member> members = ImmutableList.builder();
+                        for (ZNodeLabel.Component e: parent.keySet()) {
+                            members.add(Member.valueOf(e.toString(), this));
+                        }
+                        return members.build();
+                    }
+                }
 
+                public List<Member> get(Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    ImmutableList.Builder<Member> members = ImmutableList.builder();
+                    Operations.maybeError(materializer.operator().getChildren(path()).submit().get().reply().reply(), KeeperException.Code.NODEEXISTS);
+                    Materializer.MaterializedNode parent = materializer.get(path());
+                    if (parent != null) {
+                        for (ZNodeLabel.Component e: parent.keySet()) {
+                            members.add(Member.valueOf(e.toString(), this));
+                        }
+                    }
+                    return members.build();
+                }
+                
                 @ZNode
                 public static class Member extends Control.TypedLabelZNode<Identifier> {
 

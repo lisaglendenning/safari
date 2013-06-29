@@ -12,14 +12,8 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.net.ClientConnectionFactory;
-import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
-import edu.uw.zookeeper.orchestra.netty.NettyModule;
-import edu.uw.zookeeper.orchestra.protocol.ConductorCodecConnection;
-import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
-import edu.uw.zookeeper.orchestra.protocol.MessagePacket;
 import edu.uw.zookeeper.protocol.Operation;
 
 public class ConductorService extends AbstractIdleService {
@@ -43,66 +37,27 @@ public class ConductorService extends AbstractIdleService {
         }
 
         @Provides @Singleton
-        public EnsembleConfiguration getEnsembleConfiguration(
-                BackendConfiguration backendConfiguration, 
-                ControlClientService controlClient) throws InterruptedException, ExecutionException, KeeperException {
-            return EnsembleConfiguration.fromRuntime(backendConfiguration, controlClient);
-        }
-        
-        @Provides @Singleton
-        public EnsembleMember getEnsembleMember(
-                EnsembleConfiguration ensembleConfiguration,
-                ConductorConfiguration conductorConfiguration,
-                ServiceLocator locator,
-                RuntimeModule runtime) {
-            Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.get());
-            Orchestra.Ensembles.Entity.Conductors.Member myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(
-                    conductorConfiguration.get().id(), 
-                    Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));
-            EnsembleMember instance = new EnsembleMember(myMember, myEnsemble, locator);
-            runtime.serviceMonitor().addOnStart(instance);
-            return instance;
-        }
-
-        @Provides @Singleton
-        public ConductorPeerService getConductorPeerService(
-                ConductorConfiguration configuration,
-                NettyModule netModule,
-                RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
-            ServerConnectionFactory<MessagePacket, ConductorCodecConnection> serverConnections = 
-                    netModule.servers().get(
-                            ConductorCodecConnection.codecFactory(JacksonModule.getMapper()), 
-                            ConductorCodecConnection.factory())
-                    .get(configuration.get().address().get());
-            runtime.serviceMonitor().addOnStart(serverConnections);
-            ClientConnectionFactory<MessagePacket, ConductorCodecConnection> clientConnections =  
-                    netModule.clients().get(
-                        ConductorCodecConnection.codecFactory(JacksonModule.getMapper()), 
-                        ConductorCodecConnection.factory()).get();
-            runtime.serviceMonitor().addOnStart(clientConnections);
-            return new ConductorPeerService(serverConnections, clientConnections);
-        }
-
-        @Provides @Singleton
         public ConductorService getConductorService(
                 ConductorConfiguration configuration,
-                ConductorPeerService connections,
-                EnsembleMember member,
-                ServiceLocator locator) throws InterruptedException, ExecutionException, KeeperException {
+                EnsemblePeerService connections,
+                EnsembleMemberService member,
+                ServiceLocator locator,
+                RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
             ConductorService instance = new ConductorService(configuration.get(), connections, member, locator);
+            runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
     }
     
     protected final ServiceLocator locator;
     protected final ConductorAddressView view;
-    protected final ConductorPeerService connections;
-    protected final EnsembleMember member;
+    protected final EnsemblePeerService connections;
+    protected final EnsembleMemberService member;
     
     protected ConductorService(
             ConductorAddressView view,
-            ConductorPeerService connections,
-            EnsembleMember member,
+            EnsemblePeerService connections,
+            EnsembleMemberService member,
             ServiceLocator locator) {
         this.view = view;
         this.connections = connections;
@@ -124,7 +79,6 @@ public class ConductorService extends AbstractIdleService {
     
     @Override
     protected void startUp() throws Exception {
-        locator.getInstance(ControlClientService.class).start().get();
         connections.start().get();
         register();
         member.start().get();

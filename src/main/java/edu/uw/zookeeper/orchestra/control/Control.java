@@ -15,6 +15,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.TreeFetcher;
 import edu.uw.zookeeper.data.Acls;
@@ -227,18 +229,18 @@ public abstract class Control {
             return new FetchUntil(root, predicate, materializer, delegate, executor);
         }
         
-        public class Updater implements Runnable {
-            protected final TreeFetcher fetcher;
+        protected class Updater implements Runnable {
+            protected final ListenableFuture<ZNodeLabel.Path> future;
             
             public Updater(ZNodeLabel.Path root) {
-                this.fetcher = TreeFetcher.Builder.create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).setRoot(root).build();
-                Futures.addCallback(fetcher.future(), FetchUntil.this, executor);
+                this.future = TreeFetcher.Builder.create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).setRoot(root).build().call();
+                Futures.addCallback(future, FetchUntil.this, executor);
                 FetchUntil.this.addListener(this, executor);
             }
 
             @Override
             public void run() {
-                fetcher.stop();
+                future.cancel(true);
             }
         }
         

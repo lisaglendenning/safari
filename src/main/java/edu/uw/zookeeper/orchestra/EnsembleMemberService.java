@@ -17,7 +17,12 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.inject.AbstractModule;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+
 import edu.uw.zookeeper.EnsembleRole;
+import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeResponseCache;
 import edu.uw.zookeeper.data.Operations;
@@ -31,14 +36,49 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Automatons;
 
-public class EnsembleMember extends AbstractIdleService {
+public class EnsembleMemberService extends AbstractIdleService {
 
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule {
+
+        public Module() {}
+        
+        @Override
+        protected void configure() {
+        }
+
+        @Provides @Singleton
+        public EnsembleConfiguration getEnsembleConfiguration(
+                BackendConfiguration backendConfiguration, 
+                ControlClientService controlClient) throws InterruptedException, ExecutionException, KeeperException {
+            return EnsembleConfiguration.fromRuntime(backendConfiguration, controlClient);
+        }
+        
+        @Provides @Singleton
+        public EnsembleMemberService getEnsembleMember(
+                EnsembleConfiguration ensembleConfiguration,
+                ConductorConfiguration conductorConfiguration,
+                ServiceLocator locator,
+                RuntimeModule runtime) {
+            Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.get());
+            Orchestra.Ensembles.Entity.Conductors.Member myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(
+                    conductorConfiguration.get().id(), 
+                    Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));
+            EnsembleMemberService instance = new EnsembleMemberService(myMember, myEnsemble, locator);
+            runtime.serviceMonitor().addOnStart(instance);
+            return instance;
+        }
+    }
+    
     protected final ServiceLocator locator;
     protected final Orchestra.Ensembles.Entity.Conductors.Member myMember;
     protected final Orchestra.Ensembles.Entity myEnsemble;
     protected final RoleOverseer role;
     
-    public EnsembleMember(
+    public EnsembleMemberService(
             Orchestra.Ensembles.Entity.Conductors.Member myMember, 
             Orchestra.Ensembles.Entity myEnsemble,
             ServiceLocator locator) {
@@ -46,6 +86,14 @@ public class EnsembleMember extends AbstractIdleService {
         this.myEnsemble = myEnsemble;
         this.myMember = myMember;
         this.role = new RoleOverseer();
+    }
+    
+    public Identifier id() {
+        return myMember.get();
+    }
+    
+    public Identifier ensemble() {
+        return myEnsemble.get();
     }
     
     @Override

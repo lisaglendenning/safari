@@ -79,6 +79,9 @@ public class MainApplicationModule extends AbstractModule {
                     ControlClientService.module(),
                     BackendClientService.module(),
                     FrontendServerService.module(),
+                    ConductorPeerService.module(),
+                    EnsemblePeerService.module(),
+                    EnsembleMemberService.module(),
                     ConductorService.module());
         }
         
