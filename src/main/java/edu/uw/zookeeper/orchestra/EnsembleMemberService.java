@@ -148,25 +148,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             for (Orchestra.Volumes.Entity v: myVolumes) {
                 Orchestra.Volumes.Entity.Ensemble.create(myEnsemble.get(), v, materializer);
             }
-        }
-        
-        // Global barrier - Wait for all volumes to be assigned
-        Predicate<Materializer> allAssigned = new Predicate<Materializer>() {
-            @Override
-            public boolean apply(@Nullable Materializer input) {
-                ZNodeLabel.Path root = Control.path(Orchestra.Volumes.class);
-                ZNodeLabel.Component label = Orchestra.Volumes.Entity.Ensemble.LABEL;
-                boolean done = true;
-                for (Materializer.MaterializedNode e: input.get(root).values()) {
-                    if (! e.containsKey(label)) {
-                        done = false;
-                        break;
-                    }
-                }
-                return done;
-            }
-        };
-        Control.FetchUntil.newInstance(Control.path(Orchestra.Volumes.class), allAssigned, materializer, MoreExecutors.sameThreadExecutor()).get();
+        }        
     }
 
     @Override
@@ -233,8 +215,8 @@ public class EnsembleMemberService extends AbstractIdleService {
         public void handleViewUpdate(ZNodeResponseCache.ViewUpdate event) {
             if (leaderPath.equals(event.path())) {
                 Materializer.MaterializedNode node = controlClient().materializer().get(leaderPath);
-                Orchestra.Ensembles.Entity.Leader value = (node != null) ? (Orchestra.Ensembles.Entity.Leader) node.get().get() : null;
-                setLeader(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(event.updatedValue().stamp(), value));
+                Identifier value = (node != null) ? (Identifier) node.get().get() : null;
+                setLeader(StampedReference.of(event.updated().stamp(), Orchestra.Ensembles.Entity.Leader.of(value, myEnsemble)));
             }
         }
 

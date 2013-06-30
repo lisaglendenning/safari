@@ -30,6 +30,7 @@ public class ConductorService extends AbstractIdleService {
         protected void configure() {
             install(EnsemblePeerService.module());
             install(EnsembleMemberService.module());
+            install(VolumeLookupService.module());
         }
 
         @Provides @Singleton
@@ -84,6 +85,7 @@ public class ConductorService extends AbstractIdleService {
         connections.start().get();
         register();
         member.start().get();
+        locator.getInstance(VolumeLookupService.class).start().get();
     }
 
     @Override
