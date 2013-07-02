@@ -5,46 +5,30 @@ import com.google.common.base.Objects;
 public class VolumeAssignment {
 
     public static VolumeAssignment of(
-            Identifier id,
-            VolumeDescriptor descriptor, 
+            Volume volume, 
             Identifier assignment) {
-        return new VolumeAssignment(id, descriptor, assignment);
+        return new VolumeAssignment(volume, assignment);
     }
     
-    protected final Identifier id;
-    protected final VolumeDescriptor descriptor;
+    protected final Volume volume;
     protected final Identifier assignment;
     
     public VolumeAssignment(
-            Identifier id,
-            VolumeDescriptor descriptor, 
+            Volume volume, 
             Identifier assignment) {
-        this.id = id;
-        this.descriptor = descriptor;
+        this.volume = volume;
         this.assignment = assignment;
     }
     
-    public Identifier getId() {
-        return id;
+    public Volume getVolume() {
+        return volume;
     }
 
-    public VolumeAssignment setId(Identifier id) {
-        if (id.equals(getId())) {
+    public VolumeAssignment setVolume(Volume volume) {
+        if (volume.equals(getVolume())) {
             return this;
         } else {
-            return of(id, getDescriptor(), getAssignment());
-        }
-    }
-
-    public VolumeDescriptor getDescriptor() {
-        return descriptor;
-    }
-
-    public VolumeAssignment setDescriptor(VolumeDescriptor descriptor) {
-        if (descriptor.equals(getDescriptor())) {
-            return this;
-        } else {
-            return of(getId(), descriptor, getAssignment());
+            return of(volume, getAssignment());
         }
     }
 
@@ -56,22 +40,21 @@ public class VolumeAssignment {
         if (assignment.equals(getAssignment())) {
             return this;
         } else {
-            return of(getId(), getDescriptor(), assignment);
+            return of(getVolume(), assignment);
         }
     }
 
     @Override
     public String toString() {
         return Objects.toStringHelper(this)
-                .add("id", getId())
-                .add("descriptor", getDescriptor())
+                .add("volume", getVolume())
                 .add("assignment", getAssignment())
                 .toString();
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(getId(), getDescriptor(), getAssignment());
+        return Objects.hashCode(getVolume(), getAssignment());
     }
 
     @Override
@@ -83,8 +66,7 @@ public class VolumeAssignment {
             return false;
         }
         VolumeAssignment other = (VolumeAssignment) obj;
-        return Objects.equal(getId(), other.getId())
-                && Objects.equal(getDescriptor(), other.getDescriptor())
+        return Objects.equal(getVolume(), other.getVolume())
                 && Objects.equal(getAssignment(), other.getAssignment());
     }
 }

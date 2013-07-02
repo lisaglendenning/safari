@@ -9,16 +9,16 @@ import com.google.common.base.Objects;
 import edu.uw.zookeeper.orchestra.Identifier;
 
 @MessageBodyType(type=MessageType.MESSAGE_TYPE_HANDSHAKE)
-public class HandshakeMessage extends MessageBody {
+public class MessageHandshake extends MessageBody {
 
-    public static HandshakeMessage of(Identifier id) {
-        return new HandshakeMessage(id);
+    public static MessageHandshake of(Identifier id) {
+        return new MessageHandshake(id);
     }
     
     private final Identifier id;
     
     @JsonCreator
-    public HandshakeMessage(@JsonProperty("id") Identifier id) {
+    public MessageHandshake(@JsonProperty("id") Identifier id) {
         this.id = checkNotNull(id);
     }
 
@@ -36,10 +36,10 @@ public class HandshakeMessage extends MessageBody {
         if (this == obj) {
             return true;
         }
-        if (! (obj instanceof HandshakeMessage)) {
+        if (! (obj instanceof MessageHandshake)) {
             return false;
         }
-        HandshakeMessage other = (HandshakeMessage) obj;
+        MessageHandshake other = (MessageHandshake) obj;
         return Objects.equal(getId(), other.getId());
     }
 

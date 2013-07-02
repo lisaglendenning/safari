@@ -28,7 +28,7 @@ import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.protocol.FramedMessagePacketCodec;
-import edu.uw.zookeeper.orchestra.protocol.HandshakeMessage;
+import edu.uw.zookeeper.orchestra.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.protocol.MessagePacketCodec;
@@ -242,7 +242,7 @@ public class ConductorPeerService extends AbstractIdleService {
                 result.close();
                 peered = prev;
             } else {
-                peered.second().write(MessagePacket.of(HandshakeMessage.of(identifier)));
+                peered.second().write(MessagePacket.of(MessageHandshake.of(identifier)));
             }
             set(peered);
         }
@@ -277,7 +277,7 @@ public class ConductorPeerService extends AbstractIdleService {
         @Subscribe
         public void handleMessage(MessagePacket event) {
             if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.first().type()) {
-                HandshakeMessage body = (HandshakeMessage) event.second();
+                MessageHandshake body = (MessageHandshake) event.second();
                 ServerPeerConnection peered = new ServerPeerConnection(body.getId(), connection);
                 ServerPeerConnection prev = serverConnections.putIfAbsent(peered.first(), peered);
                 if (prev != null) {

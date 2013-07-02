@@ -3,7 +3,10 @@ package edu.uw.zookeeper.orchestra.protocol;
 public enum MessageType {
     MESSAGE_TYPE_NONE,
     MESSAGE_TYPE_HANDSHAKE,
-    MESSAGE_TYPE_SESSION;
+    MESSAGE_TYPE_SESSION_OPEN,
+    MESSAGE_TYPE_SESSION_CLOSE,
+    MESSAGE_TYPE_SESSION_REQUEST,
+    MESSAGE_TYPE_SESSION_REPLY;
     
     public static MessageType valueOf(int value) {
         return MessageType.values()[value];

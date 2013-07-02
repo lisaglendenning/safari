@@ -77,9 +77,9 @@ public class MainApplicationModule extends AbstractModule {
             this.injector = Guice.createInjector(
                     MainApplicationModule.this, 
                     ControlClientService.module(),
-                    BackendConnectionsService.module(),
-                    FrontendServerService.module(),
-                    ConductorService.module());
+                    ConductorService.module(),
+                    BackendRequestService.module(),
+                    FrontendServerService.module());
         }
         
         @Override
@@ -96,7 +96,7 @@ public class MainApplicationModule extends AbstractModule {
         protected void startUp() throws Exception {
             getInstance(ControlClientService.class).start().get();
             getInstance(ConductorService.class).start().get();
-            getInstance(BackendConnectionsService.class).start().get();
+            getInstance(BackendRequestService.class).start().get();
             getInstance(FrontendServerService.class).start().get();
         }
 

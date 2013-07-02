@@ -17,6 +17,8 @@ import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -84,34 +86,22 @@ public class VolumeLookupService extends AbstractIdleService {
             return this.value.getAndSet(value);
         }
         
-        public VolumeAssignment setId(Identifier id) {
+        public VolumeAssignment setVolume(Volume volume) {
             VolumeAssignment prev = value.get();
             VolumeAssignment updated = (prev == null) 
-                    ? VolumeAssignment.of(id, VolumeDescriptor.of(path()), null)
-                            : prev.setId(id);
+                    ? VolumeAssignment.of(volume, null)
+                            : prev.setVolume(volume);
             if (value.compareAndSet(prev, updated)) {
                 return prev;
             } else {
-                return setId(id);
-            }
-        }
-
-        public VolumeAssignment setDescriptor(VolumeDescriptor descriptor) {
-            VolumeAssignment prev = value.get();
-            VolumeAssignment updated = (prev == null) 
-                    ? VolumeAssignment.of(null, descriptor, null)
-                            : prev.setDescriptor(descriptor);
-            if (value.compareAndSet(prev, updated)) {
-                return prev;
-            } else {
-                return setDescriptor(descriptor);
+                return setVolume(volume);
             }
         }
         
         public VolumeAssignment setAssignment(Identifier assignment) {
             VolumeAssignment prev = value.get();
             VolumeAssignment updated = (prev == null) 
-                    ? VolumeAssignment.of(null, VolumeDescriptor.of(path()), assignment)
+                    ? VolumeAssignment.of(Volume.of(null, VolumeDescriptor.of(path())), assignment)
                             : prev.setAssignment(assignment);
             if (value.compareAndSet(prev, updated)) {
                 return prev;
@@ -145,7 +135,7 @@ public class VolumeLookupService extends AbstractIdleService {
         return lookupTrie;
     }
     
-    public VolumeAssignment lookupLongestPrefix(ZNodeLabel label) {
+    public VolumeAssignment get(ZNodeLabel label) {
         VolumeLookupNode node = asTrie().longestPrefix(label);
         VolumeAssignment assignment = node.get();
         while ((assignment == null) && node.parent().isPresent()) {
@@ -154,8 +144,13 @@ public class VolumeLookupService extends AbstractIdleService {
         }
         return assignment;
     }
-
-    public VolumeAssignment lookupVolumeId(Identifier id) {
+    
+    public ListenableFuture<VolumeAssignment> lookup(ZNodeLabel.Path input) {
+        VolumeAssignment cached = get(input);
+        return Futures.immediateFuture(cached);
+    }
+    
+    public VolumeAssignment byVolumeId(Identifier id) {
         ZNodeLabel.Path path = byVolumeId.get(id);
         if (path != null) {
             VolumeLookupNode node = asTrie().get(path);
@@ -169,41 +164,6 @@ public class VolumeLookupService extends AbstractIdleService {
     @Override
     protected void startUp() throws Exception {
         new UpdateFromCache();
-        
-        // initialize from cache
-        Materializer.MaterializedNode volumes = controlClient.materializer().get(VOLUMES_PATH);
-        if (volumes != null) {
-            for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
-                Identifier volumeId = Identifier.valueOf(child.getKey().toString());
-                ZNodeLabel.Path volumeRoot = byVolumeId.get(volumeId);
-                VolumeLookupNode lookupNode = (volumeRoot == null) ? null : asTrie().root().add(volumeRoot);
-                Materializer.MaterializedNode volumeChild = child.getValue().get(Orchestra.Volumes.Entity.Volume.LABEL);
-                if (volumeChild != null) {
-                    VolumeDescriptor volumeDescriptor = (VolumeDescriptor) volumeChild.get().get();
-                    if (volumeDescriptor != null) {
-                        if (volumeRoot == null) {
-                            volumeRoot = volumeDescriptor.getRoot();
-                            byVolumeId.putIfAbsent(volumeId, volumeRoot);
-                            lookupNode = asTrie().root().add(volumeRoot);
-                        }
-                    }
-                    if (lookupNode != null) {
-                        lookupNode.setDescriptor(volumeDescriptor);
-                    }
-                }
-                if (lookupNode != null) {
-                    lookupNode.setId(volumeId);
-
-                    Materializer.MaterializedNode assignmentChild = child.getValue().get(Orchestra.Volumes.Entity.Ensemble.LABEL);
-                    if (assignmentChild != null) {
-                        Identifier assignment = (Identifier) assignmentChild.get().get();
-                        if (assignment != null) {
-                            lookupNode.setAssignment(assignment);
-                        }
-                    }
-                }
-            }
-        }
         
         // Global barrier - Wait for all volumes to be assigned
         Predicate<Materializer> allAssigned = new Predicate<Materializer>() {
@@ -224,7 +184,7 @@ public class VolumeLookupService extends AbstractIdleService {
 
         if (logger.isInfoEnabled()) {
             for (Identifier volumeId: byVolumeId.keySet()) {
-                VolumeAssignment assignment = lookupVolumeId(volumeId);
+                VolumeAssignment assignment = byVolumeId(volumeId);
                 if (assignment != null) {
                     logger.info("{}", assignment);
                 }
@@ -235,11 +195,47 @@ public class VolumeLookupService extends AbstractIdleService {
     @Override
     protected void shutDown() throws Exception {
     }
-
+    
     protected class UpdateFromCache {
         
         protected UpdateFromCache() {
             controlClient.register(this);
+            
+            initialize();
+        }
+        
+        protected void initialize() {
+            Materializer.MaterializedNode volumes = controlClient.materializer().get(VOLUMES_PATH);
+            if (volumes != null) {
+                for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
+                    Identifier volumeId = Identifier.valueOf(child.getKey().toString());
+                    ZNodeLabel.Path volumeRoot = byVolumeId.get(volumeId);
+                    VolumeLookupNode lookupNode = (volumeRoot == null) ? null : asTrie().root().add(volumeRoot);
+                    Materializer.MaterializedNode volumeChild = child.getValue().get(Orchestra.Volumes.Entity.Volume.LABEL);
+                    if (volumeChild != null) {
+                        VolumeDescriptor volumeDescriptor = (VolumeDescriptor) volumeChild.get().get();
+                        if (volumeDescriptor != null) {
+                            if (volumeRoot == null) {
+                                volumeRoot = volumeDescriptor.getRoot();
+                                byVolumeId.putIfAbsent(volumeId, volumeRoot);
+                                lookupNode = asTrie().root().add(volumeRoot);
+                            }
+                        }
+                        if (lookupNode != null) {
+                            lookupNode.setVolume(Volume.of(volumeId, volumeDescriptor));
+                        }
+                    }
+                    if (lookupNode != null) {
+                        Materializer.MaterializedNode assignmentChild = child.getValue().get(Orchestra.Volumes.Entity.Ensemble.LABEL);
+                        if (assignmentChild != null) {
+                            Identifier assignment = (Identifier) assignmentChild.get().get();
+                            if (assignment != null) {
+                                lookupNode.setAssignment(assignment);
+                            }
+                        }
+                    }
+                }
+            }
         }
         
         @Subscribe
@@ -272,7 +268,7 @@ public class VolumeLookupService extends AbstractIdleService {
                         VolumeLookupNode lookupNode = asTrie().get(volumeRoot);
                         if (lookupNode != null) {
                             if (Orchestra.Volumes.Entity.Volume.LABEL.equals(pathTail)) {
-                                lookupNode.setDescriptor(VolumeDescriptor.of(volumeRoot));
+                                lookupNode.setVolume(Volume.of(volumeId, VolumeDescriptor.of(volumeRoot)));
                             } else if (Orchestra.Volumes.Entity.Ensemble.LABEL.equals(pathTail)) {
                                 if (lookupNode != null) {
                                     lookupNode.setAssignment(null);
@@ -310,9 +306,10 @@ public class VolumeLookupService extends AbstractIdleService {
                     if (lookupNode == null) {
                         lookupNode = asTrie().root().add(volumeRoot);
                     }
-                    VolumeAssignment prev = lookupNode.setDescriptor(volumeDescriptor);
+                    Volume volume = Volume.of(volumeId, volumeDescriptor);
+                    VolumeAssignment prev = lookupNode.setVolume(volume);
                     if (logger.isInfoEnabled()) {
-                        if (prev == null || ! Objects.equal(volumeDescriptor, prev.getDescriptor())) {
+                        if (prev == null || ! Objects.equal(volume, prev.getVolume())) {
                             logger.info("{} -> {}", prev, lookupNode.get());
                         }
                     }
@@ -339,15 +336,6 @@ public class VolumeLookupService extends AbstractIdleService {
                     }
                 } else {
                     throw new AssertionError(path);
-                }
-                
-                if (lookupNode != null) {
-                    VolumeAssignment prev = lookupNode.setId(volumeId);
-                    if (logger.isInfoEnabled()) {
-                        if (prev == null || ! Objects.equal(prev.getId(), volumeId)) {
-                            logger.info("{} -> {}", prev, lookupNode.get());
-                        }
-                    }
                 }
             }
         }
