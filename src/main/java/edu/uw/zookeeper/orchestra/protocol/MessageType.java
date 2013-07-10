@@ -6,7 +6,7 @@ public enum MessageType {
     MESSAGE_TYPE_SESSION_OPEN,
     MESSAGE_TYPE_SESSION_CLOSE,
     MESSAGE_TYPE_SESSION_REQUEST,
-    MESSAGE_TYPE_SESSION_REPLY;
+    MESSAGE_TYPE_SESSION_RESPONSE;
     
     public static MessageType valueOf(int value) {
         return MessageType.values()[value];

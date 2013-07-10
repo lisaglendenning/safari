@@ -11,6 +11,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
 import edu.uw.zookeeper.netty.server.NettyServerModule;
+import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.util.Application;

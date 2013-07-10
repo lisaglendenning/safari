@@ -31,6 +31,7 @@ import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
+import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
 import edu.uw.zookeeper.util.Reference;
@@ -181,18 +182,18 @@ public abstract class Control {
         }
         
         @SuppressWarnings("unchecked")
-        public static <T, C extends TypedValueZNode<T>> C get(Class<C> cls, Object parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+        public static <T, C extends TypedValueZNode<T>> C get(Class<C> cls, Object parent, Materializer<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> materializer) throws InterruptedException, ExecutionException, KeeperException {
             ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
-            Operation.SessionResult result = materializer.operator().getData(path).submit().get();
-            Operations.unlessError(result.reply().reply(), result.toString());
+            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = materializer.operator().getData(path).submit().get();
+            Operations.unlessError(result.second().response(), result.toString());
             T value = (T) materializer.get(path).get().get();
             return newInstance(cls, value, parent);
         }
         
-        public static <T, C extends TypedValueZNode<T>> C create(Class<C> cls, T value, Object parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+        public static <T, C extends TypedValueZNode<T>> C create(Class<C> cls, T value, Object parent, Materializer<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> materializer) throws InterruptedException, ExecutionException, KeeperException {
             C instance = newInstance(cls, value, parent);
-            Operation.SessionResult result = materializer.operator().create(instance.path(), instance.get()).submit().get();
-            Operation.Response reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = materializer.operator().create(instance.path(), instance.get()).submit().get();
+            Operation.Response reply = Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
             if (reply instanceof Operation.Error) {
                 return get(cls, parent, materializer);
             } else {
@@ -222,18 +223,18 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil extends PromiseTask<Materializer, Void> implements FutureCallback<ZNodeLabel.Path> {
+    public static class FetchUntil<T extends Operation.SessionRequest, V extends Operation.SessionResponse> extends PromiseTask<Materializer<T,V>, Void> implements FutureCallback<ZNodeLabel.Path> {
 
-        public static FetchUntil newInstance(ZNodeLabel.Path root, Predicate<Materializer> predicate, Materializer materializer, Executor executor) throws InterruptedException, ExecutionException {
+        public static <T extends Operation.SessionRequest, V extends Operation.SessionResponse> FetchUntil<T,V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?,?>> predicate, Materializer<T,V> materializer, Executor executor) throws InterruptedException, ExecutionException {
             Promise<Void> delegate = newPromise();
-            return new FetchUntil(root, predicate, materializer, delegate, executor);
+            return new FetchUntil<T,V>(root, predicate, materializer, delegate, executor);
         }
         
         protected class Updater implements Runnable {
             protected final ListenableFuture<ZNodeLabel.Path> future;
             
             public Updater(ZNodeLabel.Path root) {
-                this.future = TreeFetcher.Builder.create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).setRoot(root).build().call();
+                this.future = TreeFetcher.Builder.<T,V>create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).setRoot(root).build().call();
                 Futures.addCallback(future, FetchUntil.this, executor);
                 FetchUntil.this.addListener(this, executor);
             }
@@ -246,10 +247,14 @@ public abstract class Control {
         
         protected final ZNodeLabel.Path root;
         protected final Executor executor;
-        protected final Predicate<Materializer> predicate;
+        protected final Predicate<Materializer<?,?>> predicate;
         
         protected FetchUntil(
-                ZNodeLabel.Path root, Predicate<Materializer> predicate, Materializer task, Promise<Void> delegate, Executor executor) throws InterruptedException, ExecutionException {
+                ZNodeLabel.Path root, 
+                Predicate<Materializer<?,?>> predicate, 
+                Materializer<T,V> task, 
+                Promise<Void> delegate, 
+                Executor executor) throws InterruptedException, ExecutionException {
             super(task, delegate);
             this.executor = executor;
             this.root = root;
@@ -261,9 +266,9 @@ public abstract class Control {
         }
 
         @Subscribe
-        public void handleReply(Operation.SessionReply message) {
+        public void handleReply(Operation.SessionResponse message) {
             if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
-                WatchEvent event = WatchEvent.of((IWatcherEvent) message.reply());
+                WatchEvent event = WatchEvent.of((IWatcherEvent) message.response());
                 if (root.prefixOf(event.path())) {
                     new Updater(event.path());
                 }

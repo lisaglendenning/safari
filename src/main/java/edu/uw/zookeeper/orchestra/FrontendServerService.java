@@ -12,17 +12,20 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.server.ServerCodecConnection;
-import edu.uw.zookeeper.server.AssignZxidProcessor;
+import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
 import edu.uw.zookeeper.server.ExpireSessionsTask;
 import edu.uw.zookeeper.server.ExpiringSessionManager;
+import edu.uw.zookeeper.server.ServerApplicationModule;
 import edu.uw.zookeeper.server.ServerConnectionListener;
+import edu.uw.zookeeper.server.ServerExecutor;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
 
 public class FrontendServerService extends AbstractIdleService {
@@ -51,29 +54,27 @@ public class FrontendServerService extends AbstractIdleService {
         }
 
         @Provides @Singleton
-        public ProxyServerExecutor getServerExecutor(
+        public ServerExecutor getServerExecutor(
                 ExpiringSessionManager sessions,
-                BackendConnectionsService backend,
                 RuntimeModule runtime) {
-            AssignZxidProcessor zxids = AssignZxidProcessor.newInstance();
-            ProxyServerExecutor serverExecutor = ProxyServerExecutor.newInstance(
-                    runtime.executors().asListeningExecutorServiceFactory().get(), runtime.publisherFactory(), sessions, backend);
+            ServerExecutor serverExecutor = ServerExecutor.newInstance(
+                    runtime.executors().asListeningExecutorServiceFactory().get(), runtime.publisherFactory(), sessions);
             return serverExecutor;
         }
         
         @Provides @Singleton
         public FrontendServerService getFrontendServerService(
                 FrontendConfiguration configuration, 
-                ProxyServerExecutor serverExecutor,
+                ServerExecutor serverExecutor,
                 ServiceLocator locator,
                 NettyModule netModule,
                 RuntimeModule runtime) throws Exception {
-            ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections = 
+            ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
                     netModule.servers().get(
-                            ServerCodecConnection.codecFactory(),
-                            ServerCodecConnection.factory()).get(configuration.get().get());
+                            ServerApplicationModule.codecFactory(),
+                            ServerApplicationModule.connectionFactory()).get(configuration.get().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
-            ServerConnectionListener server = ServerConnectionListener.newInstance(serverConnections, serverExecutor, serverExecutor, serverExecutor);
+            ServerConnectionListener.newInstance(serverConnections, serverExecutor, serverExecutor, serverExecutor);
             FrontendServerService instance = new FrontendServerService(configuration.get(), serverConnections, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
@@ -82,11 +83,11 @@ public class FrontendServerService extends AbstractIdleService {
     
     protected final ServiceLocator locator;
     protected final ServerInetAddressView address;
-    protected final ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections;
+    protected final ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections;
     
     protected FrontendServerService(
             ServerInetAddressView address,
-            ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections,
+            ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
         this.address = address;
         this.serverConnections = serverConnections;
@@ -97,12 +98,12 @@ public class FrontendServerService extends AbstractIdleService {
         return address;
     }
     
-    public ServerConnectionFactory<Message.ServerMessage, ServerCodecConnection> serverConnections() {
+    public ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections() {
         return serverConnections;
     }
     
     public void register() throws InterruptedException, ExecutionException, KeeperException {
-        Materializer materializer = locator.getInstance(ControlClientService.class).materializer();
+        Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
         Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.of(locator.getInstance(ConductorService.class).view().id());
         Orchestra.Conductors.Entity.ClientAddress clientAddressNode = Orchestra.Conductors.Entity.ClientAddress.create(address(), entityNode, materializer);
         if (! address().equals(clientAddressNode.get())) {

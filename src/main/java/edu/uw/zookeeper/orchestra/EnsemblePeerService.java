@@ -23,13 +23,15 @@ import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.TreeFetcher;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.ConductorPeerService.ClientPeerConnection;
+import edu.uw.zookeeper.orchestra.PeerConnectionsService.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.util.FutureQueue;
+import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.SettableFuturePromise;
 
@@ -45,7 +47,7 @@ public class EnsemblePeerService extends AbstractIdleService {
         
         @Override
         protected void configure() {
-            install(ConductorPeerService.module());
+            install(PeerConnectionsService.module());
         }
 
         @Provides @Singleton
@@ -59,15 +61,15 @@ public class EnsemblePeerService extends AbstractIdleService {
     }
 
     protected final ServiceLocator locator;
-    protected final ControlClientService controlClient;
-    protected final ConductorPeerService peerConnections;
+    protected final ControlClientService<?> controlClient;
+    protected final PeerConnectionsService peerConnections;
     protected final ConcurrentMap<Identifier, Identifier> ensemblePeers;
     
     public EnsemblePeerService(
             ServiceLocator locator) {
         this.locator = locator;
         this.controlClient = locator.getInstance(ControlClientService.class);
-        this.peerConnections = locator.getInstance(ConductorPeerService.class);
+        this.peerConnections = locator.getInstance(PeerConnectionsService.class);
         this.ensemblePeers = new ConcurrentHashMap<Identifier, Identifier>();
     }
     
@@ -76,7 +78,7 @@ public class EnsemblePeerService extends AbstractIdleService {
         if (peer == null) {
             Identifier myEnsemble = locator.getInstance(EnsembleConfiguration.class).getEnsemble();
             if (ensemble.equals(myEnsemble)) {
-                peer = locator.getInstance(ConductorConfiguration.class).get().id();
+                peer = locator.getInstance(ConductorConfiguration.class).getAddress().id();
             } else {
                 Orchestra.Ensembles.Entity.Conductors conductors = Orchestra.Ensembles.Entity.Conductors.of(Orchestra.Ensembles.Entity.of(ensemble));
                 List<Orchestra.Ensembles.Entity.Conductors.Member> members = conductors.lookup(controlClient.materializer());
@@ -103,7 +105,7 @@ public class EnsemblePeerService extends AbstractIdleService {
         if (peer != null) {
             connection = peerConnections.getClientConnection(peer);
             if (connection == null) {
-                connection = peerConnections.connect(peer).get();
+                connection = peerConnections.connect(peer, MoreExecutors.sameThreadExecutor()).get();
             }
         }
         return connection;
@@ -121,8 +123,7 @@ public class EnsemblePeerService extends AbstractIdleService {
     protected void shutDown() throws Exception {
     }
     
-    protected class ConnectToAll extends TreeFetcher {
-        
+    protected class ConnectToAll extends TreeFetcher<Operation.SessionRequest, Operation.SessionResponse> {
         
         protected ConnectToAll() {
             super(TreeFetcher.Parameters.of(EnumSet.of(OpCode.GET_CHILDREN), false), 
@@ -133,26 +134,26 @@ public class EnsemblePeerService extends AbstractIdleService {
         }
         
         @Override
-        protected TreeFetcherActor newActor() {
+        protected ConnectToAllActor newActor() {
             return new ConnectToAllActor(promise, parameters, root, client, executor);
         }
 
-        protected class ConnectToAllActor extends TreeFetcherActor {
+        protected class ConnectToAllActor extends TreeFetcherActor<Operation.SessionRequest, Operation.SessionResponse> {
         
-            protected final Pending<ClientPeerConnection, ListenableFuture<ClientPeerConnection>> pendingConnects;
+            protected final FutureQueue<ListenableFuture<ClientPeerConnection>> pendingConnects;
             
             protected ConnectToAllActor(
                     Promise<ZNodeLabel.Path> promise,
                     Parameters parameters, 
                     ZNodeLabel.Path root, 
-                    ClientExecutor client,
+                    ClientExecutor<Operation.Request, Operation.SessionRequest, Operation.SessionResponse> client,
                     Executor executor) {
                 super(promise, parameters, root, client, executor);
-                this.pendingConnects = Pending.newInstance();
+                this.pendingConnects = FutureQueue.create();
             }
 
             @Override
-            protected void runAll() throws Exception {
+            protected void doRun() throws Exception {
                 ListenableFuture<ClientPeerConnection> next;
                 while ((next = pendingConnects.poll()) != null) {
                     try {
@@ -163,15 +164,15 @@ public class EnsemblePeerService extends AbstractIdleService {
                     }
                 }
                 
-                super.runAll();
+                super.doRun();
             }
             
             @Override
-            protected void handleResult(Operation.SessionResult result) throws KeeperException, InterruptedException, ExecutionException {
-                Operation.Request request = result.request().request();
-                Operation.Response reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, request.toString());
-                if (reply instanceof Records.ChildrenHolder) {
-                    ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathHolder) request).getPath());
+            protected void applyPendingResult(Pair<Operation.SessionRequest, Operation.SessionResponse> result) throws KeeperException, InterruptedException, ExecutionException {
+                Records.Request request = result.first().request();
+                Records.Response reply = Operations.maybeError(result.second().response(), KeeperException.Code.NONODE, result.toString());
+                if (reply instanceof Records.ChildrenGetter) {
+                    ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
                     ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();
                     ZNodeLabel.Component pathTail = path.tail();
                     if (Orchestra.Ensembles.Entity.Conductors.LABEL.equals(pathTail)) {
@@ -184,7 +185,7 @@ public class EnsemblePeerService extends AbstractIdleService {
                     if (root.equals(path) 
                             || root.equals(pathHead) 
                             || Orchestra.Ensembles.Entity.Conductors.LABEL.equals(pathTail)) {
-                        for (String child: ((Records.ChildrenHolder) reply).getChildren()) {
+                        for (String child: ((Records.ChildrenGetter) reply).getChildren()) {
                             send(ZNodeLabel.Path.of(path, ZNodeLabel.Component.of(child)));
                         }
                     }

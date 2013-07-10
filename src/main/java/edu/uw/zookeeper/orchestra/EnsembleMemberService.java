@@ -24,7 +24,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.client.ZNodeResponseCache;
+import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
@@ -35,6 +35,7 @@ import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Automatons;
+import edu.uw.zookeeper.util.Pair;
 
 public class EnsembleMemberService extends AbstractIdleService {
 
@@ -59,7 +60,7 @@ public class EnsembleMemberService extends AbstractIdleService {
                 RuntimeModule runtime) {
             Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             Orchestra.Ensembles.Entity.Conductors.Member myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(
-                    conductorConfiguration.get().id(), 
+                    conductorConfiguration.getAddress().id(), 
                     Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));
             EnsembleMemberService instance = new EnsembleMemberService(myMember, myEnsemble, locator);
             runtime.serviceMonitor().addOnStart(instance);
@@ -92,22 +93,22 @@ public class EnsembleMemberService extends AbstractIdleService {
     
     @Override
     protected void startUp() throws Exception {        
-        Materializer materializer = locator.getInstance(ControlClientService.class).materializer();
-        Materializer.Operator operator = materializer.operator();
+        Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
+        Materializer.Operator<?,?> operator = materializer.operator();
 
         // Register my identifier
-        Operation.SessionResult result = operator.create(Control.path(myMember.parent())).submit().get();
-        Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+        Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(Control.path(myMember.parent())).submit().get();
+        Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
         result = operator.create(myMember.path()).submit().get();
-        Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+        Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
 
         // Propose myself as leader
         EnsembleRole role = this.role.elect();
         
         // Global barrier - Wait for every ensemble to elect a leader
-        Predicate<Materializer> allLeaders = new Predicate<Materializer>() {
+        Predicate<Materializer<?,?>> allLeaders = new Predicate<Materializer<?,?>>() {
             @Override
-            public boolean apply(@Nullable Materializer input) {
+            public boolean apply(@Nullable Materializer<?,?> input) {
                 ZNodeLabel.Path root = Control.path(Orchestra.Ensembles.class);
                 ZNodeLabel.Component label = Orchestra.Ensembles.Entity.Leader.LABEL;
                 boolean done = true;
@@ -157,7 +158,7 @@ public class EnsembleMemberService extends AbstractIdleService {
 
     protected class RoleOverseer implements FutureCallback<WatchEvent> {
     
-        protected final ControlClientService controlClient;
+        protected final ControlClientService<?> controlClient;
         protected final ZNodeLabel.Path leaderPath;
         protected final Orchestra.Ensembles.Entity.Leader.Proposer proposer;
         protected final Automatons.SynchronizedEventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
@@ -176,7 +177,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             subscribeLeaderWatch();
         }
         
-        public ControlClientService controlClient() {
+        public ControlClientService<?> controlClient() {
             return controlClient;
         }
         
@@ -212,7 +213,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         }
 
         @Subscribe
-        public void handleViewUpdate(ZNodeResponseCache.ViewUpdate event) {
+        public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
             if (leaderPath.equals(event.path())) {
                 Materializer.MaterializedNode node = controlClient().materializer().get(leaderPath);
                 Identifier value = (node != null) ? (Identifier) node.get().get() : null;
@@ -221,9 +222,9 @@ public class EnsembleMemberService extends AbstractIdleService {
         }
 
         @Subscribe
-        public void handleNodeUpdate(ZNodeResponseCache.NodeUpdate event) {
+        public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
             if (leaderPath.equals(event.path().get())) {
-                if (ZNodeResponseCache.NodeUpdate.UpdateType.NODE_REMOVED == event.type()) {
+                if (ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED == event.type()) {
                     setLeader(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(event.path().stamp(), null));
                 }
             }

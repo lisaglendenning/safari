@@ -18,10 +18,11 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.LabelType;
-import edu.uw.zookeeper.orchestra.BackendView;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.VolumeDescriptor;
+import edu.uw.zookeeper.orchestra.backend.BackendView;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.util.Pair;
 
 public abstract class Orchestra extends Control.ControlZNode {
     
@@ -37,15 +38,15 @@ public abstract class Orchestra extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static Entity create(ServerInetAddressView value, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
-                Materializer.Operator operator = materializer.operator();
+            public static Entity create(ServerInetAddressView value, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                Materializer.Operator<?,?> operator = materializer.operator();
                 Hash.Hashed hashed = Orchestra.Conductors.Entity.hashOf(value);
                 Orchestra.Conductors.Entity entity = null;
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
                     entity = Orchestra.Conductors.Entity.of(id);
-                    Operation.SessionResult result = operator.create(entity.path()).submit().get();
-                    Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
+                    Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
                     
                     Orchestra.Conductors.Entity.ConductorAddress address = Orchestra.Conductors.Entity.ConductorAddress.create(value, entity, materializer);
                     if (! value.equals(address.get())) {
@@ -92,9 +93,9 @@ public abstract class Orchestra extends Control.ControlZNode {
                     super(parent);
                 }
                 
-                public boolean exists(ClientExecutor client) throws InterruptedException, ExecutionException {
-                    Operation.SessionResult result = client.submit(Operations.Requests.exists().setPath(path()).build()).get();
-                    return ! (result.reply().reply() instanceof Operation.Error);
+                public boolean exists(ClientExecutor<Operation.Request,?,?> client) throws InterruptedException, ExecutionException {
+                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = client.submit(Operations.Requests.exists().setPath(path()).build()).get();
+                    return ! (result.second().response() instanceof Operation.Error);
                 }
             }
             
@@ -104,11 +105,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("clientAddress");
                 
-                public static ClientAddress get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static ClientAddress get(Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(ClientAddress.class, entity, materializer);
                 }
                 
-                public static ClientAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static ClientAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(ClientAddress.class, value, entity, materializer);
                 }
                 
@@ -131,10 +132,10 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("conductorAddress");
                 
-                public static ConductorAddress lookup(Conductors.Entity entity, Materializer materializer) throws KeeperException, InterruptedException, ExecutionException {
+                public static ConductorAddress lookup(Conductors.Entity entity, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
                     Materializer.MaterializedNode parent = materializer.get(entity.path());
                     if (parent == null) {
-                        Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().reply().reply(), KeeperException.Code.NONODE);
+                        Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().second().response(), KeeperException.Code.NONODE);
                         parent = materializer.get(entity.path());
                         if (parent == null) {
                             return null;
@@ -142,7 +143,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                     }
                     Materializer.MaterializedNode child = parent.get(LABEL);
                     if (child == null) {
-                        Operations.maybeError(materializer.operator().getData(ZNodeLabel.Path.of(entity.path(), LABEL)).submit().get().reply().reply(), KeeperException.Code.NONODE);
+                        Operations.maybeError(materializer.operator().getData(ZNodeLabel.Path.of(entity.path(), LABEL)).submit().get().second().response(), KeeperException.Code.NONODE);
                         child = parent.get(LABEL);
                         if (child == null) {
                             return null;
@@ -151,11 +152,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                     return of((ServerInetAddressView) child.get().get(), entity);
                 }
                 
-                public static ConductorAddress get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static ConductorAddress get(Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(ConductorAddress.class, entity, materializer);
                 }
                 
-                public static ConductorAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static ConductorAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(ConductorAddress.class, value, entity, materializer);
                 }
                 
@@ -175,11 +176,11 @@ public abstract class Orchestra extends Control.ControlZNode {
             @ZNode(label="backend", type=BackendView.class)
             public static class Backend extends Control.TypedValueZNode<BackendView> {
                 
-                public static Entity.Backend get(Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Backend get(Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Backend.class, entity, materializer);
                 }
                 
-                public static Entity.Backend create(BackendView value, Conductors.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Backend create(BackendView value, Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(Entity.Backend.class, value, entity, materializer);
                 }
                 
@@ -203,15 +204,15 @@ public abstract class Orchestra extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static Entity create(EnsembleView<ServerInetAddressView> value, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
-                Materializer.Operator operator = materializer.operator();
+            public static Entity create(EnsembleView<ServerInetAddressView> value, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                Materializer.Operator<?,?> operator = materializer.operator();
                 Hash.Hashed hashed = Orchestra.Ensembles.Entity.hashOf(value);
                 Orchestra.Ensembles.Entity entity = null;
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
                     entity = Orchestra.Ensembles.Entity.of(id);
-                    Operation.SessionResult result = operator.create(entity.path()).submit().get();
-                    Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
+                    Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
                     
                     // If this identifier doesn't correspond to my ensemble, keep hashing
                     Orchestra.Ensembles.Entity.Backend ensembleBackend = Orchestra.Ensembles.Entity.Backend.create(value, entity, materializer);
@@ -251,11 +252,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("backend");
                 
-                public static Entity.Backend get(Ensembles.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Backend get(Ensembles.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Backend.class, entity, materializer);
                 }
                 
-                public static Entity.Backend create(EnsembleView<ServerInetAddressView> value, Ensembles.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Backend create(EnsembleView<ServerInetAddressView> value, Ensembles.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(Ensembles.Entity.Backend.class, value, entity, materializer);
                 }
                 
@@ -282,7 +283,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                     super(parent);
                 }
                 
-                public List<Member> lookup(Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public List<Member> lookup(Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     Materializer.MaterializedNode parent = materializer.get(path());
                     if (parent == null || parent.isEmpty()) {
                         return get(materializer);
@@ -295,9 +296,9 @@ public abstract class Orchestra extends Control.ControlZNode {
                     }
                 }
 
-                public List<Member> get(Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public List<Member> get(Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     ImmutableList.Builder<Member> members = ImmutableList.builder();
-                    Operations.maybeError(materializer.operator().getChildren(path()).submit().get().reply().reply(), KeeperException.Code.NODEEXISTS);
+                    Operations.maybeError(materializer.operator().getChildren(path()).submit().get().second().response(), KeeperException.Code.NODEEXISTS);
                     Materializer.MaterializedNode parent = materializer.get(path());
                     if (parent != null) {
                         for (ZNodeLabel.Component e: parent.keySet()) {
@@ -338,11 +339,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("leader");
                 
-                public static Entity.Leader get(Ensembles.Entity parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Leader get(Ensembles.Entity parent, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Leader.class, parent, materializer);
                 }
                 
-                public static Entity.Leader create(Identifier value, Ensembles.Entity parent, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Leader create(Identifier value, Ensembles.Entity parent, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(Entity.Leader.class, value, parent, materializer);
                 }
                 
@@ -350,9 +351,9 @@ public abstract class Orchestra extends Control.ControlZNode {
 
                     protected final Identifier value;
                     protected final Ensembles.Entity parent;
-                    protected final Materializer materializer;
+                    protected final Materializer<?,?> materializer;
                     
-                    public Proposer(Identifier value, Ensembles.Entity parent, Materializer materializer) {
+                    public Proposer(Identifier value, Ensembles.Entity parent, Materializer<?,?> materializer) {
                         this.value = value;
                         this.parent = parent;
                         this.materializer = materializer;
@@ -360,14 +361,14 @@ public abstract class Orchestra extends Control.ControlZNode {
                     
                     @Override
                     public Leader call() throws InterruptedException, ExecutionException, KeeperException {
-                        Materializer.Operator operator = materializer.operator();
+                        Materializer.Operator<?,?> operator = materializer.operator();
                         Entity.Leader instance = of(value, parent);
                         Entity.Leader leader = null;
                         while (leader == null) {
                             operator.create(instance.path(), instance.get()).submit();
                             operator.sync(instance.path()).submit();
-                            Operation.SessionResult result = operator.getData(instance.path(), true).submit().get();
-                            Operation.Response reply = Operations.maybeError(result.reply().reply(), KeeperException.Code.NONODE, result.toString());
+                            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.getData(instance.path(), true).submit().get();
+                            Operation.Response reply = Operations.maybeError(result.second().response(), KeeperException.Code.NONODE, result.toString());
                             if (! (reply instanceof Operation.Error)) {
                                 Materializer.MaterializedNode node = materializer.get(instance.path());
                                 if (node != null) {
@@ -400,15 +401,15 @@ public abstract class Orchestra extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static Entity create(VolumeDescriptor value, Materializer materializer) throws KeeperException, InterruptedException, ExecutionException {
-                Materializer.Operator operator = materializer.operator();
+            public static Entity create(VolumeDescriptor value, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
+                Materializer.Operator<?,?> operator = materializer.operator();
                 Hash.Hashed hashed = hashOf(value);
                 Entity entity = null;
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
                     entity = Entity.of(id);
-                    Operation.SessionResult result = operator.create(entity.path()).submit().get();
-                    Operations.maybeError(result.reply().reply(), KeeperException.Code.NODEEXISTS, result.toString());
+                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
+                    Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
                     
                     // If this identifier doesn't correspond to the value, keep hashing
                     Orchestra.Volumes.Entity.Volume volume = Orchestra.Volumes.Entity.Volume.create(value, entity, materializer);
@@ -448,11 +449,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("volume");
                 
-                public static Entity.Volume get(Volumes.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Volume get(Volumes.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Volume.class, entity, materializer);
                 }
                 
-                public static Entity.Volume create(VolumeDescriptor value, Volumes.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Volume create(VolumeDescriptor value, Volumes.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(Entity.Volume.class, value, entity, materializer);
                 }
                 
@@ -471,11 +472,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("ensemble");
                 
-                public static Entity.Ensemble get(Volumes.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Ensemble get(Volumes.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Ensemble.class, entity, materializer);
                 }
                 
-                public static Entity.Ensemble create(Identifier value, Volumes.Entity entity, Materializer materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Ensemble create(Identifier value, Volumes.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(Entity.Ensemble.class, value, entity, materializer);
                 }
                 

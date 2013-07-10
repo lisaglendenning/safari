@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.backend;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;

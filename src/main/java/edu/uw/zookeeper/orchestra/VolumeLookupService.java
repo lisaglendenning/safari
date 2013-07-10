@@ -26,7 +26,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.client.ZNodeResponseCache;
+import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.control.Control;
@@ -49,7 +49,7 @@ public class VolumeLookupService extends AbstractIdleService {
 
         @Provides @Singleton
         public VolumeLookupService getVolumeLookupService(
-                ControlClientService controlClient,
+                ControlClientService<?> controlClient,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
             VolumeLookupService instance = new VolumeLookupService(controlClient);
             runtime.serviceMonitor().addOnStart(instance);
@@ -119,12 +119,12 @@ public class VolumeLookupService extends AbstractIdleService {
     private static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
 
     protected final Logger logger;
-    protected final ControlClientService controlClient;
+    protected final ControlClientService<?> controlClient;
     protected final ZNodeLabelTrie<VolumeLookupNode> lookupTrie;
     protected final ConcurrentMap<Identifier, ZNodeLabel.Path> byVolumeId;
     
     public VolumeLookupService(
-            ControlClientService controlClient) {
+            ControlClientService<?> controlClient) {
         this.logger = LoggerFactory.getLogger(getClass());
         this.controlClient = controlClient;
         this.lookupTrie = ZNodeLabelTrie.of(VolumeLookupNode.root());
@@ -166,9 +166,9 @@ public class VolumeLookupService extends AbstractIdleService {
         new UpdateFromCache();
         
         // Global barrier - Wait for all volumes to be assigned
-        Predicate<Materializer> allAssigned = new Predicate<Materializer>() {
+        Predicate<Materializer<?,?>> allAssigned = new Predicate<Materializer<?,?>>() {
             @Override
-            public boolean apply(@Nullable Materializer input) {
+            public boolean apply(@Nullable Materializer<?,?> input) {
                 ZNodeLabel.Component label = Orchestra.Volumes.Entity.Ensemble.LABEL;
                 boolean done = true;
                 for (Materializer.MaterializedNode e: input.get(VOLUMES_PATH).values()) {
@@ -239,9 +239,9 @@ public class VolumeLookupService extends AbstractIdleService {
         }
         
         @Subscribe
-        public void handleNodeUpdate(ZNodeResponseCache.NodeUpdate event) {
+        public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
             ZNodeLabel.Path path = event.path().get();
-            if (ZNodeResponseCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type() 
+            if (ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type() 
                     || ! VOLUMES_PATH.prefixOf(path)) {
                 return;
             }
@@ -283,9 +283,9 @@ public class VolumeLookupService extends AbstractIdleService {
         }
 
         @Subscribe
-        public void handleViewUpdate(ZNodeResponseCache.ViewUpdate event) {
+        public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
             ZNodeLabel.Path path = event.path();
-            if (ZNodeResponseCache.View.DATA != event.view() 
+            if (ZNodeViewCache.View.DATA != event.view() 
                     || ! VOLUMES_PATH.prefixOf(path)
                     || VOLUMES_PATH.equals(path)) {
                 return;

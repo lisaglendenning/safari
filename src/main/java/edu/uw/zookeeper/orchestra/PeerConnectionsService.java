@@ -1,8 +1,10 @@
 package edu.uw.zookeeper.orchestra;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 
 import org.apache.zookeeper.KeeperException;
 
@@ -12,6 +14,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -24,6 +27,9 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
+import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
+import edu.uw.zookeeper.orchestra.backend.ShardedClientConnectionExecutor;
+import edu.uw.zookeeper.orchestra.backend.ShardedResponseMessage;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
@@ -32,6 +38,10 @@ import edu.uw.zookeeper.orchestra.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.protocol.MessagePacketCodec;
+import edu.uw.zookeeper.orchestra.protocol.MessageSessionClose;
+import edu.uw.zookeeper.orchestra.protocol.MessageSessionOpen;
+import edu.uw.zookeeper.orchestra.protocol.MessageSessionRequest;
+import edu.uw.zookeeper.orchestra.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.orchestra.protocol.MessageType;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Pair;
@@ -40,7 +50,7 @@ import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
 import edu.uw.zookeeper.util.Publisher;
 
-public class ConductorPeerService extends AbstractIdleService {
+public class PeerConnectionsService extends AbstractIdleService {
 
     public static ParameterizedFactory<Publisher, Pair<Class<MessagePacket>, FramedMessagePacketCodec>> codecFactory(
             final ObjectMapper mapper) {
@@ -79,7 +89,7 @@ public class ConductorPeerService extends AbstractIdleService {
         }
 
         @Provides @Singleton
-        public ConductorPeerService getConductorPeerService(
+        public PeerConnectionsService getConductorPeerService(
                 ConductorConfiguration configuration,
                 ServiceLocator locator,
                 NettyModule netModule,
@@ -88,7 +98,7 @@ public class ConductorPeerService extends AbstractIdleService {
                     netModule.servers().get(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory())
-                    .get(configuration.get().address().get());
+                    .get(configuration.getAddress().address().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
             ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnections =  
                     netModule.clients().get(
@@ -100,7 +110,7 @@ public class ConductorPeerService extends AbstractIdleService {
                     IntraVmConnectionEndpoint.create(runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
             Pair<IntraVmConnection, IntraVmConnection> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
-            ConductorPeerService instance = new ConductorPeerService(configuration.get().id(), serverConnections, clientConnections, loopback, locator);
+            PeerConnectionsService instance = new PeerConnectionsService(configuration.getAddress().id(), serverConnections, clientConnections, loopback, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -114,7 +124,7 @@ public class ConductorPeerService extends AbstractIdleService {
     protected final ConcurrentMap<Identifier, ClientPeerConnection> clientConnections;
     protected final Pair<ServerPeerConnection, ClientPeerConnection> loopback;
     
-    public ConductorPeerService(
+    public PeerConnectionsService(
             Identifier identifier,
             ServerConnectionFactory<MessagePacket, Connection<MessagePacket>> serverConnectionFactory,
             ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnectionFactory,
@@ -147,13 +157,13 @@ public class ConductorPeerService extends AbstractIdleService {
         }
     }
     
-    public ListenableFuture<ClientPeerConnection> connect(Identifier identifier) {
-        return new ConnectTask(identifier);
+    public ListenableFuture<ClientPeerConnection> connect(Identifier identifier, Executor executor) {
+        return new ClientConnectTask(identifier, executor);
     }
     
     @Override
     protected void startUp() throws Exception {
-        new OnConnectListener();
+        new ServerAcceptListener();
         
         serverConnectionFactory.start().get();
         clientConnectionFactory.start().get();
@@ -176,7 +186,9 @@ public class ConductorPeerService extends AbstractIdleService {
         @Subscribe
         public void handleTransition(Automaton.Transition<?> event) {
             if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                second().unregister(this);
+                try {
+                    second().unregister(this);
+                } catch (IllegalArgumentException e) {}
             }
         }
     }
@@ -185,6 +197,13 @@ public class ConductorPeerService extends AbstractIdleService {
     
         public ClientPeerConnection(Identifier first, Connection<? super MessagePacket> second) {
             super(first, second);
+            
+            ClientPeerConnection prev = clientConnections.putIfAbsent(first(), this);
+            if (prev != null) {
+                second().close();
+            } else {
+                second().write(MessagePacket.of(MessageHandshake.of(identifier)));
+            }
         }
 
         @Override
@@ -202,6 +221,16 @@ public class ConductorPeerService extends AbstractIdleService {
         
         public ServerPeerConnection(Identifier first, Connection<? super MessagePacket> second) {
             super(first, second);
+
+            ServerPeerConnection prev = serverConnections.putIfAbsent(first(), this);
+            if (prev != null) {
+                prev.second().close();
+                serverConnections.remove(prev.first(), prev);
+                prev = serverConnections.putIfAbsent(first(), this);
+                if (prev != null) {
+                    throw new IllegalStateException();
+                }
+            }
         }
 
         @Override
@@ -213,62 +242,130 @@ public class ConductorPeerService extends AbstractIdleService {
                 serverConnections.remove(first(), this);
             }
         }
-    }
-    
-    protected class ConnectTask extends PromiseTask<Identifier, ClientPeerConnection> implements FutureCallback<Connection<MessagePacket>> {
-
-        protected ConnectTask(Identifier task) {
-            this(task, PromiseTask.<ClientPeerConnection>newPromise());
+        
+        @Subscribe
+        public void handlePeerMessage(MessagePacket message) {
+            switch (message.first().type()) {
+            case MESSAGE_TYPE_SESSION_OPEN:
+                handleMessageSessionOpen((MessageSessionOpen) message.second());
+                break;
+            case MESSAGE_TYPE_SESSION_CLOSE:
+                handleMessageSessionClose((MessageSessionClose) message.second());
+                break;
+            case MESSAGE_TYPE_SESSION_REQUEST:
+                handleMessageSessionRequest((MessageSessionRequest) message.second());
+                break;
+            default:
+                throw new AssertionError(message.toString());
+            }
         }
         
-        protected ConnectTask(Identifier task,
-                Promise<ClientPeerConnection> delegate) {
-            super(task, delegate);
+        protected void handleMessageSessionRequest(MessageSessionRequest message) {
+            ShardedClientConnectionExecutor<?> client = locator.getInstance(BackendRequestService.class).get(message.getSessionId());
+            client.submit(message.getRequest());
+        }
+
+        protected void handleMessageSessionOpen(MessageSessionOpen message) {
+            ShardedClientConnectionExecutor<?> client = locator.getInstance(BackendRequestService.class).get(message);
+            new BackendClientListener(message.getSessionId(), client);
+        }
+
+        protected void handleMessageSessionClose(MessageSessionClose message) {
+            locator.getInstance(BackendRequestService.class).remove(message);
+        }
+        
+        protected class BackendClientListener {
+            protected final long sessionId;
+            protected final ShardedClientConnectionExecutor<?> client;
             
-            Materializer materializer = locator.getInstance(ControlClientService.class).materializer();
-            try {
-                Orchestra.Conductors.Entity.ConductorAddress address = Orchestra.Conductors.Entity.ConductorAddress.lookup(Orchestra.Conductors.Entity.of(task), materializer);
-                Futures.addCallback(clientConnectionFactory.connect(address.get().get()), this);
-            } catch (Exception e) {
-                onFailure(e);
+            public BackendClientListener(
+                    long sessionId,
+                    ShardedClientConnectionExecutor<?> client) {
+                this.sessionId = sessionId;
+                this.client = client;
+                client.register(this);
             }
+
+            @Subscribe
+            public void handleTransition(Automaton.Transition<?> event) {
+                if (Connection.State.CONNECTION_CLOSED == event.to()) {
+                    try {
+                        client.unregister(this);
+                    } catch (IllegalArgumentException e) {}
+                }
+            }
+            
+            @Subscribe
+            public void handleResponse(ShardedResponseMessage message) {
+                second().write(MessagePacket.of(MessageSessionResponse.of(sessionId, message)));
+            }
+        }
+    }
+    
+    protected class ClientConnectTask extends PromiseTask<Identifier, ClientPeerConnection> implements FutureCallback<Connection<MessagePacket>> {
+
+        protected ClientConnectTask(Identifier task, Executor executor) {
+            this(task, PromiseTask.<ClientPeerConnection>newPromise(), executor);
+        }
+        
+        protected final Executor executor;
+        
+        protected ClientConnectTask(Identifier task,
+                Promise<ClientPeerConnection> delegate, Executor executor) {
+            super(task, delegate);
+            this.executor = executor;
+            LookupAddressTask lookupTask = new LookupAddressTask();
+            ListenableFutureTask<Orchestra.Conductors.Entity.ConductorAddress> lookupFuture = ListenableFutureTask.create(lookupTask);
+            Futures.addCallback(lookupFuture, lookupTask, executor);
+            executor.execute(lookupFuture);
         }
 
         @Override
         public void onSuccess(Connection<MessagePacket> result) {
-            ClientPeerConnection peered = new ClientPeerConnection(task(), result);
-            ClientPeerConnection prev = clientConnections.putIfAbsent(peered.first(), peered);
-            if (prev != null) {
-                result.close();
-                peered = prev;
-            } else {
-                peered.second().write(MessagePacket.of(MessageHandshake.of(identifier)));
-            }
-            set(peered);
+            new ClientPeerConnection(task(), result);
+            set(clientConnections.get(task()));
         }
 
         @Override
         public void onFailure(Throwable t) {
             setException(t);
         }
+        
+        protected class LookupAddressTask implements Callable<Orchestra.Conductors.Entity.ConductorAddress>, FutureCallback<Orchestra.Conductors.Entity.ConductorAddress> {
+            @Override
+            public Orchestra.Conductors.Entity.ConductorAddress call() throws Exception {
+                Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
+                return Orchestra.Conductors.Entity.ConductorAddress.lookup(Orchestra.Conductors.Entity.of(task), materializer);
+            }
+            
+            @Override
+            public void onSuccess(Orchestra.Conductors.Entity.ConductorAddress result) {
+                Futures.addCallback(clientConnectionFactory.connect(result.get().get()), ClientConnectTask.this, executor);
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                ClientConnectTask.this.setException(t);
+            }
+        }
     }
 
-    protected class OnConnectListener {
-        protected OnConnectListener() {
+    protected class ServerAcceptListener {
+        protected ServerAcceptListener() {
             serverConnectionFactory.register(this);
         }
 
         @Subscribe
         public void handleServerConnection(Connection<MessagePacket> connection) {
-            new OnConnectTask(connection);
+            new ServerAcceptTask(connection);
         }
     }
         
-    protected class OnConnectTask {
+    protected class ServerAcceptTask {
 
         protected final Connection<MessagePacket> connection;
         
-        protected OnConnectTask(Connection<MessagePacket> connection) {
+        protected ServerAcceptTask(Connection<MessagePacket> connection) {
             this.connection = connection;
             
             connection.register(this);
@@ -278,17 +375,10 @@ public class ConductorPeerService extends AbstractIdleService {
         public void handleMessage(MessagePacket event) {
             if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.first().type()) {
                 MessageHandshake body = (MessageHandshake) event.second();
-                ServerPeerConnection peered = new ServerPeerConnection(body.getId(), connection);
-                ServerPeerConnection prev = serverConnections.putIfAbsent(peered.first(), peered);
-                if (prev != null) {
-                    prev.second().close();
-                    serverConnections.remove(prev.first(), prev);
-                    prev = serverConnections.putIfAbsent(peered.first(), peered);
-                    if (prev != null) {
-                        throw new IllegalStateException();
-                    }
-                }
+                new ServerPeerConnection(body.getId(), connection);
                 connection.unregister(this);
+            } else {
+                throw new AssertionError(event.toString());
             }
         }
 

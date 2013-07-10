@@ -1,20 +1,19 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.backend;
 
 import com.google.common.base.Function;
 
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.AbstractPair;
 
-public class ActionPrefixTranslator extends AbstractPair<ZNodeLabel.Path, ZNodeLabel.Path> implements Function<Operation.Action, Operation.Action> {
+public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPair<ZNodeLabel.Path, ZNodeLabel.Path> implements Function<T,T> {
 
-    public static ActionPrefixTranslator of(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
-        return new ActionPrefixTranslator(fromPrefix, toPrefix);
+    public static <T extends Records.Coded> RecordPrefixTranslator<T> of(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
+        return new RecordPrefixTranslator<T>(fromPrefix, toPrefix);
     }
     
-    public ActionPrefixTranslator(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
+    public RecordPrefixTranslator(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
         super(fromPrefix, toPrefix);
     }
     
@@ -27,9 +26,10 @@ public class ActionPrefixTranslator extends AbstractPair<ZNodeLabel.Path, ZNodeL
     }
 
     @Override
-    public Operation.Action apply(Operation.Action input) {
-        Operation.Action output = input;
-        if (input instanceof Records.PathHolder) {
+    @SuppressWarnings("unchecked")
+    public T apply(T input) {
+        T output = input;
+        if (input instanceof Records.PathGetter) {
             Operations.PathBuilder<?> builder = (Operations.PathBuilder<?>) Operations.fromRecord(input);
             ZNodeLabel.Path path = builder.getPath();
             if (getFromPrefix().prefixOf(path)) {
@@ -42,7 +42,9 @@ public class ActionPrefixTranslator extends AbstractPair<ZNodeLabel.Path, ZNodeL
                     transformed = ZNodeLabel.Path.joined(getToPrefix().toString(), remaining);
                 }
                 builder.setPath(transformed);
-                output = builder.build();
+                output = (T) builder.build();
+            } else {
+                throw new IllegalArgumentException(input.toString());
             }
         }
         return output;

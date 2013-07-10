@@ -10,6 +10,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.orchestra.backend.BackendConfiguration;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 
@@ -30,7 +31,7 @@ public class EnsembleConfiguration {
         @Provides @Singleton
         public EnsembleConfiguration getEnsembleConfiguration(
                 BackendConfiguration backendConfiguration,
-                ControlClientService controlClient) throws InterruptedException, ExecutionException, KeeperException {
+                ControlClientService<?> controlClient) throws InterruptedException, ExecutionException, KeeperException {
             // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
             Orchestra.Ensembles.Entity ensembleNode = Orchestra.Ensembles.Entity.create(myView, controlClient.materializer());
