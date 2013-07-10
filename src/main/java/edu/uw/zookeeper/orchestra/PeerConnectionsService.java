@@ -1,7 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -9,6 +8,7 @@ import java.util.concurrent.Executor;
 import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.Maps;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
@@ -134,27 +134,19 @@ public class PeerConnectionsService extends AbstractIdleService {
         this.serverConnectionFactory = serverConnectionFactory;
         this.clientConnectionFactory = clientConnectionFactory;
         this.locator = locator;
-        this.serverConnections = new ConcurrentHashMap<Identifier, ServerPeerConnection>();
-        this.clientConnections = new ConcurrentHashMap<Identifier, ClientPeerConnection>();
+        this.serverConnections = Maps.newConcurrentMap();
+        this.clientConnections = Maps.newConcurrentMap();
         this.loopback = Pair.create(
                 new ServerPeerConnection(identifier, loopback.first()),
                 new ClientPeerConnection(identifier, loopback.second()));
     }
     
     public ClientPeerConnection getClientConnection(Identifier identifier) {
-        if (this.identifier.equals(identifier)) {
-            return loopback.second();
-        } else {
-            return clientConnections.get(identifier);
-        }
+        return clientConnections.get(identifier);
     }
 
     public ServerPeerConnection getServerConnection(Identifier identifier) {
-        if (this.identifier.equals(identifier)) {
-            return loopback.first();
-        } else {
-            return serverConnections.get(identifier);
-        }
+        return serverConnections.get(identifier);
     }
     
     public ListenableFuture<ClientPeerConnection> connect(Identifier identifier, Executor executor) {
@@ -246,6 +238,9 @@ public class PeerConnectionsService extends AbstractIdleService {
         @Subscribe
         public void handlePeerMessage(MessagePacket message) {
             switch (message.first().type()) {
+            case MESSAGE_TYPE_HANDSHAKE:
+                handleMessageHandshake((MessageHandshake) message.second());
+                break;
             case MESSAGE_TYPE_SESSION_OPEN:
                 handleMessageSessionOpen((MessageSessionOpen) message.second());
                 break;
@@ -260,6 +255,10 @@ public class PeerConnectionsService extends AbstractIdleService {
             }
         }
         
+        protected void handleMessageHandshake(MessageHandshake second) {
+            assert(second.getId() == first());
+        }
+
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
             ShardedClientConnectionExecutor<?> client = locator.getInstance(BackendRequestService.class).get(message.getSessionId());
             client.submit(message.getRequest());

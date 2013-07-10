@@ -57,7 +57,7 @@ public class ControlClientService<C extends Connection<? super Operation.Request
         }
 
         @Provides @Singleton
-        public ConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getConnectionFactory(
+        public ControlClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getControlClientConnectionFactory(
                 ControlConfiguration configuration,
                 RuntimeModule runtime, 
                 NettyClientModule clientModule) {
@@ -72,14 +72,14 @@ public class ControlClientService<C extends Connection<? super Operation.Request
                     ServerInetAddressView.class, 
                     configuration.getEnsemble(), 
                     configuration.getTimeOut());
-            ConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = new ConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>(clientConnections, factory);
+            ControlClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = new ControlClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>(clientConnections, factory);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
 
         @Provides @Singleton
         public ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getControlClientService(
-                ConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> factory,
+                ControlClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> factory,
                 RuntimeModule runtime) {
             ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = new ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>(factory);
             runtime.serviceMonitor().addOnStart(instance);
@@ -119,7 +119,7 @@ public class ControlClientService<C extends Connection<? super Operation.Request
     protected final WatchPromiseTrie watches;
 
     protected ControlClientService(
-            ConnectionFactory<C> factory) {
+            ControlClientConnectionFactory<C> factory) {
         super(factory);
         this.materializer = Materializer.newInstance(
                         Control.getSchema(),
@@ -142,8 +142,8 @@ public class ControlClientService<C extends Connection<? super Operation.Request
     }
     
     @Override
-    protected ConnectionFactory<C> factory() {
-        return (ConnectionFactory<C>) factory;
+    protected ControlClientConnectionFactory<C> factory() {
+        return (ControlClientConnectionFactory<C>) factory;
     }
 
     @Override
@@ -158,12 +158,12 @@ public class ControlClientService<C extends Connection<? super Operation.Request
         createPrefix(materializer());
     }
 
-    protected static class ConnectionFactory<C extends Connection<? super Operation.Request>> extends AbstractIdleService implements Factory<ClientConnectionExecutor<C>> {
+    protected static class ControlClientConnectionFactory<C extends Connection<? super Operation.Request>> extends AbstractIdleService implements Factory<ClientConnectionExecutor<C>> {
 
         protected final ClientConnectionFactory<?,C> clientConnections;
         protected final EnsembleViewFactory<ServerInetAddressView, C> factory;
         
-        protected ConnectionFactory(
+        protected ControlClientConnectionFactory(
                 ClientConnectionFactory<?, C> clientConnections,
                 EnsembleViewFactory<ServerInetAddressView, C> factory) {
             this.clientConnections = clientConnections;
