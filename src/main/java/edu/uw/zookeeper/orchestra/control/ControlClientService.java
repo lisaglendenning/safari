@@ -11,6 +11,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
@@ -50,6 +51,9 @@ public class ControlClientService<C extends Connection<? super Operation.Request
         @Override
         protected void configure() {
             install(ControlConfiguration.module());
+            TypeLiteral<ControlClientService<?>> generic = new TypeLiteral<ControlClientService<?>>(){};
+            bind(ControlClientService.class).to(generic);
+            bind(generic).to(new TypeLiteral<ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>(){});
         }
 
         @Provides @Singleton
@@ -74,10 +78,10 @@ public class ControlClientService<C extends Connection<? super Operation.Request
         }
 
         @Provides @Singleton
-        public <C extends Connection<? super Operation.Request>> ControlClientService<C> getControlClientService(
-                ConnectionFactory<C> factory,
+        public ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getControlClientService(
+                ConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> factory,
                 RuntimeModule runtime) {
-            ControlClientService<C> instance = new ControlClientService<C>(factory);
+            ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = new ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>(factory);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }

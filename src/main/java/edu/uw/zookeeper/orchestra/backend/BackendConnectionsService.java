@@ -5,6 +5,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.ClientApplicationModule;
@@ -33,6 +34,9 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
         @Override
         protected void configure() {
             install(BackendConfiguration.module());
+            TypeLiteral<BackendConnectionsService<?>> generic = new TypeLiteral<BackendConnectionsService<?>>() {};
+            bind(BackendConnectionsService.class).to(generic);
+            bind(generic).to(new TypeLiteral<BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>() {});
         }
 
         @Provides @Singleton

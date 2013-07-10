@@ -12,6 +12,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
@@ -28,6 +29,8 @@ import edu.uw.zookeeper.orchestra.protocol.MessageSessionClose;
 import edu.uw.zookeeper.orchestra.protocol.MessageSessionOpen;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.client.AssignXidCodec;
+import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.TimeValue;
 
@@ -44,15 +47,18 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         @Override
         protected void configure() {
             install(BackendConnectionsService.module());
+            TypeLiteral<BackendRequestService<?>> generic = new TypeLiteral<BackendRequestService<?>>() {};
+            bind(BackendRequestService.class).to(generic);
+            bind(generic).to(new TypeLiteral<BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>() {});
         }
 
         @Provides @Singleton
-        public <C extends Connection<? super Operation.Request>> BackendRequestService<C> getBackendRequestService(
+        public BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendRequestService(
                 ServiceLocator locator,
-                BackendConnectionsService<C> connections,
+                BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
                 VolumeLookupService volumes,
                 RuntimeModule runtime) throws Exception {
-            BackendRequestService<C> instance = new BackendRequestService<C>(locator, volumes, connections);
+            BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = new BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>(locator, volumes, connections);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
