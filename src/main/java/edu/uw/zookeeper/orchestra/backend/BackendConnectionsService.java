@@ -50,10 +50,17 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
             ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
                    clientModule.get(codecFactory, pingingFactory).get();
             runtime.serviceMonitor().addOnStart(clientConnections);
-            BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = new BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>(configuration.getView(), clientConnections);
+            BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
+                    BackendConnectionsService.newInstance(configuration.getView(), clientConnections);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
+    }
+    
+    public static <C extends Connection<? super Operation.Request>> BackendConnectionsService<C> newInstance(
+            BackendView view,
+            ClientConnectionFactory<?, C> clientConnections) {
+        return new BackendConnectionsService<C>(view, clientConnections);
     }
 
     protected final BackendView view;
@@ -95,5 +102,6 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
 
     @Override
     protected void shutDown() throws Exception {
+        clientConnections.stop().get();
     }
 }

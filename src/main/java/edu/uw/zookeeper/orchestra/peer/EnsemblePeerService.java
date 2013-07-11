@@ -10,7 +10,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
 import org.apache.zookeeper.KeeperException;
-import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -23,10 +22,12 @@ import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.TreeFetcher;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.orchestra.DependentService;
+import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
-import edu.uw.zookeeper.orchestra.control.ControlClientService;
+import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.Operation;
@@ -37,7 +38,8 @@ import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.SettableFuturePromise;
 
-public class EnsemblePeerService extends AbstractIdleService {
+@DependsOn({PeerConnectionsService.class})
+public class EnsemblePeerService extends DependentService.SimpleDependentService {
 
     public static Module module() {
         return new Module();
@@ -54,33 +56,36 @@ public class EnsemblePeerService extends AbstractIdleService {
 
         @Provides @Singleton
         public EnsemblePeerService getEnsemblePeerService(
+                ControlMaterializerService<?> controlClient,
+                PeerConnectionsService peerConnections,
                 ServiceLocator locator,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
-            EnsemblePeerService instance = new EnsemblePeerService(locator);
+            EnsemblePeerService instance = new EnsemblePeerService(peerConnections, controlClient, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
     }
 
-    protected final ServiceLocator locator;
-    protected final ControlClientService<?> controlClient;
+    protected final ControlMaterializerService<?> controlClient;
     protected final PeerConnectionsService peerConnections;
     protected final ConcurrentMap<Identifier, Identifier> ensemblePeers;
     
     public EnsemblePeerService(
+            PeerConnectionsService peerConnections,
+            ControlMaterializerService<?> controlClient,
             ServiceLocator locator) {
-        this.locator = locator;
-        this.controlClient = locator.getInstance(ControlClientService.class);
-        this.peerConnections = locator.getInstance(PeerConnectionsService.class);
+        super(locator);
+        this.controlClient = controlClient;
+        this.peerConnections = peerConnections;
         this.ensemblePeers = new ConcurrentHashMap<Identifier, Identifier>();
     }
     
     public Identifier getPeerForEnsemble(Identifier ensemble) throws InterruptedException, ExecutionException, KeeperException {
         Identifier peer = ensemblePeers.get(ensemble);
         if (peer == null) {
-            Identifier myEnsemble = locator.getInstance(EnsembleConfiguration.class).getEnsemble();
+            Identifier myEnsemble = locator().getInstance(EnsembleConfiguration.class).getEnsemble();
             if (ensemble.equals(myEnsemble)) {
-                peer = locator.getInstance(PeerConfiguration.class).getView().id();
+                peer = locator().getInstance(PeerConfiguration.class).getView().id();
             } else {
                 Orchestra.Ensembles.Entity.Peers conductors = Orchestra.Ensembles.Entity.Peers.of(Orchestra.Ensembles.Entity.of(ensemble));
                 List<Orchestra.Ensembles.Entity.Peers.Member> members = conductors.lookup(controlClient.materializer());
@@ -115,16 +120,12 @@ public class EnsemblePeerService extends AbstractIdleService {
 
     @Override
     protected void startUp() throws Exception {
-        peerConnections.start().get();
+        super.startUp();
         
         ConnectToAll connectToAll = new ConnectToAll();
         connectToAll.call().get();
     }
 
-    @Override
-    protected void shutDown() throws Exception {
-    }
-    
     protected class ConnectToAll extends TreeFetcher<Operation.SessionRequest, Operation.SessionResponse> {
         
         protected ConnectToAll() {

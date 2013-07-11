@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.backend;
+package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.List;
 

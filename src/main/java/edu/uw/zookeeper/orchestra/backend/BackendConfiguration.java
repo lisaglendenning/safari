@@ -5,12 +5,14 @@ import java.net.InetSocketAddress;
 import java.util.AbstractMap;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 
 import javax.management.MBeanServerConnection;
 import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
 
+import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,8 +31,11 @@ import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
 import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
 import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.util.Arguments;
 import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.DefaultsFactory;
@@ -56,6 +61,14 @@ public class BackendConfiguration {
             EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(runtime.configuration());
             TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(runtime.configuration());
             return new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
+        }
+    }
+
+    public static void advertise(Identifier myEntity, BackendView view, Materializer<?, ?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+        Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(myEntity);
+        Orchestra.Peers.Entity.Backend backendNode = Orchestra.Peers.Entity.Backend.create(view, entityNode, materializer);
+        if (! view.equals(backendNode.get())) {
+            throw new IllegalStateException(backendNode.get().toString());
         }
     }
     

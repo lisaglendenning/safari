@@ -52,13 +52,8 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
             ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
                     clientModule.get(codecFactory, pingingFactory).get();
             runtime.serviceMonitor().addOnStart(clientConnections);
-            EnsembleViewFactory<ServerInetAddressView, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> factory = EnsembleViewFactory.newInstance(
-                    clientConnections,
-                    ServerInetAddressView.class, 
-                    configuration.getEnsemble(), 
-                    configuration.getTimeOut());
             ControlConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    ControlConnectionsService.newInstance(clientConnections, factory);
+                    ControlConnectionsService.newInstance(clientConnections, configuration);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -66,7 +61,12 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
     
     public static <C extends Connection<? super Operation.Request>> ControlConnectionsService<C> newInstance(
             ClientConnectionFactory<?, C> clientConnections,
-            EnsembleViewFactory<ServerInetAddressView, C> factory) {
+            ControlConfiguration configuration) {
+        EnsembleViewFactory<ServerInetAddressView, C> factory = EnsembleViewFactory.newInstance(
+                clientConnections,
+                ServerInetAddressView.class, 
+                configuration.getEnsemble(), 
+                configuration.getTimeOut());
         return new ControlConnectionsService<C>(clientConnections, factory);
     }
 
@@ -100,5 +100,6 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
 
     @Override
     protected void shutDown() throws Exception {
+        clientConnections.stop().get();
     }
 }

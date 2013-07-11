@@ -1,12 +1,9 @@
 package edu.uw.zookeeper.orchestra;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
-
-import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
@@ -14,12 +11,11 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
+import com.google.common.collect.Maps;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -30,9 +26,10 @@ import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.control.Control;
-import edu.uw.zookeeper.orchestra.control.ControlClientService;
+import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 
+@DependsOn(ControlMaterializerService.class)
 public class VolumeLookupService extends AbstractIdleService {
 
     public static Module module() {
@@ -49,7 +46,7 @@ public class VolumeLookupService extends AbstractIdleService {
 
         @Provides @Singleton
         public VolumeLookupService getVolumeLookupService(
-                ControlClientService<?> controlClient,
+                ControlMaterializerService<?> controlClient,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
             VolumeLookupService instance = new VolumeLookupService(controlClient);
             runtime.serviceMonitor().addOnStart(instance);
@@ -116,19 +113,26 @@ public class VolumeLookupService extends AbstractIdleService {
         }
     }
     
+    public VolumeLookupService newInstance(
+            ControlMaterializerService<?> controlClient) {
+        return new VolumeLookupService(controlClient);
+    }
+    
     private static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
 
     protected final Logger logger;
-    protected final ControlClientService<?> controlClient;
+    protected final ControlMaterializerService<?> controlClient;
     protected final ZNodeLabelTrie<VolumeLookupNode> lookupTrie;
     protected final ConcurrentMap<Identifier, ZNodeLabel.Path> byVolumeId;
+    protected final UpdateFromCache updater;
     
     public VolumeLookupService(
-            ControlClientService<?> controlClient) {
+            ControlMaterializerService<?> controlClient) {
         this.logger = LoggerFactory.getLogger(getClass());
         this.controlClient = controlClient;
         this.lookupTrie = ZNodeLabelTrie.of(VolumeLookupNode.root());
-        this.byVolumeId = new ConcurrentHashMap<Identifier, ZNodeLabel.Path>();
+        this.byVolumeId = Maps.newConcurrentMap();
+        this.updater = new UpdateFromCache();
     }
     
     public ZNodeLabelTrie<VolumeLookupNode> asTrie() {
@@ -163,25 +167,8 @@ public class VolumeLookupService extends AbstractIdleService {
     
     @Override
     protected void startUp() throws Exception {
-        new UpdateFromCache();
+        updater.initialize();
         
-        // Global barrier - Wait for all volumes to be assigned
-        Predicate<Materializer<?,?>> allAssigned = new Predicate<Materializer<?,?>>() {
-            @Override
-            public boolean apply(@Nullable Materializer<?,?> input) {
-                ZNodeLabel.Component label = Orchestra.Volumes.Entity.Ensemble.LABEL;
-                boolean done = true;
-                for (Materializer.MaterializedNode e: input.get(VOLUMES_PATH).values()) {
-                    if (! e.containsKey(label)) {
-                        done = false;
-                        break;
-                    }
-                }
-                return done;
-            }
-        };
-        Control.FetchUntil.newInstance(VOLUMES_PATH, allAssigned, controlClient.materializer(), MoreExecutors.sameThreadExecutor()).get();
-
         if (logger.isInfoEnabled()) {
             for (Identifier volumeId: byVolumeId.keySet()) {
                 VolumeAssignment assignment = byVolumeId(volumeId);
@@ -198,13 +185,11 @@ public class VolumeLookupService extends AbstractIdleService {
     
     protected class UpdateFromCache {
         
-        protected UpdateFromCache() {
+        public UpdateFromCache() {}
+        
+        public void initialize() {
             controlClient.register(this);
             
-            initialize();
-        }
-        
-        protected void initialize() {
             Materializer.MaterializedNode volumes = controlClient.materializer().get(VOLUMES_PATH);
             if (volumes != null) {
                 for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {

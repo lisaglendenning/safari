@@ -1,7 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
 
-import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
@@ -12,9 +11,10 @@ import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
 import edu.uw.zookeeper.netty.server.NettyServerModule;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
-import edu.uw.zookeeper.orchestra.control.ControlClientService;
+import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
+import edu.uw.zookeeper.orchestra.peer.PeerService;
 import edu.uw.zookeeper.util.Application;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.Reference;
@@ -71,16 +71,18 @@ public class MainApplicationModule extends AbstractModule {
         return module.servers();
     }
     
-    protected class MainService extends AbstractIdleService implements Reference<Injector>, ServiceLocator {
+    @DependsOn({ControlMaterializerService.class, VolumeLookupService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
+    protected class MainService extends DependentService implements Reference<Injector>, ServiceLocator {
 
         protected final Injector injector;
         
         protected MainService() {
             this.injector = Guice.createInjector(
                     MainApplicationModule.this, 
-                    ControlClientService.module(),
-                    ConductorService.module(),
+                    ControlMaterializerService.module(),
+                    VolumeLookupService.module(),
                     BackendRequestService.module(),
+                    PeerService.module(),
                     FrontendServerService.module());
         }
         
@@ -95,15 +97,8 @@ public class MainApplicationModule extends AbstractModule {
         }
 
         @Override
-        protected void startUp() throws Exception {
-            getInstance(ControlClientService.class).start().get();
-            getInstance(ConductorService.class).start().get();
-            getInstance(BackendRequestService.class).start().get();
-            getInstance(FrontendServerService.class).start().get();
-        }
-
-        @Override
-        protected void shutDown() throws Exception {
+        protected ServiceLocator locator() {
+            return this;
         }
     }
 }

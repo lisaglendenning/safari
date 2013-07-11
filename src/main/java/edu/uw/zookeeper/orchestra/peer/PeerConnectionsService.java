@@ -8,14 +8,15 @@ import java.util.concurrent.Executor;
 import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Throwables;
 import com.google.common.collect.Maps;
 import com.google.common.eventbus.Subscribe;
-import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -27,12 +28,14 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
+import edu.uw.zookeeper.orchestra.DependentService;
+import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.backend.ShardedClientConnectionExecutor;
 import edu.uw.zookeeper.orchestra.backend.ShardedResponseMessage;
-import edu.uw.zookeeper.orchestra.control.ControlClientService;
+import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.FramedMessagePacketCodec;
@@ -52,38 +55,39 @@ import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
 import edu.uw.zookeeper.util.Publisher;
 
-public class PeerConnectionsService extends AbstractIdleService {
+@DependsOn({BackendRequestService.class})
+public class PeerConnectionsService extends DependentService.SimpleDependentService {
 
-    public static ParameterizedFactory<Publisher, Pair<Class<MessagePacket>, FramedMessagePacketCodec>> codecFactory(
-            final ObjectMapper mapper) {
-        return new ParameterizedFactory<Publisher, Pair<Class<MessagePacket>, FramedMessagePacketCodec>>() {
-            
-            protected final Pair<Class<MessagePacket>, FramedMessagePacketCodec> codec = Pair.create(MessagePacket.class, FramedMessagePacketCodec.newInstance(MessagePacketCodec.newInstance(mapper)));
-            
-            @Override
-            public Pair<Class<MessagePacket>, FramedMessagePacketCodec> get(
-                    Publisher value) {
-                return codec;
-            }
-        };
-    }
-    
-    public static ParameterizedFactory<Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>> connectionFactory() {
-        return new ParameterizedFactory<Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>>() {
-            @Override
-            public Connection<MessagePacket> get(
-                    Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>> value) {
-                return value.second();
-            }
-        };
-    }
-    
     public static Module module() {
         return new Module();
     }
     
     public static class Module extends AbstractModule {
 
+        public static ParameterizedFactory<Publisher, Pair<Class<MessagePacket>, FramedMessagePacketCodec>> codecFactory(
+                final ObjectMapper mapper) {
+            return new ParameterizedFactory<Publisher, Pair<Class<MessagePacket>, FramedMessagePacketCodec>>() {
+                
+                protected final Pair<Class<MessagePacket>, FramedMessagePacketCodec> codec = Pair.create(MessagePacket.class, FramedMessagePacketCodec.newInstance(MessagePacketCodec.newInstance(mapper)));
+                
+                @Override
+                public Pair<Class<MessagePacket>, FramedMessagePacketCodec> get(
+                        Publisher value) {
+                    return codec;
+                }
+            };
+        }
+        
+        public static ParameterizedFactory<Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>> connectionFactory() {
+            return new ParameterizedFactory<Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>>() {
+                @Override
+                public Connection<MessagePacket> get(
+                        Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>> value) {
+                    return value.second();
+                }
+            };
+        }
+        
         public Module() {}
         
         @Override
@@ -91,7 +95,7 @@ public class PeerConnectionsService extends AbstractIdleService {
         }
 
         @Provides @Singleton
-        public PeerConnectionsService getConductorPeerService(
+        public PeerConnectionsService getPeerConnectionsService(
                 PeerConfiguration configuration,
                 ServiceLocator locator,
                 NettyModule netModule,
@@ -112,14 +116,24 @@ public class PeerConnectionsService extends AbstractIdleService {
                     IntraVmConnectionEndpoint.create(runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
             Pair<IntraVmConnection, IntraVmConnection> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
-            PeerConnectionsService instance = new PeerConnectionsService(configuration.getView().id(), serverConnections, clientConnections, loopback, locator);
+            PeerConnectionsService instance = PeerConnectionsService.newInstance(configuration.getView().id(), serverConnections, clientConnections, loopback, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
     }
+    
+    public static PeerConnectionsService newInstance(
+            Identifier identifier,
+            ServerConnectionFactory<MessagePacket, Connection<MessagePacket>> serverConnectionFactory,
+            ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnectionFactory,
+            Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
+            ServiceLocator locator) {
+        PeerConnectionsService instance = new PeerConnectionsService(identifier, serverConnectionFactory, clientConnectionFactory, loopback, locator);
+        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
+        return instance;
+    }
 
     protected final Identifier identifier;
-    protected final ServiceLocator locator;
     protected final ServerConnectionFactory<MessagePacket, Connection<MessagePacket>> serverConnectionFactory;
     protected final ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnectionFactory;
     protected final ConcurrentMap<Identifier, ServerPeerConnection> serverConnections;
@@ -132,10 +146,10 @@ public class PeerConnectionsService extends AbstractIdleService {
             ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
             ServiceLocator locator) {
+        super(locator);
         this.identifier = identifier;
         this.serverConnectionFactory = serverConnectionFactory;
         this.clientConnectionFactory = clientConnectionFactory;
-        this.locator = locator;
         this.serverConnections = Maps.newConcurrentMap();
         this.clientConnections = Maps.newConcurrentMap();
         this.loopback = Pair.create(
@@ -157,6 +171,8 @@ public class PeerConnectionsService extends AbstractIdleService {
     
     @Override
     protected void startUp() throws Exception {
+        super.startUp();
+        
         new ServerAcceptListener();
         
         serverConnectionFactory.start().get();
@@ -167,8 +183,47 @@ public class PeerConnectionsService extends AbstractIdleService {
     protected void shutDown() throws Exception {
         loopback.first().second().close().get();
         loopback.second().second().close().get();
+
+        serverConnectionFactory.stop().get();
+        clientConnectionFactory.stop().get();
+
+        super.shutDown();
     }
 
+    public class Advertiser implements Service.Listener {
+
+        public Advertiser(Executor executor) {
+            addListener(this, executor);
+        }
+        
+        @Override
+        public void starting() {
+        }
+
+        @Override
+        public void running() {
+            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
+            Identifier peerId = locator().getInstance(PeerConfiguration.class).getView().id();
+            try {
+                PeerConfiguration.advertise(peerId, materializer);
+            } catch (Exception e) {
+                throw Throwables.propagate(e);
+            }
+        }
+
+        @Override
+        public void stopping(State from) {
+        }
+
+        @Override
+        public void terminated(State from) {
+        }
+
+        @Override
+        public void failed(State from, Throwable failure) {
+        }
+    }
+    
     public class PeerConnection extends Pair<Identifier, Connection<? super MessagePacket>> {
     
         public PeerConnection(Identifier first, Connection<? super MessagePacket> second) {
@@ -262,17 +317,17 @@ public class PeerConnectionsService extends AbstractIdleService {
         }
 
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
-            ShardedClientConnectionExecutor<?> client = locator.getInstance(BackendRequestService.class).get(message.getSessionId());
+            ShardedClientConnectionExecutor<?> client = locator().getInstance(BackendRequestService.class).get(message.getSessionId());
             client.submit(message.getRequest());
         }
 
         protected void handleMessageSessionOpen(MessageSessionOpen message) {
-            ShardedClientConnectionExecutor<?> client = locator.getInstance(BackendRequestService.class).get(message);
+            ShardedClientConnectionExecutor<?> client = locator().getInstance(BackendRequestService.class).get(message);
             new BackendClientListener(message.getSessionId(), client);
         }
 
         protected void handleMessageSessionClose(MessageSessionClose message) {
-            locator.getInstance(BackendRequestService.class).remove(message);
+            locator().getInstance(BackendRequestService.class).remove(message);
         }
         
         protected class BackendClientListener {
@@ -335,7 +390,7 @@ public class PeerConnectionsService extends AbstractIdleService {
         protected class LookupAddressTask implements Callable<Orchestra.Peers.Entity.PeerAddress>, FutureCallback<Orchestra.Peers.Entity.PeerAddress> {
             @Override
             public Orchestra.Peers.Entity.PeerAddress call() throws Exception {
-                Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
+                Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
                 return Orchestra.Peers.Entity.PeerAddress.lookup(Orchestra.Peers.Entity.of(task), materializer);
             }
             

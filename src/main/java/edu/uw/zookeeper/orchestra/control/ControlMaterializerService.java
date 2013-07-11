@@ -13,11 +13,13 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.PingingClient;
 
-public class ControlClientService<C extends Connection<? super Operation.Request>> extends ClientConnectionExecutorService<C> {
+@DependsOn(ControlConnectionsService.class)
+public class ControlMaterializerService<C extends Connection<? super Operation.Request>> extends ClientConnectionExecutorService<C> {
 
     public static Module module() {
         return new Module();
@@ -30,31 +32,31 @@ public class ControlClientService<C extends Connection<? super Operation.Request
         @Override
         protected void configure() {
             install(ControlConnectionsService.module());
-            TypeLiteral<ControlClientService<?>> generic = new TypeLiteral<ControlClientService<?>>(){};
-            bind(ControlClientService.class).to(generic);
-            bind(generic).to(new TypeLiteral<ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>(){});
+            TypeLiteral<ControlMaterializerService<?>> generic = new TypeLiteral<ControlMaterializerService<?>>(){};
+            bind(ControlMaterializerService.class).to(generic);
+            bind(generic).to(new TypeLiteral<ControlMaterializerService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>(){});
         }
 
         @Provides @Singleton
-        public ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getControlClientService(
+        public ControlMaterializerService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getControlClientService(
                 ControlConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
                 RuntimeModule runtime) {
-            ControlClientService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    ControlClientService.newInstance(connections);
+            ControlMaterializerService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
+                    ControlMaterializerService.newInstance(connections);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
     }
     
-    public static <C extends Connection<? super Operation.Request>> ControlClientService<C> newInstance(
+    public static <C extends Connection<? super Operation.Request>> ControlMaterializerService<C> newInstance(
             ControlConnectionsService<C> connections) {
-        return new ControlClientService<C>(connections);
+        return new ControlMaterializerService<C>(connections);
     }
 
     protected final Materializer<Operation.SessionRequest, Operation.SessionResponse> materializer;
     protected final WatchPromiseTrie watches;
 
-    protected ControlClientService(
+    protected ControlMaterializerService(
             ControlConnectionsService<C> connections) {
         super(connections);
         this.materializer = Materializer.newInstance(
