@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.frontend;
 
 import java.io.IOException;
 import java.util.List;
@@ -18,6 +18,8 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.orchestra.VolumeAssignment;
+import edu.uw.zookeeper.orchestra.VolumeLookupService;
 import edu.uw.zookeeper.orchestra.backend.ShardedOperationTranslators;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;

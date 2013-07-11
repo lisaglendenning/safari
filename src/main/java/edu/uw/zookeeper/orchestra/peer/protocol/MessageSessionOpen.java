@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.protocol;
+package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;

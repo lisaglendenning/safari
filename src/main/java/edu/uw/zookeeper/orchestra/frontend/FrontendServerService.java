@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.concurrent.ExecutionException;
 
@@ -14,6 +14,8 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
+import edu.uw.zookeeper.orchestra.ConductorService;
+import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
@@ -104,8 +106,8 @@ public class FrontendServerService extends AbstractIdleService {
     
     public void register() throws InterruptedException, ExecutionException, KeeperException {
         Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
-        Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.of(locator.getInstance(ConductorService.class).view().id());
-        Orchestra.Conductors.Entity.ClientAddress clientAddressNode = Orchestra.Conductors.Entity.ClientAddress.create(address(), entityNode, materializer);
+        Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(locator.getInstance(ConductorService.class).view().id());
+        Orchestra.Peers.Entity.ClientAddress clientAddressNode = Orchestra.Peers.Entity.ClientAddress.create(address(), entityNode, materializer);
         if (! address().equals(clientAddressNode.get())) {
             throw new IllegalStateException(clientAddressNode.get().toString());
         }        

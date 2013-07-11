@@ -13,6 +13,7 @@ import edu.uw.zookeeper.netty.client.NettyClientModule;
 import edu.uw.zookeeper.netty.server.NettyServerModule;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
+import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.util.Application;
 import edu.uw.zookeeper.util.ParameterizedFactory;

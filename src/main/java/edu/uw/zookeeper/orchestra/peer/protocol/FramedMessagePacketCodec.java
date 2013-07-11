@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.protocol;
+package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import io.netty.buffer.ByteBuf;
 

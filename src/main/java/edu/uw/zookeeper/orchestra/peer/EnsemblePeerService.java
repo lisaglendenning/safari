@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.peer;
 
 import java.util.Collections;
 import java.util.EnumSet;
@@ -23,10 +23,12 @@ import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.TreeFetcher;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.PeerConnectionsService.ClientPeerConnection;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -78,15 +80,15 @@ public class EnsemblePeerService extends AbstractIdleService {
         if (peer == null) {
             Identifier myEnsemble = locator.getInstance(EnsembleConfiguration.class).getEnsemble();
             if (ensemble.equals(myEnsemble)) {
-                peer = locator.getInstance(ConductorConfiguration.class).getAddress().id();
+                peer = locator.getInstance(PeerConfiguration.class).getView().id();
             } else {
-                Orchestra.Ensembles.Entity.Conductors conductors = Orchestra.Ensembles.Entity.Conductors.of(Orchestra.Ensembles.Entity.of(ensemble));
-                List<Orchestra.Ensembles.Entity.Conductors.Member> members = conductors.lookup(controlClient.materializer());
+                Orchestra.Ensembles.Entity.Peers conductors = Orchestra.Ensembles.Entity.Peers.of(Orchestra.Ensembles.Entity.of(ensemble));
+                List<Orchestra.Ensembles.Entity.Peers.Member> members = conductors.lookup(controlClient.materializer());
                 Collections.shuffle(members);
-                for (Orchestra.Ensembles.Entity.Conductors.Member e: members) {
-                    Orchestra.Conductors.Entity.Presence presence = 
-                            Orchestra.Conductors.Entity.Presence.of(
-                                    Orchestra.Conductors.Entity.of(e.get()));
+                for (Orchestra.Ensembles.Entity.Peers.Member e: members) {
+                    Orchestra.Peers.Entity.Presence presence = 
+                            Orchestra.Peers.Entity.Presence.of(
+                                    Orchestra.Peers.Entity.of(e.get()));
                     if (presence.exists(controlClient.materializer())) {
                         peer = e.get();
                         break;
@@ -175,7 +177,7 @@ public class EnsemblePeerService extends AbstractIdleService {
                     ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
                     ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();
                     ZNodeLabel.Component pathTail = path.tail();
-                    if (Orchestra.Ensembles.Entity.Conductors.LABEL.equals(pathTail)) {
+                    if (Orchestra.Ensembles.Entity.Peers.LABEL.equals(pathTail)) {
                         Identifier ensemble = Identifier.valueOf(controlClient.materializer().get(pathHead).parent().orNull().label().toString());
                         ListenableFutureTask<ClientPeerConnection> task = ListenableFutureTask.create(new ConnectTask(ensemble));
                         pendingConnects.add(task);
@@ -184,7 +186,7 @@ public class EnsemblePeerService extends AbstractIdleService {
                     }
                     if (root.equals(path) 
                             || root.equals(pathHead) 
-                            || Orchestra.Ensembles.Entity.Conductors.LABEL.equals(pathTail)) {
+                            || Orchestra.Ensembles.Entity.Peers.LABEL.equals(pathTail)) {
                         for (String child: ((Records.ChildrenGetter) reply).getChildren()) {
                             send(ZNodeLabel.Path.of(path, ZNodeLabel.Component.of(child)));
                         }

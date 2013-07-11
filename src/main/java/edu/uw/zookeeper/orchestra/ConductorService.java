@@ -14,6 +14,10 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.peer.EnsemblePeerService;
+import edu.uw.zookeeper.orchestra.peer.PeerAddressView;
+import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
+import edu.uw.zookeeper.orchestra.peer.EnsembleMemberService;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.util.Pair;
 
@@ -29,7 +33,7 @@ public class ConductorService extends AbstractIdleService {
         
         @Override
         protected void configure() {
-            install(ConductorConfiguration.module());
+            install(PeerConfiguration.module());
             install(EnsemblePeerService.module());
             install(EnsembleMemberService.module());
             install(VolumeLookupService.module());
@@ -37,24 +41,24 @@ public class ConductorService extends AbstractIdleService {
 
         @Provides @Singleton
         public ConductorService getConductorService(
-                ConductorConfiguration configuration,
+                PeerConfiguration configuration,
                 EnsemblePeerService connections,
                 EnsembleMemberService member,
                 ServiceLocator locator,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
-            ConductorService instance = new ConductorService(configuration.getAddress(), connections, member, locator);
+            ConductorService instance = new ConductorService(configuration.getView(), connections, member, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
     }
     
     protected final ServiceLocator locator;
-    protected final ConductorAddressView view;
+    protected final PeerAddressView view;
     protected final EnsemblePeerService connections;
     protected final EnsembleMemberService member;
     
     protected ConductorService(
-            ConductorAddressView view,
+            PeerAddressView view,
             EnsemblePeerService connections,
             EnsembleMemberService member,
             ServiceLocator locator) {
@@ -64,14 +68,14 @@ public class ConductorService extends AbstractIdleService {
         this.locator = locator;
     }
     
-    public ConductorAddressView view() {
+    public PeerAddressView view() {
         return view;
     }
 
     protected void register() throws KeeperException, InterruptedException, ExecutionException {
         Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
-        Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.of(view().id());
-        Orchestra.Conductors.Entity.Presence presenceNode = Orchestra.Conductors.Entity.Presence.of(entityNode);
+        Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(view().id());
+        Orchestra.Peers.Entity.Presence presenceNode = Orchestra.Peers.Entity.Presence.of(entityNode);
         Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = materializer.operator().create(presenceNode.path()).submit().get();
         Operations.unlessError(result.second().response(), result.toString());
     }

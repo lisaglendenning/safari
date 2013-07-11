@@ -12,6 +12,7 @@ import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -26,8 +27,10 @@ import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodeLabelTrie;
+import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.data.Schema.ZNodeSchema.Builder.ZNodeTraversal;
-import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
+import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
@@ -49,7 +52,35 @@ public abstract class Control {
     public static ZNodeLabel.Path path(Object element) {
         return ControlZNode.path(element);
     }
-
+    
+    public static void createPrefix(Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+        // The prefix is small enough that there's no need to get fancy here
+        final Predicate<Schema.SchemaNode> isPrefix = new Predicate<Schema.SchemaNode>() {
+            @Override
+            public boolean apply(Schema.SchemaNode input) {
+                return (LabelType.LABEL == input.get().getLabelType());
+            }            
+        };
+        
+        final Iterator<Schema.SchemaNode> iterator = new ZNodeLabelTrie.BreadthFirstTraversal<Schema.SchemaNode>(materializer.schema().root()) {
+            @Override
+            protected Iterable<Schema.SchemaNode> childrenOf(Schema.SchemaNode node) {
+                return Iterables.filter(node.values(), isPrefix);
+            }
+        };
+        
+        Materializer.Operator<?,?> operator = materializer.operator();
+        while (iterator.hasNext()) {
+            Schema.SchemaNode node = iterator.next();
+            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.exists(node.path()).submit().get();
+            Operation.Response response = Operations.maybeError(result.second().response(), KeeperException.Code.NONODE, result.toString());
+            if (response instanceof Operation.Error) {
+                result = operator.create(node.path()).submit().get();
+                response = Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+            }
+        }
+    }
+    
     public static enum SchemaHolder implements Reference<Schema> {
         INSTANCE(Schema.of(Schema.ZNodeSchema.getDefault()));
         

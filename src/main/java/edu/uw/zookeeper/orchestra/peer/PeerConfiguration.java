@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.peer;
 
 import java.util.concurrent.ExecutionException;
 
@@ -15,7 +15,7 @@ import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 
-public class ConductorConfiguration {
+public class PeerConfiguration {
 
     public static Module module() {
         return new Module();
@@ -30,24 +30,24 @@ public class ConductorConfiguration {
         }
 
         @Provides @Singleton
-        public ConductorConfiguration getConductorConfiguration(
+        public PeerConfiguration getPeerConfiguration(
                 ControlClientService<?> controlClient, 
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
             Materializer<?,?> materializer = controlClient.materializer();
             ServerInetAddressView conductorAddress = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
-                            "Conductor", "address", "conductorAddress", "", 2281).get(runtime.configuration());
-            Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.create(conductorAddress, materializer);
-            return new ConductorConfiguration(ConductorAddressView.of(entityNode.get(), conductorAddress));
+                            "Peer", "address", "peerAddress", "", 2281).get(runtime.configuration());
+            Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.create(conductorAddress, materializer);
+            return new PeerConfiguration(PeerAddressView.of(entityNode.get(), conductorAddress));
         }
     }
 
-    private final ConductorAddressView address;
+    private final PeerAddressView address;
     
-    public ConductorConfiguration(ConductorAddressView address) {
+    public PeerConfiguration(PeerAddressView address) {
         this.address = address;
     }
     
-    public ConductorAddressView getAddress() {
+    public PeerAddressView getView() {
         return address;
     }
 }

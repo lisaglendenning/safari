@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.protocol;
+package edu.uw.zookeeper.orchestra.peer.protocol;
 
 public enum MessageType {
     MESSAGE_TYPE_NONE,

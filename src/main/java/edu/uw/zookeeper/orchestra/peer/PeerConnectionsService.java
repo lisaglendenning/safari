@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.peer;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
@@ -27,22 +27,24 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.backend.ShardedClientConnectionExecutor;
 import edu.uw.zookeeper.orchestra.backend.ShardedResponseMessage;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
-import edu.uw.zookeeper.orchestra.protocol.FramedMessagePacketCodec;
-import edu.uw.zookeeper.orchestra.protocol.MessageHandshake;
-import edu.uw.zookeeper.orchestra.protocol.JacksonModule;
-import edu.uw.zookeeper.orchestra.protocol.MessagePacket;
-import edu.uw.zookeeper.orchestra.protocol.MessagePacketCodec;
-import edu.uw.zookeeper.orchestra.protocol.MessageSessionClose;
-import edu.uw.zookeeper.orchestra.protocol.MessageSessionOpen;
-import edu.uw.zookeeper.orchestra.protocol.MessageSessionRequest;
-import edu.uw.zookeeper.orchestra.protocol.MessageSessionResponse;
-import edu.uw.zookeeper.orchestra.protocol.MessageType;
+import edu.uw.zookeeper.orchestra.peer.protocol.FramedMessagePacketCodec;
+import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionClose;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpen;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionRequest;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionResponse;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageType;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.ParameterizedFactory;
@@ -90,7 +92,7 @@ public class PeerConnectionsService extends AbstractIdleService {
 
         @Provides @Singleton
         public PeerConnectionsService getConductorPeerService(
-                ConductorConfiguration configuration,
+                PeerConfiguration configuration,
                 ServiceLocator locator,
                 NettyModule netModule,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
@@ -98,7 +100,7 @@ public class PeerConnectionsService extends AbstractIdleService {
                     netModule.servers().get(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory())
-                    .get(configuration.getAddress().address().get());
+                    .get(configuration.getView().address().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
             ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnections =  
                     netModule.clients().get(
@@ -110,7 +112,7 @@ public class PeerConnectionsService extends AbstractIdleService {
                     IntraVmConnectionEndpoint.create(runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
             Pair<IntraVmConnection, IntraVmConnection> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
-            PeerConnectionsService instance = new PeerConnectionsService(configuration.getAddress().id(), serverConnections, clientConnections, loopback, locator);
+            PeerConnectionsService instance = new PeerConnectionsService(configuration.getView().id(), serverConnections, clientConnections, loopback, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -314,7 +316,7 @@ public class PeerConnectionsService extends AbstractIdleService {
             super(task, delegate);
             this.executor = executor;
             LookupAddressTask lookupTask = new LookupAddressTask();
-            ListenableFutureTask<Orchestra.Conductors.Entity.ConductorAddress> lookupFuture = ListenableFutureTask.create(lookupTask);
+            ListenableFutureTask<Orchestra.Peers.Entity.PeerAddress> lookupFuture = ListenableFutureTask.create(lookupTask);
             Futures.addCallback(lookupFuture, lookupTask, executor);
             executor.execute(lookupFuture);
         }
@@ -330,15 +332,15 @@ public class PeerConnectionsService extends AbstractIdleService {
             setException(t);
         }
         
-        protected class LookupAddressTask implements Callable<Orchestra.Conductors.Entity.ConductorAddress>, FutureCallback<Orchestra.Conductors.Entity.ConductorAddress> {
+        protected class LookupAddressTask implements Callable<Orchestra.Peers.Entity.PeerAddress>, FutureCallback<Orchestra.Peers.Entity.PeerAddress> {
             @Override
-            public Orchestra.Conductors.Entity.ConductorAddress call() throws Exception {
+            public Orchestra.Peers.Entity.PeerAddress call() throws Exception {
                 Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
-                return Orchestra.Conductors.Entity.ConductorAddress.lookup(Orchestra.Conductors.Entity.of(task), materializer);
+                return Orchestra.Peers.Entity.PeerAddress.lookup(Orchestra.Peers.Entity.of(task), materializer);
             }
             
             @Override
-            public void onSuccess(Orchestra.Conductors.Entity.ConductorAddress result) {
+            public void onSuccess(Orchestra.Peers.Entity.PeerAddress result) {
                 Futures.addCallback(clientConnectionFactory.connect(result.get().get()), ClientConnectTask.this, executor);
             }
 

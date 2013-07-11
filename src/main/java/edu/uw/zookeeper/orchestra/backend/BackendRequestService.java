@@ -25,8 +25,8 @@ import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.VolumeLookupService;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
-import edu.uw.zookeeper.orchestra.protocol.MessageSessionClose;
-import edu.uw.zookeeper.orchestra.protocol.MessageSessionOpen;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionClose;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpen;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
@@ -120,8 +120,8 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     
     protected void register() throws InterruptedException, ExecutionException, KeeperException {
         Materializer<?,?> materializer = locator.getInstance(ControlClientService.class).materializer();
-        Orchestra.Conductors.Entity entityNode = Orchestra.Conductors.Entity.of(locator.getInstance(ConductorService.class).view().id());
-        Orchestra.Conductors.Entity.Backend backendNode = Orchestra.Conductors.Entity.Backend.create(connections.view(), entityNode, materializer);
+        Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(locator.getInstance(ConductorService.class).view().id());
+        Orchestra.Peers.Entity.Backend backendNode = Orchestra.Peers.Entity.Backend.create(connections.view(), entityNode, materializer);
         if (! connections.view().equals(backendNode.get())) {
             throw new IllegalStateException(backendNode.get().toString());
         }

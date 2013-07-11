@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.peer;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -29,6 +29,9 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.ServiceLocator;
+import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlClientService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
@@ -55,13 +58,13 @@ public class EnsembleMemberService extends AbstractIdleService {
         @Provides @Singleton
         public EnsembleMemberService getEnsembleMember(
                 EnsembleConfiguration ensembleConfiguration,
-                ConductorConfiguration conductorConfiguration,
+                PeerConfiguration conductorConfiguration,
                 ServiceLocator locator,
                 RuntimeModule runtime) {
             Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
-            Orchestra.Ensembles.Entity.Conductors.Member myMember = Orchestra.Ensembles.Entity.Conductors.Member.of(
-                    conductorConfiguration.getAddress().id(), 
-                    Orchestra.Ensembles.Entity.Conductors.of(myEnsemble));
+            Orchestra.Ensembles.Entity.Peers.Member myMember = Orchestra.Ensembles.Entity.Peers.Member.of(
+                    conductorConfiguration.getView().id(), 
+                    Orchestra.Ensembles.Entity.Peers.of(myEnsemble));
             EnsembleMemberService instance = new EnsembleMemberService(myMember, myEnsemble, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
@@ -69,12 +72,12 @@ public class EnsembleMemberService extends AbstractIdleService {
     }
     
     protected final ServiceLocator locator;
-    protected final Orchestra.Ensembles.Entity.Conductors.Member myMember;
+    protected final Orchestra.Ensembles.Entity.Peers.Member myMember;
     protected final Orchestra.Ensembles.Entity myEnsemble;
     protected final RoleOverseer role;
     
     public EnsembleMemberService(
-            Orchestra.Ensembles.Entity.Conductors.Member myMember, 
+            Orchestra.Ensembles.Entity.Peers.Member myMember, 
             Orchestra.Ensembles.Entity myEnsemble,
             ServiceLocator locator) {
         this.locator = locator;

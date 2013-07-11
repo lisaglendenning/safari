@@ -29,8 +29,8 @@ public abstract class Orchestra extends Control.ControlZNode {
     @Label
     public static final ZNodeLabel.Path ROOT = ZNodeLabel.Path.of("/orchestra");
     
-    @ZNode(label="conductors")
-    public static abstract class Conductors extends Control.ControlZNode {
+    @ZNode(label="peers")
+    public static abstract class Peers extends Control.ControlZNode {
 
         @ZNode
         public static class Entity extends Control.TypedLabelZNode<Identifier> {
@@ -40,15 +40,15 @@ public abstract class Orchestra extends Control.ControlZNode {
 
             public static Entity create(ServerInetAddressView value, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                 Materializer.Operator<?,?> operator = materializer.operator();
-                Hash.Hashed hashed = Orchestra.Conductors.Entity.hashOf(value);
-                Orchestra.Conductors.Entity entity = null;
+                Hash.Hashed hashed = Orchestra.Peers.Entity.hashOf(value);
+                Orchestra.Peers.Entity entity = null;
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
-                    entity = Orchestra.Conductors.Entity.of(id);
+                    entity = Orchestra.Peers.Entity.of(id);
                     Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
                     Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
                     
-                    Orchestra.Conductors.Entity.ConductorAddress address = Orchestra.Conductors.Entity.ConductorAddress.create(value, entity, materializer);
+                    Orchestra.Peers.Entity.PeerAddress address = Orchestra.Peers.Entity.PeerAddress.create(value, entity, materializer);
                     if (! value.equals(address.get())) {
                         entity = null;
                         hashed = hashed.rehash();
@@ -58,7 +58,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                 return entity;
             }
             
-            public static Conductors.Entity valueOf(String label) {
+            public static Peers.Entity valueOf(String label) {
                 return of(Identifier.valueOf(label));
             }
             
@@ -66,7 +66,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                 return Hash.default32().apply(ServerInetAddressView.toString(value));
             }
             
-            public static Conductors.Entity of(Identifier identifier) {
+            public static Peers.Entity of(Identifier identifier) {
                 return new Entity(identifier);
             }
             
@@ -85,11 +85,11 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("presence");
 
-                public static Presence of(Conductors.Entity parent) {
+                public static Presence of(Peers.Entity parent) {
                     return new Presence(parent);
                 }
                 
-                public Presence(Conductors.Entity parent) {
+                public Presence(Peers.Entity parent) {
                     super(parent);
                 }
                 
@@ -105,34 +105,34 @@ public abstract class Orchestra extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("clientAddress");
                 
-                public static ClientAddress get(Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static ClientAddress get(Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(ClientAddress.class, entity, materializer);
                 }
                 
-                public static ClientAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static ClientAddress create(ServerInetAddressView value, Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(ClientAddress.class, value, entity, materializer);
                 }
                 
-                public static ClientAddress valueOf(String label, Conductors.Entity parent) {
+                public static ClientAddress valueOf(String label, Peers.Entity parent) {
                     return of(ServerInetAddressView.fromString(label), parent);
                 }
                 
-                public static ClientAddress of(ServerInetAddressView address, Conductors.Entity parent) {
+                public static ClientAddress of(ServerInetAddressView address, Peers.Entity parent) {
                     return new ClientAddress(address, parent);
                 }
                 
-                public ClientAddress(ServerInetAddressView address, Conductors.Entity parent) {
+                public ClientAddress(ServerInetAddressView address, Peers.Entity parent) {
                     super(address, parent);
                 }
             }
             
             @ZNode(type=ServerInetAddressView.class)
-            public static class ConductorAddress extends Control.TypedValueZNode<ServerInetAddressView> {
+            public static class PeerAddress extends Control.TypedValueZNode<ServerInetAddressView> {
 
                 @Label
-                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("conductorAddress");
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peerAddress");
                 
-                public static ConductorAddress lookup(Conductors.Entity entity, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
+                public static PeerAddress lookup(Peers.Entity entity, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
                     Materializer.MaterializedNode parent = materializer.get(entity.path());
                     if (parent == null) {
                         Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().second().response(), KeeperException.Code.NONODE);
@@ -152,23 +152,23 @@ public abstract class Orchestra extends Control.ControlZNode {
                     return of((ServerInetAddressView) child.get().get(), entity);
                 }
                 
-                public static ConductorAddress get(Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
-                    return get(ConductorAddress.class, entity, materializer);
+                public static PeerAddress get(Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return get(PeerAddress.class, entity, materializer);
                 }
                 
-                public static ConductorAddress create(ServerInetAddressView value, Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
-                    return create(ConductorAddress.class, value, entity, materializer);
+                public static PeerAddress create(ServerInetAddressView value, Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                    return create(PeerAddress.class, value, entity, materializer);
                 }
                 
-                public static ConductorAddress valueOf(String label, Conductors.Entity parent) {
+                public static PeerAddress valueOf(String label, Peers.Entity parent) {
                     return of(ServerInetAddressView.fromString(label), parent);
                 }
                 
-                public static ConductorAddress of(ServerInetAddressView address, Conductors.Entity parent) {
-                    return new ConductorAddress(address, parent);
+                public static PeerAddress of(ServerInetAddressView address, Peers.Entity parent) {
+                    return new PeerAddress(address, parent);
                 }
                 
-                public ConductorAddress(ServerInetAddressView address, Conductors.Entity parent) {
+                public PeerAddress(ServerInetAddressView address, Peers.Entity parent) {
                     super(address, parent);
                 }
             }
@@ -176,19 +176,19 @@ public abstract class Orchestra extends Control.ControlZNode {
             @ZNode(label="backend", type=BackendView.class)
             public static class Backend extends Control.TypedValueZNode<BackendView> {
                 
-                public static Entity.Backend get(Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Backend get(Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return get(Entity.Backend.class, entity, materializer);
                 }
                 
-                public static Entity.Backend create(BackendView value, Conductors.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+                public static Entity.Backend create(BackendView value, Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     return create(Entity.Backend.class, value, entity, materializer);
                 }
                 
-                public static Entity.Backend of(BackendView value, Conductors.Entity parent) {
+                public static Entity.Backend of(BackendView value, Peers.Entity parent) {
                     return new Backend(value, parent);
                 }
 
-                public Backend(BackendView value, Conductors.Entity parent) {
+                public Backend(BackendView value, Peers.Entity parent) {
                     super(value, parent);
                 }
             }
@@ -270,16 +270,16 @@ public abstract class Orchestra extends Control.ControlZNode {
             }
             
             @ZNode
-            public static class Conductors extends Control.ControlZNode {
+            public static class Peers extends Control.ControlZNode {
 
                 @Label
-                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("conductors");
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peers");
                 
-                public static Entity.Conductors of(Ensembles.Entity parent) {
-                    return new Conductors(parent);
+                public static Entity.Peers of(Ensembles.Entity parent) {
+                    return new Peers(parent);
                 }
                 
-                public Conductors(Ensembles.Entity parent) {
+                public Peers(Ensembles.Entity parent) {
                     super(parent);
                 }
                 
@@ -314,15 +314,15 @@ public abstract class Orchestra extends Control.ControlZNode {
                     @Label(type=LabelType.PATTERN)
                     public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-                    public static Conductors.Member valueOf(String label, Entity.Conductors parent) {
+                    public static Peers.Member valueOf(String label, Entity.Peers parent) {
                         return of(Identifier.valueOf(label), parent);
                     }
                     
-                    public static Conductors.Member of(Identifier identifier, Entity.Conductors parent) {
+                    public static Peers.Member of(Identifier identifier, Entity.Peers parent) {
                         return new Member(identifier, parent);
                     }
                     
-                    public Member(Identifier identifier, Entity.Conductors parent) {
+                    public Member(Identifier identifier, Entity.Peers parent) {
                         super(identifier, parent);
                     }
                     
