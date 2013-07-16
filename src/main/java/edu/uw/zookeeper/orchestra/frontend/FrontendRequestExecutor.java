@@ -106,7 +106,6 @@ public class FrontendRequestExecutor extends AbstractActor<FrontendRequestExecut
         return submit(request, SettableFuturePromise.<ByteBuf>create());
     }
 
-    @Override
     public ListenableFuture<ByteBuf> submit(
             ByteBuf request,
             Promise<ByteBuf> promise) {
@@ -122,8 +121,8 @@ public class FrontendRequestExecutor extends AbstractActor<FrontendRequestExecut
     }
     
     @Subscribe
-    public void handleSessionReply(Operation.SessionResponse message) {
-        if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
+    public void handleSessionReply(Operation.ProtocolResponse<?> message) {
+        if (OpCodeXid.NOTIFICATION.getXid() == message.getXid()) {
             try {
                 // TODO
             } catch (Exception e) {
@@ -162,15 +161,15 @@ public class FrontendRequestExecutor extends AbstractActor<FrontendRequestExecut
     protected class LookupTask extends ForwardingListenableFuture<List<VolumeAssignment>> {
         
         protected final Task task;
-        protected final Operation.SessionRequest message;
+        protected final Operation.ProtocolRequest<?> message;
         protected final List<ZNodeLabel.Path> paths;
         protected final ListenableFuture<List<VolumeAssignment>> delegate;
 
         protected LookupTask(Task task) throws IOException {
             super();
             this.task = task;
-            this.message = (Operation.SessionRequest) serverCodec.decode(task.task()).get();
-            this.paths = PathsOfRequest.getInstance().apply(message.request());
+            this.message = (Operation.ProtocolRequest<?>) serverCodec.decode(task.task()).get();
+            this.paths = PathsOfRequest.getInstance().apply(message.getRecord());
             
             ListenableFuture<List<VolumeAssignment>> delegate = null;
             ImmutableList.Builder<ListenableFuture<VolumeAssignment>> futures = ImmutableList.builder();
@@ -189,7 +188,7 @@ public class FrontendRequestExecutor extends AbstractActor<FrontendRequestExecut
             return task;
         }
         
-        public Operation.SessionRequest getMessage() {
+        public Operation.ProtocolRequest<?> getMessage() {
             return message;
         }
         

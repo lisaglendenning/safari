@@ -8,14 +8,15 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.client.ClientConnectionExecutorService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependsOn;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
+import edu.uw.zookeeper.protocol.client.ClientConnectionExecutorService;
 import edu.uw.zookeeper.protocol.client.PingingClient;
 
 @DependsOn(ControlConnectionsService.class)
@@ -53,7 +54,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         return new ControlMaterializerService<C>(connections);
     }
 
-    protected final Materializer<Operation.SessionRequest, Operation.SessionResponse> materializer;
+    protected final Materializer<Message.ClientRequest<?>, Message.ServerResponse<?>> materializer;
     protected final WatchPromiseTrie watches;
 
     protected ControlMaterializerService(
@@ -67,7 +68,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         this.watches = WatchPromiseTrie.newInstance();
     }
     
-    public Materializer<Operation.SessionRequest, Operation.SessionResponse> materializer() {
+    public Materializer<Message.ClientRequest<?>, Message.ServerResponse<?>> materializer() {
         return materializer;
     }
     
@@ -91,7 +92,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         super.startUp();
 
         this.register(watches);
-        WatchEventPublisher.newInstance(this, this);
+        WatchEventPublisher.create(this, this);
         
         Control.createPrefix(materializer());
     }

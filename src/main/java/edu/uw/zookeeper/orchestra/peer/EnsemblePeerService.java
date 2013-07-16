@@ -30,6 +30,7 @@ import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService.ClientPeerConnection;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -126,7 +127,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
         connectToAll.call().get();
     }
 
-    protected class ConnectToAll extends TreeFetcher<Operation.SessionRequest, Operation.SessionResponse> {
+    protected class ConnectToAll extends TreeFetcher<Message.ClientRequest<?>, Message.ServerResponse<?>> {
         
         protected ConnectToAll() {
             super(TreeFetcher.Parameters.of(EnumSet.of(OpCode.GET_CHILDREN), false), 
@@ -141,7 +142,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
             return new ConnectToAllActor(promise, parameters, root, client, executor);
         }
 
-        protected class ConnectToAllActor extends TreeFetcherActor<Operation.SessionRequest, Operation.SessionResponse> {
+        protected class ConnectToAllActor extends TreeFetcherActor<Message.ClientRequest<?>, Message.ServerResponse<?>> {
         
             protected final FutureQueue<ListenableFuture<ClientPeerConnection>> pendingConnects;
             
@@ -149,7 +150,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
                     Promise<ZNodeLabel.Path> promise,
                     Parameters parameters, 
                     ZNodeLabel.Path root, 
-                    ClientExecutor<Operation.Request, Operation.SessionRequest, Operation.SessionResponse> client,
+                    ClientExecutor<Operation.Request, Message.ClientRequest<?>, Message.ServerResponse<?>> client,
                     Executor executor) {
                 super(promise, parameters, root, client, executor);
                 this.pendingConnects = FutureQueue.create();
@@ -171,9 +172,9 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
             }
             
             @Override
-            protected void applyPendingResult(Pair<Operation.SessionRequest, Operation.SessionResponse> result) throws KeeperException, InterruptedException, ExecutionException {
-                Records.Request request = result.first().request();
-                Records.Response reply = Operations.maybeError(result.second().response(), KeeperException.Code.NONODE, result.toString());
+            protected void applyPendingResult(Pair<Message.ClientRequest<?>, Message.ServerResponse<?>> result) throws KeeperException, InterruptedException, ExecutionException {
+                Records.Request request = result.first().getRecord();
+                Records.Response reply = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
                 if (reply instanceof Records.ChildrenGetter) {
                     ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
                     ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();

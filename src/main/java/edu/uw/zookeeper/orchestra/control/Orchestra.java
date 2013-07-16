@@ -45,8 +45,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
                     entity = Orchestra.Peers.Entity.of(id);
-                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
-                    Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+                    Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.create(entity.path()).submit().get();
+                    Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
                     
                     Orchestra.Peers.Entity.PeerAddress address = Orchestra.Peers.Entity.PeerAddress.create(value, entity, materializer);
                     if (! value.equals(address.get())) {
@@ -94,8 +94,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
                 
                 public boolean exists(ClientExecutor<Operation.Request,?,?> client) throws InterruptedException, ExecutionException {
-                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = client.submit(Operations.Requests.exists().setPath(path()).build()).get();
-                    return ! (result.second().response() instanceof Operation.Error);
+                    Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = client.submit(Operations.Requests.exists().setPath(path()).build()).get();
+                    return ! (result.second().getRecord() instanceof Operation.Error);
                 }
             }
             
@@ -135,7 +135,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                 public static PeerAddress lookup(Peers.Entity entity, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
                     Materializer.MaterializedNode parent = materializer.get(entity.path());
                     if (parent == null) {
-                        Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().second().response(), KeeperException.Code.NONODE);
+                        Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().second().getRecord(), KeeperException.Code.NONODE);
                         parent = materializer.get(entity.path());
                         if (parent == null) {
                             return null;
@@ -143,7 +143,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                     }
                     Materializer.MaterializedNode child = parent.get(LABEL);
                     if (child == null) {
-                        Operations.maybeError(materializer.operator().getData(ZNodeLabel.Path.of(entity.path(), LABEL)).submit().get().second().response(), KeeperException.Code.NONODE);
+                        Operations.maybeError(materializer.operator().getData(ZNodeLabel.Path.of(entity.path(), LABEL)).submit().get().second().getRecord(), KeeperException.Code.NONODE);
                         child = parent.get(LABEL);
                         if (child == null) {
                             return null;
@@ -211,8 +211,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
                     entity = Orchestra.Ensembles.Entity.of(id);
-                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
-                    Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+                    Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.create(entity.path()).submit().get();
+                    Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
                     
                     // If this identifier doesn't correspond to my ensemble, keep hashing
                     Orchestra.Ensembles.Entity.Backend ensembleBackend = Orchestra.Ensembles.Entity.Backend.create(value, entity, materializer);
@@ -298,7 +298,7 @@ public abstract class Orchestra extends Control.ControlZNode {
 
                 public List<Member> get(Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
                     ImmutableList.Builder<Member> members = ImmutableList.builder();
-                    Operations.maybeError(materializer.operator().getChildren(path()).submit().get().second().response(), KeeperException.Code.NODEEXISTS);
+                    Operations.maybeError(materializer.operator().getChildren(path()).submit().get().second().getRecord(), KeeperException.Code.NODEEXISTS);
                     Materializer.MaterializedNode parent = materializer.get(path());
                     if (parent != null) {
                         for (ZNodeLabel.Component e: parent.keySet()) {
@@ -367,8 +367,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                         while (leader == null) {
                             operator.create(instance.path(), instance.get()).submit();
                             operator.sync(instance.path()).submit();
-                            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.getData(instance.path(), true).submit().get();
-                            Operation.Response reply = Operations.maybeError(result.second().response(), KeeperException.Code.NONODE, result.toString());
+                            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.getData(instance.path(), true).submit().get();
+                            Operation.Response reply = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
                             if (! (reply instanceof Operation.Error)) {
                                 Materializer.MaterializedNode node = materializer.get(instance.path());
                                 if (node != null) {
@@ -408,8 +408,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                 while (entity == null) {
                     Identifier id = hashed.asIdentifier();
                     entity = Entity.of(id);
-                    Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(entity.path()).submit().get();
-                    Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+                    Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.create(entity.path()).submit().get();
+                    Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
                     
                     // If this identifier doesn't correspond to the value, keep hashing
                     Orchestra.Volumes.Entity.Volume volume = Orchestra.Volumes.Entity.Volume.create(value, entity, materializer);

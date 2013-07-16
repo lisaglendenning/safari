@@ -23,6 +23,7 @@ import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
+import edu.uw.zookeeper.orchestra.VolumeLookup;
 import edu.uw.zookeeper.orchestra.VolumeLookupService;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
@@ -31,6 +32,7 @@ import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpen;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
+import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.TimeValue;
@@ -61,7 +63,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 VolumeLookupService volumes,
                 RuntimeModule runtime) throws Exception {
             BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    BackendRequestService.newInstance(locator, volumes, connections);
+                    BackendRequestService.newInstance(locator, volumes.get(), connections);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -69,7 +71,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     
     public static <C extends Connection<? super Operation.Request>> BackendRequestService<C> newInstance(
             ServiceLocator locator,
-            final VolumeLookupService volumes,
+            final VolumeLookup volumes,
             BackendConnectionsService<C> connections) {
 
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
@@ -113,7 +115,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         C connection = connections.get();
         ShardedClientConnectionExecutor<C> client = 
                 ShardedClientConnectionExecutor.newInstance(
-                        connection, translator, lookup, request, connection);
+                        translator, lookup, ConnectTask.create(connection, request), connection);
         sessions.putIfAbsent(message.getSessionId(), client);
         // TODO if not absent
         return client;

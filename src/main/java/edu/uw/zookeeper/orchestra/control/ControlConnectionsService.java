@@ -9,8 +9,10 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
+import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
@@ -62,20 +64,21 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
     public static <C extends Connection<? super Operation.Request>> ControlConnectionsService<C> newInstance(
             ClientConnectionFactory<?, C> clientConnections,
             ControlConfiguration configuration) {
-        EnsembleViewFactory<ServerInetAddressView, C> factory = EnsembleViewFactory.newInstance(
-                clientConnections,
-                ServerInetAddressView.class, 
-                configuration.getEnsemble(), 
-                configuration.getTimeOut());
+        EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory = 
+                EnsembleViewFactory.newInstance(
+                    clientConnections,
+                    ServerInetAddressView.class, 
+                    configuration.getEnsemble(), 
+                    configuration.getTimeOut());
         return new ControlConnectionsService<C>(clientConnections, factory);
     }
 
     protected final ClientConnectionFactory<?,C> clientConnections;
-    protected final EnsembleViewFactory<ServerInetAddressView, C> factory;
+    protected final EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory;
     
     protected ControlConnectionsService(
             ClientConnectionFactory<?, C> clientConnections,
-            EnsembleViewFactory<ServerInetAddressView, C> factory) {
+            EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory) {
         this.clientConnections = clientConnections;
         this.factory = factory;
     }
@@ -90,7 +93,7 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
     
     @Override
     public ClientConnectionExecutor<C> get() {
-        return factory.get();
+        return factory.get().get();
     }
 
     @Override

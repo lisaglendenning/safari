@@ -9,6 +9,10 @@ import edu.uw.zookeeper.util.Pair;
 // TODO: what about volume changes?
 public class VolumeShardedOperationTranslators extends ShardedOperationTranslators {
 
+    public static VolumeShardedOperationTranslators of(Function<Identifier, Volume> lookup) {
+        return new VolumeShardedOperationTranslators(lookup);
+    }
+    
     protected static final ZNodeLabel.Path PREFIX = ZNodeLabel.Path.of("/volumes");
     
     public static class VolumePrefix implements Function<Identifier, Pair<ZNodeLabel.Path, ZNodeLabel.Path>> {

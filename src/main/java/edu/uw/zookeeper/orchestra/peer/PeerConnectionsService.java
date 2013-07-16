@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.peer;
 
+import java.net.InetSocketAddress;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
@@ -111,10 +112,11 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
             runtime.serviceMonitor().addOnStart(clientConnections);
-            Pair<IntraVmConnectionEndpoint, IntraVmConnectionEndpoint> loopbackEndpoints = Pair.create(
-                    IntraVmConnectionEndpoint.create(runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()),
-                    IntraVmConnectionEndpoint.create(runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
-            Pair<IntraVmConnection, IntraVmConnection> loopback = 
+            InetSocketAddress loopbackAddress = InetSocketAddress.createUnresolved("localhost", 0);
+            Pair<IntraVmConnectionEndpoint<InetSocketAddress>, IntraVmConnectionEndpoint<InetSocketAddress>> loopbackEndpoints = Pair.create(
+                    IntraVmConnectionEndpoint.create(loopbackAddress, runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()),
+                    IntraVmConnectionEndpoint.create(loopbackAddress, runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
+            Pair<IntraVmConnection<InetSocketAddress>, IntraVmConnection<InetSocketAddress>> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
             PeerConnectionsService instance = PeerConnectionsService.newInstance(configuration.getView().id(), serverConnections, clientConnections, loopback, locator);
             runtime.serviceMonitor().addOnStart(instance);
@@ -352,7 +354,7 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
             }
             
             @Subscribe
-            public void handleResponse(ShardedResponseMessage message) {
+            public void handleResponse(ShardedResponseMessage<?> message) {
                 second().write(MessagePacket.of(MessageSessionResponse.of(sessionId, message)));
             }
         }

@@ -15,6 +15,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.ZNodeDataTrie;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -30,13 +31,14 @@ import edu.uw.zookeeper.orchestra.peer.EnsemblePeerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
+import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
+import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
-import edu.uw.zookeeper.server.ExpireSessionsTask;
-import edu.uw.zookeeper.server.ExpiringSessionManager;
+import edu.uw.zookeeper.server.ExpiringSessionService;
+import edu.uw.zookeeper.server.ExpiringSessionTable;
 import edu.uw.zookeeper.server.ServerApplicationModule;
-import edu.uw.zookeeper.server.ServerConnectionListener;
-import edu.uw.zookeeper.server.ServerExecutor;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
 
 @DependsOn({EnsemblePeerService.class})
@@ -56,28 +58,30 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         }
 
         @Provides @Singleton
-        public ExpiringSessionManager getSessionManager(
+        public ExpiringSessionTable getSessionManager(
                 RuntimeModule runtime) {
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
-            ExpiringSessionManager sessions = ExpiringSessionManager.newInstance(runtime.publisherFactory().get(), policy);
-            ExpireSessionsTask expires = ExpireSessionsTask.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());   
+            ExpiringSessionTable sessions = ExpiringSessionTable.newInstance(runtime.publisherFactory().get(), policy);
+            ExpiringSessionService expires = ExpiringSessionService.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());   
             runtime.serviceMonitor().add(expires);
             return sessions;
         }
 
         @Provides @Singleton
-        public ServerExecutor getServerExecutor(
-                ExpiringSessionManager sessions,
+        public ServerTaskExecutor getServerExecutor(
+                ExpiringSessionTable sessions,
                 RuntimeModule runtime) {
-            ServerExecutor serverExecutor = ServerExecutor.newInstance(
-                    runtime.executors().asListeningExecutorServiceFactory().get(), runtime.publisherFactory(), sessions);
-            return serverExecutor;
+            return ServerApplicationModule.defaultServerExecutor(
+                    ZNodeDataTrie.newInstance(), 
+                    runtime.executors().asListeningExecutorServiceFactory().get(), 
+                    ZxidEpochIncrementer.fromZero(), 
+                    sessions);
         }
         
         @Provides @Singleton
         public FrontendServerService getFrontendServerService(
                 FrontendConfiguration configuration, 
-                ServerExecutor serverExecutor,
+                ServerTaskExecutor serverExecutor,
                 ServiceLocator locator,
                 NettyModule netModule,
                 RuntimeModule runtime) throws Exception {
@@ -86,7 +90,8 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
-            ServerConnectionListener.newInstance(serverConnections, serverExecutor, serverExecutor, serverExecutor);
+            ServerConnectionExecutorsService<?> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
+            runtime.serviceMonitor().addOnStart(server);
             FrontendServerService instance = new FrontendServerService(configuration.getAddress(), serverConnections, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;

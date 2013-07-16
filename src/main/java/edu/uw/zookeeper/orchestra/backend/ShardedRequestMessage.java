@@ -11,45 +11,50 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.SessionRequestMessage;
-import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.proto.Records.Request;
+import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
+import edu.uw.zookeeper.protocol.proto.Records;
 
 @JsonIgnoreProperties({"request"})
-public class ShardedRequestMessage extends ShardedRequest<Message.ClientRequest> implements Operation.SessionRequest {
+public class ShardedRequestMessage<V extends Records.Request> extends ShardedRequest<Message.ClientRequest<V>> implements Message.ClientRequest<V> {
 
-    public static ShardedRequestMessage of(
+    public static <V extends Records.Request> ShardedRequestMessage<V> of(
             Identifier id,
-            Message.ClientRequest request) {
-        return new ShardedRequestMessage(id, request);
+            Message.ClientRequest<V> request) {
+        return new ShardedRequestMessage<V>(id, request);
     }
 
+    @SuppressWarnings("unchecked")
     @JsonCreator
     public ShardedRequestMessage(
             @JsonProperty("id") Identifier id,
             @JsonProperty("payload") byte[] payload) throws IOException {
-        this(id, SessionRequestMessage.decode(Unpooled.wrappedBuffer(payload)));
+        this(id, (Message.ClientRequest<V>) ProtocolRequestMessage.decode(Unpooled.wrappedBuffer(payload)));
     }
 
-    public ShardedRequestMessage(Identifier id, Message.ClientRequest request) {
+    public ShardedRequestMessage(Identifier id, Message.ClientRequest<V> request) {
         super(id, request);
     }
 
     public byte[] getPayload() throws IOException {
         ByteBuf output = Unpooled.buffer();
-        getRequest().encode(output);
+        encode(output);
         byte[] bytes = new byte[output.readableBytes()];
         output.readBytes(bytes);
         return bytes;
     }
 
     @Override
-    public int xid() {
-        return getRequest().xid();
+    public int getXid() {
+        return getRequest().getXid();
     }
 
     @Override
-    public Request request() {
-        return getRequest().request();
+    public V getRecord() {
+        return getRequest().getRecord();
+    }
+
+    @Override
+    public void encode(ByteBuf output) throws IOException {
+        getRequest().encode(output);
     }
 }

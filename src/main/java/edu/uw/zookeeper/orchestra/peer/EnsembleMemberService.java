@@ -107,10 +107,10 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         Materializer.Operator<?,?> operator = materializer.operator();
 
         // Register my identifier
-        Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.create(Control.path(myMember.parent())).submit().get();
-        Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.create(Control.path(myMember.parent())).submit().get();
+        Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
         result = operator.create(myMember.path()).submit().get();
-        Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+        Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
 
         // Propose myself as leader
         EnsembleRole role = this.role.elect();
@@ -188,8 +188,8 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
 
         @Override
         public void onSuccess(WatchEvent event) {
-            if (leaderPath.equals(event.path())) {
-                switch (event.type()) {
+            if (leaderPath.equals(event.getPath())) {
+                switch (event.getType()) {
                 case NodeCreated:
                 case NodeDataChanged:
                     subscribeLeaderWatch();

@@ -10,21 +10,21 @@ public class MessageSessionResponse extends MessageSessionBody {
 
     public static MessageSessionResponse of(
             long sessionId, 
-            ShardedResponseMessage response) {
+            ShardedResponseMessage<?> response) {
         return new MessageSessionResponse(sessionId, response);
     }
     
-    private final ShardedResponseMessage response;
+    private final ShardedResponseMessage<?> response;
 
     @JsonCreator
     public MessageSessionResponse(
             @JsonProperty("sessionId") long sessionId, 
-            @JsonProperty("response") ShardedResponseMessage response) {
+            @JsonProperty("response") ShardedResponseMessage<?> response) {
         super(sessionId);
         this.response = response;
     }
     
-    public ShardedResponseMessage getResponse() {
+    public ShardedResponseMessage<?> getResponse() {
         return response;
     }
 }

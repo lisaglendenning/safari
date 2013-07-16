@@ -72,11 +72,11 @@ public abstract class Control {
         Materializer.Operator<?,?> operator = materializer.operator();
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
-            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = operator.exists(node.path()).submit().get();
-            Operation.Response response = Operations.maybeError(result.second().response(), KeeperException.Code.NONODE, result.toString());
+            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.exists(node.path()).submit().get();
+            Operation.Response response = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
             if (response instanceof Operation.Error) {
                 result = operator.create(node.path()).submit().get();
-                response = Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+                response = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
             }
         }
     }
@@ -213,18 +213,18 @@ public abstract class Control {
         }
         
         @SuppressWarnings("unchecked")
-        public static <T, C extends TypedValueZNode<T>> C get(Class<C> cls, Object parent, Materializer<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> materializer) throws InterruptedException, ExecutionException, KeeperException {
+        public static <T, C extends TypedValueZNode<T>> C get(Class<C> cls, Object parent, Materializer<?, ? > materializer) throws InterruptedException, ExecutionException, KeeperException {
             ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
-            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = materializer.operator().getData(path).submit().get();
-            Operations.unlessError(result.second().response(), result.toString());
+            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = materializer.operator().getData(path).submit().get();
+            Operations.unlessError(result.second().getRecord(), result.toString());
             T value = (T) materializer.get(path).get().get();
             return newInstance(cls, value, parent);
         }
         
-        public static <T, C extends TypedValueZNode<T>> C create(Class<C> cls, T value, Object parent, Materializer<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> materializer) throws InterruptedException, ExecutionException, KeeperException {
+        public static <T, C extends TypedValueZNode<T>> C create(Class<C> cls, T value, Object parent, Materializer<?, ?> materializer) throws InterruptedException, ExecutionException, KeeperException {
             C instance = newInstance(cls, value, parent);
-            Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = materializer.operator().create(instance.path(), instance.get()).submit().get();
-            Operation.Response reply = Operations.maybeError(result.second().response(), KeeperException.Code.NODEEXISTS, result.toString());
+            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = materializer.operator().create(instance.path(), instance.get()).submit().get();
+            Operation.Response reply = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
             if (reply instanceof Operation.Error) {
                 return get(cls, parent, materializer);
             } else {
@@ -254,9 +254,9 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<T extends Operation.SessionRequest, V extends Operation.SessionResponse> extends PromiseTask<Materializer<T,V>, Void> implements FutureCallback<ZNodeLabel.Path> {
+    public static class FetchUntil<T extends Operation.ProtocolRequest<?>, V extends Operation.ProtocolResponse<?>> extends PromiseTask<Materializer<T,V>, Void> implements FutureCallback<ZNodeLabel.Path> {
 
-        public static <T extends Operation.SessionRequest, V extends Operation.SessionResponse> FetchUntil<T,V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?,?>> predicate, Materializer<T,V> materializer, Executor executor) throws InterruptedException, ExecutionException {
+        public static <T extends Operation.ProtocolRequest<?>, V extends Operation.ProtocolResponse<?>> FetchUntil<T,V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?,?>> predicate, Materializer<T,V> materializer, Executor executor) throws InterruptedException, ExecutionException {
             Promise<Void> delegate = newPromise();
             return new FetchUntil<T,V>(root, predicate, materializer, delegate, executor);
         }
@@ -297,11 +297,12 @@ public abstract class Control {
         }
 
         @Subscribe
-        public void handleReply(Operation.SessionResponse message) {
-            if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
-                WatchEvent event = WatchEvent.of((IWatcherEvent) message.response());
-                if (root.prefixOf(event.path())) {
-                    new Updater(event.path());
+        public void handleReply(Operation.ProtocolResponse<?> message) {
+            if (OpCodeXid.NOTIFICATION.getXid() == message.getXid()) {
+                @SuppressWarnings("unchecked")
+                WatchEvent event = WatchEvent.of((Operation.ProtocolResponse<IWatcherEvent>) message);
+                if (root.prefixOf(event.getPath())) {
+                    new Updater(event.getPath());
                 }
             }
         }

@@ -11,55 +11,60 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.SessionResponseMessage;
-import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.proto.OpCode;
-import edu.uw.zookeeper.protocol.proto.Records.Response;
+import edu.uw.zookeeper.protocol.proto.Records;
 
 @JsonIgnoreProperties({"response"})
-public class ShardedResponseMessage extends ShardedResponse<Message.ServerResponse> implements Operation.SessionResponse {
+public class ShardedResponseMessage<V extends Records.Response> extends ShardedResponse<Message.ServerResponse<V>> implements Message.ServerResponse<V> {
 
-    public static ShardedResponseMessage of(
-            Identifier id, Message.ServerResponse response) {
-        return new ShardedResponseMessage(id, response);
+    public static <V extends Records.Response> ShardedResponseMessage<V> of(
+            Identifier id, Message.ServerResponse<V> response) {
+        return new ShardedResponseMessage<V>(id, response);
     }
 
+    @SuppressWarnings("unchecked")
     @JsonCreator
     public ShardedResponseMessage(
             @JsonProperty("id") Identifier id,
             @JsonProperty("opCode") int opCode,
             @JsonProperty("payload") byte[] payload) throws IOException {
-        this(id, SessionResponseMessage.decode(OpCode.of(opCode), Unpooled.wrappedBuffer(payload)));
+        this(id, (Message.ServerResponse<V>) ProtocolResponseMessage.decode(OpCode.of(opCode), Unpooled.wrappedBuffer(payload)));
     }
 
-    public ShardedResponseMessage(Identifier id, Message.ServerResponse response) {
+    public ShardedResponseMessage(Identifier id, Message.ServerResponse<V> response) {
         super(id, response);
     }
 
     public byte[] getPayload() throws IOException {
         ByteBuf output = Unpooled.buffer();
-        getResponse().encode(output);
+        encode(output);
         byte[] bytes = new byte[output.readableBytes()];
         output.readBytes(bytes);
         return bytes;
     }
 
     public int getOpCode() {
-        return getResponse().response().opcode().intValue();
+        return getRecord().getOpcode().intValue();
     }
 
     @Override
-    public int xid() {
-        return getResponse().xid();
+    public int getXid() {
+        return getResponse().getXid();
     }
 
     @Override
-    public long zxid() {
-        return getResponse().zxid();
+    public long getZxid() {
+        return getResponse().getZxid();
     }
 
     @Override
-    public Response response() {
-        return getResponse().response();
+    public V getRecord() {
+        return getResponse().getRecord();
+    }
+
+    @Override
+    public void encode(ByteBuf output) throws IOException {
+        getResponse().encode(output);
     }
 }

@@ -48,8 +48,8 @@ public class PeerConfiguration {
     public static void advertise(Identifier peerId, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
         Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(peerId);
         Orchestra.Peers.Entity.Presence presenceNode = Orchestra.Peers.Entity.Presence.of(entityNode);
-        Pair<? extends Operation.SessionRequest, ? extends Operation.SessionResponse> result = materializer.operator().create(presenceNode.path()).submit().get();
-        Operations.unlessError(result.second().response(), result.toString());
+        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = materializer.operator().create(presenceNode.path()).submit().get();
+        Operations.unlessError(result.second().getRecord(), result.toString());
     }
     
     private final PeerAddressView address;
