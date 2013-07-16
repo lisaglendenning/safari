@@ -111,7 +111,8 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
     @Override
     public ShardedClientConnectionExecutor<C> get(MessageSessionOpen message) {
-        ConnectMessage.Request request = ConnectMessage.Request.NewRequest.newInstance(TimeValue.create(message.getTimeOutMillis(), TimeUnit.MILLISECONDS), connections.zxids().get());
+        ConnectMessage.Request request = ConnectMessage.Request.NewRequest.newInstance(TimeValue.create(
+                Long.valueOf(message.getTimeOutMillis()), TimeUnit.MILLISECONDS), connections.zxids().get());
         C connection = connections.get();
         ShardedClientConnectionExecutor<C> client = 
                 ShardedClientConnectionExecutor.newInstance(

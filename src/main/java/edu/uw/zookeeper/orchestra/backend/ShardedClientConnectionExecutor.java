@@ -105,8 +105,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     @Subscribe
     public void handleResponse(Message.ServerResponse<?> message) throws InterruptedException {
         if ((state.get() != State.TERMINATED) && ! (message instanceof ShardedResponseMessage)) {
-            received.put(message);
-            schedule();
+            receive(message);
         }
     }
 

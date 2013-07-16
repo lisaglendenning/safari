@@ -25,12 +25,14 @@ public class MessageHandshake extends MessageBody {
     public Identifier getId() {
         return id;
     }
-    
+
     @Override
     public String toString() {
-        return getId().toString();
+        return Objects.toStringHelper(this)
+                .add("id", getId())
+                .toString();
     }
-
+    
     @Override
     public boolean equals(Object obj) {
         if (this == obj) {

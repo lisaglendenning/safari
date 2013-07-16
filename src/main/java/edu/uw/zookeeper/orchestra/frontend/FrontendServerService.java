@@ -1,11 +1,14 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
+import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
+import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -29,17 +32,33 @@ import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.EnsemblePeerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
+import edu.uw.zookeeper.protocol.ConnectMessage;
+import edu.uw.zookeeper.protocol.FourLetterRequest;
+import edu.uw.zookeeper.protocol.FourLetterResponse;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.SessionOperation;
+import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.protocol.server.AssignZxidProcessor;
+import edu.uw.zookeeper.protocol.server.ConnectTableProcessor;
+import edu.uw.zookeeper.protocol.server.ExpiringSessionRequestExecutor;
+import edu.uw.zookeeper.protocol.server.FourLetterRequestProcessor;
+import edu.uw.zookeeper.protocol.server.ProtocolResponseProcessor;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
+import edu.uw.zookeeper.protocol.server.ToTxnRequestProcessor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
 import edu.uw.zookeeper.server.ExpiringSessionService;
 import edu.uw.zookeeper.server.ExpiringSessionTable;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
+import edu.uw.zookeeper.util.Pair;
+import edu.uw.zookeeper.util.Processor;
+import edu.uw.zookeeper.util.Processors;
+import edu.uw.zookeeper.util.Publisher;
+import edu.uw.zookeeper.util.TaskExecutor;
 
 @DependsOn({EnsemblePeerService.class})
 public class FrontendServerService extends DependentService.SimpleDependentService {
@@ -63,19 +82,41 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
             ExpiringSessionTable sessions = ExpiringSessionTable.newInstance(runtime.publisherFactory().get(), policy);
             ExpiringSessionService expires = ExpiringSessionService.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());   
-            runtime.serviceMonitor().add(expires);
+            runtime.serviceMonitor().addOnStart(expires);
             return sessions;
         }
 
         @Provides @Singleton
         public ServerTaskExecutor getServerExecutor(
+                EnsemblePeerService peers,
                 ExpiringSessionTable sessions,
                 RuntimeModule runtime) {
-            return ServerApplicationModule.defaultServerExecutor(
-                    ZNodeDataTrie.newInstance(), 
-                    runtime.executors().asListeningExecutorServiceFactory().get(), 
-                    ZxidEpochIncrementer.fromZero(), 
-                    sessions);
+            ZxidEpochIncrementer zxids = ZxidEpochIncrementer.fromZero();
+            final ConcurrentMap<Long, Publisher> listeners = new MapMaker().makeMap();
+            TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor = 
+                    ServerTaskExecutor.ProcessorExecutor.of(
+                            FourLetterRequestProcessor.getInstance());
+            TaskExecutor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> connectExecutor = 
+                    ServerTaskExecutor.ProcessorExecutor.of(
+                            FrontendConnectProcessor.newInstance(
+                                    peers,
+                                    ConnectTableProcessor.create(sessions, zxids), 
+                                    listeners));
+            Processor<SessionOperation.Request<Records.Request>, Message.ServerResponse<Records.Response>> processor = 
+                    Processors.bridge(
+                            ToTxnRequestProcessor.create(
+                                    AssignZxidProcessor.newInstance(zxids)), 
+                            ProtocolResponseProcessor.create(
+                                    ServerApplicationModule.defaultTxnProcessor(ZNodeDataTrie.newInstance(), sessions,
+                                            new Function<Long, Publisher>() {
+                                                @Override
+                                                public @Nullable Publisher apply(@Nullable Long input) {
+                                                    return listeners.get(input);
+                                                }
+                                    })));
+            TaskExecutor<SessionOperation.Request<Records.Request>, Message.ServerResponse<Records.Response>> sessionExecutor = 
+                    ExpiringSessionRequestExecutor.newInstance(sessions, runtime.executors().asListeningExecutorServiceFactory().get(), listeners, processor);
+            return ServerTaskExecutor.newInstance(anonymousExecutor, connectExecutor, sessionExecutor);
         }
         
         @Provides @Singleton
@@ -90,9 +131,9 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
-            ServerConnectionExecutorsService<?> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
+            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
             runtime.serviceMonitor().addOnStart(server);
-            FrontendServerService instance = new FrontendServerService(configuration.getAddress(), serverConnections, locator);
+            FrontendServerService instance = new FrontendServerService(configuration.getAddress(), server, locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -100,7 +141,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
     
     public static FrontendServerService newInstance(
             ServerInetAddressView address,
-            ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
         FrontendServerService instance = new FrontendServerService(address, serverConnections, locator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
@@ -108,11 +149,11 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
     }
     
     protected final ServerInetAddressView address;
-    protected final ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections;
+    protected final ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections;
     
     protected FrontendServerService(
             ServerInetAddressView address,
-            ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
         super(locator);
         this.address = address;
@@ -123,7 +164,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         return address;
     }
     
-    public ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections() {
+    public ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections() {
         return serverConnections;
     }
 

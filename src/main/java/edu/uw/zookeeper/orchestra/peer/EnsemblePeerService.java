@@ -2,6 +2,7 @@ package edu.uw.zookeeper.orchestra.peer;
 
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,7 +41,7 @@ import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.SettableFuturePromise;
 
 @DependsOn({PeerConnectionsService.class})
-public class EnsemblePeerService extends DependentService.SimpleDependentService {
+public class EnsemblePeerService extends DependentService.SimpleDependentService implements Iterable<Identifier> {
 
     public static Module module() {
         return new Module();
@@ -117,6 +118,11 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
             }
         }
         return connection;
+    }
+
+    @Override
+    public Iterator<Identifier> iterator() {
+        return ensemblePeers.keySet().iterator();
     }
 
     @Override
