@@ -40,6 +40,22 @@ public class VolumeDescriptor {
         return leaves;
     }
     
+    public ZNodeLabel.Path append(ZNodeLabel label) {
+        return ZNodeLabel.Path.of(getRoot(), label);
+    }
+    
+    public boolean contains(ZNodeLabel.Path path) {
+        if (! getRoot().prefixOf(path)) {
+            return false;
+        }
+        for (ZNodeLabel leaf: getLeaves()) {
+            if (append(leaf).prefixOf(path)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
     @Override
     public String toString() {
         return Objects.toStringHelper(this).add("root", getRoot())
