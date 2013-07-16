@@ -13,6 +13,14 @@ public class VolumeShardedOperationTranslators extends ShardedOperationTranslato
         return new VolumeShardedOperationTranslators(lookup);
     }
     
+    public static ZNodeLabel.Path rootOf(Identifier id) {
+        return ZNodeLabel.Path.of(PREFIX, ZNodeLabel.Component.of(id.toString()));
+    }
+    
+    public static ZNodeLabel.Path pathOf(Identifier id, ZNodeLabel path) {
+        return ZNodeLabel.Path.of(rootOf(id), path);
+    }
+    
     protected static final ZNodeLabel.Path PREFIX = ZNodeLabel.Path.of("/volumes");
     
     public static class VolumePrefix implements Function<Identifier, Pair<ZNodeLabel.Path, ZNodeLabel.Path>> {
@@ -25,7 +33,7 @@ public class VolumeShardedOperationTranslators extends ShardedOperationTranslato
         @Override
         public Pair<ZNodeLabel.Path, ZNodeLabel.Path> apply(Identifier id) {
             Volume volume = lookup.apply(id);
-            return Pair.create(volume.getDescriptor().getRoot(), ZNodeLabel.Path.of(PREFIX, ZNodeLabel.Component.of(volume.getId().toString())));
+            return Pair.create(volume.getDescriptor().getRoot(), rootOf(volume.getId()));
         }
     }
 

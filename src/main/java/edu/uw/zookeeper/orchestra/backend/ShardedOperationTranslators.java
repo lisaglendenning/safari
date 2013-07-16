@@ -21,10 +21,6 @@ public class ShardedOperationTranslators {
     }
 
     public OperationPrefixTranslator get(Identifier id) {
-        return translators.get(id);
-    }
-    
-    public OperationPrefixTranslator put(Identifier id) {
         OperationPrefixTranslator translator = translators.get(id);
         if (translator == null) {
             Pair<ZNodeLabel.Path, ZNodeLabel.Path> prefixes = prefix.apply(id);
@@ -33,7 +29,7 @@ public class ShardedOperationTranslators {
         }
         return translator;
     }
-
+    
     public OperationPrefixTranslator remove(Identifier id) {
         return translators.remove(id);
     }

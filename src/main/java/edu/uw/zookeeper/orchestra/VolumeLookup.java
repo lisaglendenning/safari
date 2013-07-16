@@ -9,6 +9,7 @@ import com.google.common.collect.MapMaker;
 
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
+import edu.uw.zookeeper.util.Reference;
 
 public class VolumeLookup {
 
@@ -36,19 +37,33 @@ public class VolumeLookup {
     public ZNodeLabelTrie<VolumeLookupNode> asTrie() {
         return lookupTrie;
     }
-
-    public VolumeAssignment get(ZNodeLabel label) {
-        VolumeLookupNode node = asTrie().longestPrefix(label);
-        VolumeAssignment assignment = node.get();
-        while ((assignment == null) && node.parent().isPresent()) {
-            node = node.parent().orNull().get();
-            assignment = node.get();
-        }
-        return assignment;
+    
+    public Volume put(Volume volume) {
+        ZNodeLabel.Path volumeRoot = volume.getDescriptor().getRoot();
+        byVolumeId.put(volume.getId(), volumeRoot);
+        VolumeLookupNode node = asTrie().root().add(volumeRoot);
+        return node.set(volume);
     }
 
-    public VolumeAssignment byVolumeId(Identifier id) {
-        ZNodeLabel.Path path = getVolumeRoot(id);
+    public Volume remove(Identifier id) {
+        Volume prev = null;
+        ZNodeLabel.Path volumeRoot = byVolumeId.remove(id);
+        if (volumeRoot != null) {
+            VolumeLookup.VolumeLookupNode lookupNode = asTrie().get(volumeRoot);
+            if (lookupNode != null) {
+                prev = lookupNode.getAndSet(null);
+            }
+        }
+        return prev;
+    }
+
+    public Volume get(ZNodeLabel.Path path) {
+        VolumeLookupNode node = asTrie().longestPrefix(path);
+        return (node == null) ? null : node.get();
+    }
+    
+    public Volume get(Identifier id) {
+        ZNodeLabel.Path path = byVolumeId.get(id);
         if (path != null) {
             VolumeLookupNode node = asTrie().get(path);
             if (node != null) {
@@ -62,26 +77,14 @@ public class VolumeLookup {
         return byVolumeId.keySet();
     }
     
-    public ZNodeLabel.Path getVolumeRoot(Identifier id) {
-        return byVolumeId.get(id);
-    }
-
-    public ZNodeLabel.Path putVolumeRoot(Identifier id, ZNodeLabel.Path root) {
-        return byVolumeId.put(id, root);
-    }
-
-    public ZNodeLabel.Path removeVolumeRoot(Identifier id) {
-        return byVolumeId.remove(id);
-    }
-    
-    protected static class VolumeLookupNode extends ZNodeLabelTrie.DefaultsNode<VolumeLookupNode> {
+    protected static class VolumeLookupNode extends ZNodeLabelTrie.DefaultsNode<VolumeLookupNode> implements Reference<Volume> {
     
         public static VolumeLookupNode root() {
             return new VolumeLookupNode(
                     Optional.<ZNodeLabelTrie.Pointer<VolumeLookupNode>>absent());
         }
         
-        protected AtomicReference<VolumeAssignment> value;
+        protected AtomicReference<Volume> value;
     
         protected VolumeLookupNode(
                 Optional<ZNodeLabelTrie.Pointer<VolumeLookupNode>> parent) {
@@ -89,44 +92,30 @@ public class VolumeLookup {
         }
         
         protected VolumeLookupNode(
-                VolumeAssignment value,
+                Volume value,
                 Optional<ZNodeLabelTrie.Pointer<VolumeLookupNode>> parent) {
             super(parent);
-            this.value = new AtomicReference<VolumeAssignment>(value);
+            this.value = new AtomicReference<Volume>(value);
         }
         
-        public VolumeAssignment get() {
+        @Override
+        public Volume get() {
             return value.get();
         }
         
-        public VolumeAssignment getAndSet(VolumeAssignment value) {
+        public Volume getAndSet(Volume value) {
             return this.value.getAndSet(value);
         }
         
-        public VolumeAssignment setVolume(Volume volume) {
-            VolumeAssignment prev = value.get();
-            VolumeAssignment updated = (prev == null) 
-                    ? VolumeAssignment.of(volume, null)
-                            : prev.setVolume(volume);
-            if (value.compareAndSet(prev, updated)) {
+        public Volume set(Volume volume) {
+            Volume prev = value.get();
+            if (value.compareAndSet(prev, volume)) {
                 return prev;
             } else {
-                return setVolume(volume);
+                return set(volume);
             }
         }
-        
-        public VolumeAssignment setAssignment(Identifier assignment) {
-            VolumeAssignment prev = value.get();
-            VolumeAssignment updated = (prev == null) 
-                    ? VolumeAssignment.of(Volume.of(null, VolumeDescriptor.of(path())), assignment)
-                            : prev.setAssignment(assignment);
-            if (value.compareAndSet(prev, updated)) {
-                return prev;
-            } else {
-                return setAssignment(assignment);
-            }
-        }
-    
+
         protected VolumeLookupNode newChild(ZNodeLabel.Component label) {
             ZNodeLabelTrie.Pointer<VolumeLookupNode> pointer = ZNodeLabelTrie.SimplePointer.of(label, this);
             return new VolumeLookupNode(Optional.of(pointer));

@@ -77,14 +77,14 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
             @Override
             public Identifier apply(ZNodeLabel.Path input) {
-                return volumes.get(input).getVolume().getId();
+                return volumes.get(input).getId();
             }
         };
         VolumeShardedOperationTranslators translator = new VolumeShardedOperationTranslators(
                 new Function<Identifier, Volume>() {
                     @Override
                     public Volume apply(Identifier input) {
-                        return volumes.byVolumeId(input).getVolume();
+                        return volumes.get(input);
                     }
                 });
         BackendRequestService<C> instance = new BackendRequestService<C>(locator, connections, lookup, translator);

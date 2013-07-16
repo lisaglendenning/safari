@@ -44,7 +44,7 @@ public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPai
                 builder.setPath(transformed);
                 output = (T) builder.build();
             } else {
-                throw new IllegalArgumentException(input.toString());
+                throw new IllegalArgumentException(String.format("%s not a prefix of %s", getFromPrefix(), path));
             }
         }
         return output;
