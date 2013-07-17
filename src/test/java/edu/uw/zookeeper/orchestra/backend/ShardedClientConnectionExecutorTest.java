@@ -3,7 +3,6 @@ package edu.uw.zookeeper.orchestra.backend;
 import static org.junit.Assert.*;
 
 import java.net.InetSocketAddress;
-import java.util.List;
 import java.util.SortedSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;

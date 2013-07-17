@@ -82,6 +82,44 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
         this.ensemblePeers = new ConcurrentHashMap<Identifier, Identifier>();
     }
     
+    public class LookupMembersTask implements Callable<List<Orchestra.Ensembles.Entity.Peers.Member>> {
+
+        protected final Identifier ensemble;
+        
+        public LookupMembersTask(Identifier ensemble) {
+            this.ensemble = ensemble;
+        }
+
+        @Override
+        public List<Orchestra.Ensembles.Entity.Peers.Member> call() throws InterruptedException, ExecutionException, KeeperException {
+            Orchestra.Ensembles.Entity.Peers conductors = Orchestra.Ensembles.Entity.Peers.of(Orchestra.Ensembles.Entity.of(ensemble));
+            return conductors.lookup(controlClient.materializer());
+        }
+    }
+    
+    public class SelectPeerTask implements Callable<Identifier> {
+
+        protected final Identifier ensemble;
+        
+        public SelectPeerTask(Identifier ensemble) {
+            this.ensemble = ensemble;
+        }
+        
+        @Override
+        public Identifier call() throws InterruptedException, ExecutionException, KeeperException {
+            List<Orchestra.Ensembles.Entity.Peers.Member> members = new LookupMembersTask(ensemble).call();
+            Identifier peer = null;
+            Collections.shuffle(members);
+            for (Orchestra.Ensembles.Entity.Peers.Member e: members) {
+                if (peerConnections.new PresenceTask(e.get()).call()) {
+                    peer = e.get();
+                    break;
+                }
+            }
+            return peer;
+        }
+    }
+
     public Identifier getPeerForEnsemble(Identifier ensemble) throws InterruptedException, ExecutionException, KeeperException {
         Identifier peer = ensemblePeers.get(ensemble);
         if (peer == null) {
@@ -89,18 +127,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
             if (ensemble.equals(myEnsemble)) {
                 peer = locator().getInstance(PeerConfiguration.class).getView().id();
             } else {
-                Orchestra.Ensembles.Entity.Peers conductors = Orchestra.Ensembles.Entity.Peers.of(Orchestra.Ensembles.Entity.of(ensemble));
-                List<Orchestra.Ensembles.Entity.Peers.Member> members = conductors.lookup(controlClient.materializer());
-                Collections.shuffle(members);
-                for (Orchestra.Ensembles.Entity.Peers.Member e: members) {
-                    Orchestra.Peers.Entity.Presence presence = 
-                            Orchestra.Peers.Entity.Presence.of(
-                                    Orchestra.Peers.Entity.of(e.get()));
-                    if (presence.exists(controlClient.materializer())) {
-                        peer = e.get();
-                        break;
-                    }
-                }
+                peer = new SelectPeerTask(ensemble).call();
             }
             ensemblePeers.putIfAbsent(ensemble, peer);
             peer = ensemblePeers.get(ensemble);
@@ -112,11 +139,8 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
         PeerConnectionsService<?>.ClientPeerConnection connection = null;
         Identifier peer = getPeerForEnsemble(ensemble);
         if (peer != null) {
-            connection = peerConnections.clients().get(peer);
-            if (connection == null) {
-                // TODO: send a list of existing sessions to new connections somewhere
-                connection = peerConnections.clients().connect(peer, MoreExecutors.sameThreadExecutor()).get();
-            }
+            // TODO: send a list of existing sessions to new connections somewhere
+            connection = peerConnections.clients().connect(peer, MoreExecutors.sameThreadExecutor()).get();
         }
         return connection;
     }

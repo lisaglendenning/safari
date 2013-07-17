@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra.backend;
 
-import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -9,6 +8,7 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
@@ -64,14 +64,14 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
     }
 
     protected final BackendView view;
-    protected final ClientConnectionFactory<?,C> clientConnections;
+    protected final ServerViewFactory.FixedClientConnectionFactory<C> clientConnections;
     protected final ZxidTracker zxids;
     
     protected BackendConnectionsService(
             BackendView view,
             ClientConnectionFactory<?, C> clientConnections) {
-        this.clientConnections = clientConnections;
         this.view = view;
+        this.clientConnections = ServerViewFactory.FixedClientConnectionFactory.create(view.getClientAddress().get(), clientConnections);
         this.zxids = ZxidTracker.create();
     }
 
@@ -85,23 +85,18 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
     
     @Override
     public C get() {
-        C client;
-        try {
-            client = clientConnections.connect(view.getClientAddress().get()).get();
-        } catch (Exception e) {
-            throw Throwables.propagate(e);
-        }
+        C client = clientConnections.get();
         ZxidTracker.ZxidListener.create(zxids, client);
         return client;
     }
     
     @Override
     protected void startUp() throws Exception {
-        clientConnections.start().get();
+        clientConnections.second().start().get();
     }
 
     @Override
     protected void shutDown() throws Exception {
-        clientConnections.stop().get();
+        clientConnections.second().stop().get();
     }
 }

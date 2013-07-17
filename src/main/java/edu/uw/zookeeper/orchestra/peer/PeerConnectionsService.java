@@ -40,8 +40,6 @@ import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
-import edu.uw.zookeeper.orchestra.backend.ShardedClientConnectionExecutor;
-import edu.uw.zookeeper.orchestra.backend.ShardedResponseMessage;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
@@ -50,9 +48,6 @@ import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionClose;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpen;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageType;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Pair;
@@ -234,13 +229,29 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
             
         @Override
-        public Orchestra.Peers.Entity.PeerAddress call() throws Exception {
+        public Orchestra.Peers.Entity.PeerAddress call() throws KeeperException, InterruptedException, ExecutionException {
             Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
             return Orchestra.Peers.Entity.PeerAddress.lookup(Orchestra.Peers.Entity.of(peer), materializer);
         }
     }
     
-    protected class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements Publisher {
+    public class PresenceTask implements Callable<Boolean> {
+
+        protected final Orchestra.Peers.Entity.Presence presence;
+        
+        public PresenceTask(Identifier peer) {
+            this.presence = Orchestra.Peers.Entity.Presence.of(Orchestra.Peers.Entity.of(peer));
+        }
+        
+        @Override
+        public Boolean call() throws InterruptedException, ExecutionException {
+            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
+            return presence.exists(materializer);
+        }
+        
+    }
+    
+    public class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements Publisher {
         
         protected final ConnectionFactory<? super MessagePacket, C> connections;
         protected final ConcurrentMap<Identifier, V> peers;
@@ -262,6 +273,21 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         public Set<Map.Entry<Identifier, V>> entrySet() {
             return peers.entrySet();
         }
+
+        @Override
+        public void post(Object event) {
+            connections().post(event);
+        }
+
+        @Override
+        public void register(Object handler) {
+            connections().register(handler);
+        }
+
+        @Override
+        public void unregister(Object handler) {
+            connections().unregister(handler);
+        }
         
         protected V put(Identifier id, V v) {
             V prev = peers.put(id, v);
@@ -269,6 +295,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             if (prev != null) {
                 prev.close();
             }
+            post(v);
             return prev;
         }
 
@@ -278,6 +305,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                 v.close();
             } else {
                 new RemoveOnClose(id, v);
+                post(v);
             }
             return prev;
         }
@@ -313,21 +341,6 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                 }
             }
         }
-
-        @Override
-        public void register(Object handler) {
-            connections().register(handler);
-        }
-
-        @Override
-        public void unregister(Object handler) {
-            connections().unregister(handler);
-        }
-
-        @Override
-        public void post(Object event) {
-            connections().post(event);
-        }
     }
     
     public class ClientPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
@@ -339,7 +352,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
 
-    protected class ClientPeerConnections extends PeerConnections<ClientPeerConnection> {
+    public class ClientPeerConnections extends PeerConnections<ClientPeerConnection> {
 
         protected final MessagePacket handshake = MessagePacket.of(MessageHandshake.of(identifier));
         protected final ConnectionTask connectionTask = new ConnectionTask();
@@ -441,7 +454,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
     
-    protected class ServerPeerConnections extends PeerConnections<ServerPeerConnection> {
+    public class ServerPeerConnections extends PeerConnections<ServerPeerConnection> {
 
         public ServerPeerConnections(
                 ServerConnectionFactory<? super MessagePacket, C> connections) {
@@ -477,17 +490,11 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
 
         protected ServerPeerConnection put(ServerPeerConnection v) {
-            ServerPeerConnection prev = put(v.remoteAddress().getIdentifier(), v);
-            post(v);
-            return prev;
+            return put(v.remoteAddress().getIdentifier(), v);
         }
 
         protected ServerPeerConnection putIfAbsent(ServerPeerConnection v) {
-            ServerPeerConnection prev = putIfAbsent(v.remoteAddress().getIdentifier(), v);
-            if (prev == null) {
-                post(v);
-            }
-            return prev;
+            return putIfAbsent(v.remoteAddress().getIdentifier(), v);
         }
 
         protected class ServerAcceptTask {
@@ -520,74 +527,5 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             }
         }
     }
-
-    // TODO
-    public class Listener {
-    
-        @Subscribe
-        public void handlePeerMessage(MessagePacket message) {
-            switch (message.first().type()) {
-            case MESSAGE_TYPE_HANDSHAKE:
-                handleMessageHandshake((MessageHandshake) message.second());
-                break;
-            case MESSAGE_TYPE_SESSION_OPEN:
-                handleMessageSessionOpen((MessageSessionOpen) message.second());
-                break;
-            case MESSAGE_TYPE_SESSION_CLOSE:
-                handleMessageSessionClose((MessageSessionClose) message.second());
-                break;
-            case MESSAGE_TYPE_SESSION_REQUEST:
-                handleMessageSessionRequest((MessageSessionRequest) message.second());
-                break;
-            default:
-                throw new AssertionError(message.toString());
-            }
-        }
-        
-        protected void handleMessageHandshake(MessageHandshake second) {
-            assert(second.getId() == null);
-        }
-    
-        protected void handleMessageSessionRequest(MessageSessionRequest message) {
-            ShardedClientConnectionExecutor<?> client = locator().getInstance(BackendRequestService.class).get(message.getSessionId());
-            client.submit(message.getRequest());
-        }
-    
-        protected void handleMessageSessionOpen(MessageSessionOpen message) {
-            ShardedClientConnectionExecutor<?> client = locator().getInstance(BackendRequestService.class).get(message);
-            new BackendClientListener(message.getSessionId(), client);
-        }
-    
-        protected void handleMessageSessionClose(MessageSessionClose message) {
-            locator().getInstance(BackendRequestService.class).remove(message);
-        }
-        
-        protected class BackendClientListener {
-            protected final long sessionId;
-            protected final ShardedClientConnectionExecutor<?> client;
-            
-            public BackendClientListener(
-                    long sessionId,
-                    ShardedClientConnectionExecutor<?> client) {
-                this.sessionId = sessionId;
-                this.client = client;
-                client.register(this);
-            }
-    
-            @Subscribe
-            public void handleTransition(Automaton.Transition<?> event) {
-                if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                    try {
-                        client.unregister(this);
-                    } catch (IllegalArgumentException e) {}
-                }
-            }
-            
-            @Subscribe
-            public void handleResponse(ShardedResponseMessage<?> message) {
-                //write(MessagePacket.of(MessageSessionResponse.of(sessionId, message)));
-            }
-        }
-    } 
 }
 

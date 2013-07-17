@@ -6,7 +6,9 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Maps;
+import com.google.common.collect.MapMaker;
+import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -27,18 +29,28 @@ import edu.uw.zookeeper.orchestra.VolumeLookup;
 import edu.uw.zookeeper.orchestra.VolumeLookupService;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
+import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionClose;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpen;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionRequest;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.protocol.ConnectMessage;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.PingingClient;
-import edu.uw.zookeeper.util.ParameterizedFactory;
+import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
+import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.util.Automaton;
+import edu.uw.zookeeper.util.Pair;
+import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.TimeValue;
 
 @DependsOn({ControlMaterializerService.class, BackendConnectionsService.class})
-public class BackendRequestService<C extends Connection<? super Operation.Request>> extends DependentService.SimpleDependentService implements ParameterizedFactory<MessageSessionOpen, ShardedClientConnectionExecutor<C>> {
+public class BackendRequestService<C extends Connection<? super Operation.Request>> extends DependentService.SimpleDependentService {
 
     public static Module module() {
         return new Module();
@@ -93,7 +105,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     }
 
     protected final BackendConnectionsService<C> connections;
-    protected final ConcurrentMap<Long, ShardedClientConnectionExecutor<C>> sessions;
+    protected final ConcurrentMap<Long, ServerPeerConnectionListener.BackendClient> clients;
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     
@@ -104,36 +116,46 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             ShardedOperationTranslators translator) {
         super(locator);
         this.connections = connections;
-        this.sessions = Maps.newConcurrentMap();
+        this.clients = new MapMaker().makeMap();
         this.lookup = lookup;
         this.translator = translator;
     }
+    
+    public ServerPeerConnectionListener.BackendClient get(Long sessionId) {
+        return clients.get(sessionId);
+    }
+
+    @Subscribe
+    public void handleServerPeerConnection(PeerConnectionsService<?>.ServerPeerConnection peer) {
+        new ServerPeerConnectionListener(peer);
+    }
 
     @Override
-    public ShardedClientConnectionExecutor<C> get(MessageSessionOpen message) {
+    protected void startUp() throws Exception {
+        super.startUp();
+        
+        locator().getInstance(PeerConnectionsService.class).servers().register(this);
+    }
+    
+    @Override
+    protected void shutDown() throws Exception {
+        try {
+            locator().getInstance(PeerConnectionsService.class).servers().unregister(this);
+        } catch (IllegalArgumentException e) {}
+        
+        super.shutDown();
+    }
+    
+    protected ShardedClientConnectionExecutor<C> connect(MessageSessionOpen message) {
         ConnectMessage.Request request = ConnectMessage.Request.NewRequest.newInstance(TimeValue.create(
                 Long.valueOf(message.getTimeOutMillis()), TimeUnit.MILLISECONDS), connections.zxids().get());
         C connection = connections.get();
         ShardedClientConnectionExecutor<C> client = 
                 ShardedClientConnectionExecutor.newInstance(
                         translator, lookup, ConnectTask.create(connection, request), connection);
-        sessions.putIfAbsent(message.getSessionId(), client);
-        // TODO if not absent
         return client;
     }
 
-    public ShardedClientConnectionExecutor<C> remove(MessageSessionClose message) {
-        ShardedClientConnectionExecutor<C> client = sessions.remove(message.getSessionId());
-        if (client != null) {
-            // TODO close
-        }
-        return client;
-    }
-    
-    public ShardedClientConnectionExecutor<C> get(Long sessionId) {
-        return sessions.get(sessionId);
-    }
-    
     public class Advertiser implements Service.Listener {
 
         public Advertiser(Executor executor) {
@@ -168,4 +190,115 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public void failed(State from, Throwable failure) {
         }
     }
+
+    protected class ServerPeerConnectionListener implements Reference<PeerConnectionsService<?>.ServerPeerConnection> {
+    
+        protected final PeerConnectionsService<?>.ServerPeerConnection peer;
+        
+        public ServerPeerConnectionListener(PeerConnectionsService<?>.ServerPeerConnection peer) {
+            this.peer = peer;
+            
+            peer.register(this);
+        }
+        
+        @Override
+        public PeerConnectionsService<?>.ServerPeerConnection get() {
+            return peer;
+        }
+        
+        @Subscribe
+        public void handlePeerMessage(MessagePacket message) {
+            switch (message.first().type()) {
+            case MESSAGE_TYPE_HANDSHAKE:
+                handleMessageHandshake((MessageHandshake) message.second());
+                break;
+            case MESSAGE_TYPE_SESSION_OPEN:
+                handleMessageSessionOpen((MessageSessionOpen) message.second());
+                break;
+            case MESSAGE_TYPE_SESSION_CLOSE:
+                handleMessageSessionClose((MessageSessionClose) message.second());
+                break;
+            case MESSAGE_TYPE_SESSION_REQUEST:
+                handleMessageSessionRequest((MessageSessionRequest) message.second());
+                break;
+            default:
+                throw new AssertionError(message.toString());
+            }
+        }
+        
+        public void handleMessageHandshake(MessageHandshake second) {
+            assert(second.getId() == get().localAddress().getIdentifier());
+        }
+
+        public void handleMessageSessionOpen(MessageSessionOpen message) {
+            // we don't want to leave this function until we have a client
+            // because we may get a request message immediately and we need somewhere to send it
+            long sessionId = message.getSessionId();
+            BackendClient client = clients.get(sessionId);
+            if (client == null) {
+                ShardedClientConnectionExecutor<C> connection = connect(message);
+                client = new BackendClient(sessionId, connection);
+                BackendClient prev = clients.putIfAbsent(sessionId, client);
+                if (prev != null) {
+                    try {
+                        client.disconnect();
+                    } catch (Throwable t) {}
+                }
+            }
+        }
+    
+        public void handleMessageSessionClose(MessageSessionClose message) {
+            BackendClient client = clients.get(message.getSessionId());
+            if (client != null) {
+                try {
+                    client.disconnect();
+                } catch (Throwable t) {}
+            }
+        }
+        
+        public void handleMessageSessionRequest(MessageSessionRequest message) {
+            BackendClient client = clients.get(message.getSessionId());
+            client.getClient().submit(message.getRequest());
+        }
+    
+        protected class BackendClient {
+            protected final long sessionId;
+            protected final ShardedClientConnectionExecutor<?> client;
+            
+            public BackendClient(
+                    long sessionId,
+                    ShardedClientConnectionExecutor<?> client) {
+                this.sessionId = sessionId;
+                this.client = client;
+                
+                client.register(this);
+            }
+            
+            public long getSessionId() {
+                return sessionId;
+            }
+            
+            public ShardedClientConnectionExecutor<?> getClient() {
+                return client;
+            }
+            
+            public ListenableFuture<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> disconnect() {
+                return getClient().submit(Records.newInstance(IDisconnectRequest.class));
+            }
+    
+            @Subscribe
+            public void handleTransition(Automaton.Transition<?> event) {
+                if (Connection.State.CONNECTION_CLOSED == event.to()) {
+                    try {
+                        getClient().unregister(this);
+                    } catch (IllegalArgumentException e) {}
+                }
+            }
+            
+            @Subscribe
+            public void handleResponse(ShardedResponseMessage<?> message) {
+                get().write(MessagePacket.of(MessageSessionResponse.of(getSessionId(), message)));
+            }
+        }
+    } 
 }
