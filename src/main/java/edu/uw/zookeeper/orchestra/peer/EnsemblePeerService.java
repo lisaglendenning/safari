@@ -30,7 +30,7 @@ import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
-import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService.ClientPeerConnection;
+import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.OpCode;
@@ -59,7 +59,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
         @Provides @Singleton
         public EnsemblePeerService getEnsemblePeerService(
                 ControlMaterializerService<?> controlClient,
-                PeerConnectionsService peerConnections,
+                PeerConnectionsService<?> peerConnections,
                 ServiceLocator locator,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
             EnsemblePeerService instance = new EnsemblePeerService(peerConnections, controlClient, locator);
@@ -69,11 +69,11 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
     }
 
     protected final ControlMaterializerService<?> controlClient;
-    protected final PeerConnectionsService peerConnections;
+    protected final PeerConnectionsService<?> peerConnections;
     protected final ConcurrentMap<Identifier, Identifier> ensemblePeers;
     
     public EnsemblePeerService(
-            PeerConnectionsService peerConnections,
+            PeerConnectionsService<?> peerConnections,
             ControlMaterializerService<?> controlClient,
             ServiceLocator locator) {
         super(locator);
@@ -108,13 +108,14 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
         return peer;
     }
 
-    public ClientPeerConnection getConnectionForEnsemble(Identifier ensemble) throws InterruptedException, ExecutionException, KeeperException {
-        ClientPeerConnection connection = null;
+    public PeerConnectionsService<?>.ClientPeerConnection getConnectionForEnsemble(Identifier ensemble) throws InterruptedException, ExecutionException, KeeperException {
+        PeerConnectionsService<?>.ClientPeerConnection connection = null;
         Identifier peer = getPeerForEnsemble(ensemble);
         if (peer != null) {
-            connection = peerConnections.getClientConnection(peer);
+            connection = peerConnections.clients().get(peer);
             if (connection == null) {
-                connection = peerConnections.connect(peer, MoreExecutors.sameThreadExecutor()).get();
+                // TODO: send a list of existing sessions to new connections somewhere
+                connection = peerConnections.clients().connect(peer, MoreExecutors.sameThreadExecutor()).get();
             }
         }
         return connection;
@@ -150,7 +151,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
 
         protected class ConnectToAllActor extends TreeFetcherActor<Message.ClientRequest<?>, Message.ServerResponse<?>> {
         
-            protected final FutureQueue<ListenableFuture<ClientPeerConnection>> pendingConnects;
+            protected final FutureQueue<ListenableFuture<PeerConnectionsService<?>.ClientPeerConnection>> pendingConnects;
             
             protected ConnectToAllActor(
                     Promise<ZNodeLabel.Path> promise,
@@ -164,7 +165,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
 
             @Override
             protected void doRun() throws Exception {
-                ListenableFuture<ClientPeerConnection> next;
+                ListenableFuture<PeerConnectionsService<?>.ClientPeerConnection> next;
                 while ((next = pendingConnects.poll()) != null) {
                     try {
                         next.get();
@@ -187,7 +188,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
                     ZNodeLabel.Component pathTail = path.tail();
                     if (Orchestra.Ensembles.Entity.Peers.LABEL.equals(pathTail)) {
                         Identifier ensemble = Identifier.valueOf(controlClient.materializer().get(pathHead).parent().orNull().label().toString());
-                        ListenableFutureTask<ClientPeerConnection> task = ListenableFutureTask.create(new ConnectTask(ensemble));
+                        ListenableFutureTask<PeerConnectionsService<?>.ClientPeerConnection> task = ListenableFutureTask.create(new ConnectTask(ensemble));
                         pendingConnects.add(task);
                         task.addListener(this, executor);
                         executor.execute(task);
@@ -215,7 +216,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
             }
         }
 
-        protected class ConnectTask implements Callable<ClientPeerConnection> {
+        protected class ConnectTask implements Callable<PeerConnectionsService<?>.ClientPeerConnection> {
             
             protected final Identifier ensemble;
             
@@ -224,7 +225,7 @@ public class EnsemblePeerService extends DependentService.SimpleDependentService
             }
 
             @Override
-            public ClientPeerConnection call() throws Exception {
+            public PeerConnectionsService<?>.ClientPeerConnection call() throws Exception {
                 return getConnectionForEnsemble(ensemble);
             }
         }

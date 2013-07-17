@@ -41,7 +41,7 @@ public class FrontendConnectProcessor extends ConnectListenerProcessor {
             for (Identifier ensemble: peers) {
                 try {
                     ClientPeerConnection connection = peers.getConnectionForEnsemble(ensemble);
-                    connection.second().write(message);
+                    connection.write(message);
                 } catch (Exception e) {
                     // TODO Auto-generated catch block
                     throw Throwables.propagate(e);

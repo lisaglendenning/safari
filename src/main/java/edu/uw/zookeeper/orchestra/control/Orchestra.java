@@ -133,23 +133,24 @@ public abstract class Orchestra extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peerAddress");
                 
                 public static PeerAddress lookup(Peers.Entity entity, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
-                    Materializer.MaterializedNode parent = materializer.get(entity.path());
-                    if (parent == null) {
-                        Operations.maybeError(materializer.operator().getChildren(entity.path()).submit().get().second().getRecord(), KeeperException.Code.NONODE);
-                        parent = materializer.get(entity.path());
-                        if (parent == null) {
-                            return null;
+                    ServerInetAddressView address = null;
+                    ZNodeLabel.Path path = ZNodeLabel.Path.of(entity.path(), LABEL);
+                    Materializer.MaterializedNode node = materializer.get(path);
+                    if (node != null) {
+                        address = (ServerInetAddressView) node.get().get();
+                    }
+                    if ((node == null) || (address == null)) {
+                        Operations.maybeError(materializer.operator().getData(path).submit().get().second().getRecord(), KeeperException.Code.NONODE);
+                        node = materializer.get(path);
+                        if (node != null) {
+                            address = (ServerInetAddressView) node.get().get();
                         }
                     }
-                    Materializer.MaterializedNode child = parent.get(LABEL);
-                    if (child == null) {
-                        Operations.maybeError(materializer.operator().getData(ZNodeLabel.Path.of(entity.path(), LABEL)).submit().get().second().getRecord(), KeeperException.Code.NONODE);
-                        child = parent.get(LABEL);
-                        if (child == null) {
-                            return null;
-                        }            
+                    if (address == null) {
+                        return null;
+                    } else {
+                        return of(address, entity);
                     }
-                    return of((ServerInetAddressView) child.get().get(), entity);
                 }
                 
                 public static PeerAddress get(Peers.Entity entity, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
