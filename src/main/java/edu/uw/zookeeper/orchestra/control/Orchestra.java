@@ -156,8 +156,8 @@ public abstract class Orchestra extends Control.ControlZNode {
                 }
 
                 public <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> 
-                ListenableFuture<Pair<T,V>> create(ClientExecutor<? super Records.Request,T,V> client) {
-                    return client.submit(Operations.Requests.create().setPath(path()).build());
+                ListenableFuture<Pair<T,V>> create(Materializer<T,V> materializer) {
+                    return materializer.operator().create(path()).submit();
                 }
                 
                 public ListenableFuture<Boolean> exists(ClientExecutor<? super Records.Request, ?, ?> client) {
