@@ -36,6 +36,7 @@ import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.Orchestra.Ensembles.Entity;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Automatons;
@@ -104,7 +105,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         super.startUp();
         
         Materializer<?,?> materializer = control.materializer();
-        Materializer.Operator<?,?> operator = materializer.operator();
+        Materializer<?,?>.Operator operator = materializer.operator();
 
         // Register my identifier
         Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.create(Control.path(myMember.parent())).submit().get();
@@ -138,8 +139,8 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
             ZNodeLabel.Path path = Control.path(Orchestra.Volumes.class);
             operator.getChildren(path).submit().get();
             if (materializer.get(path).isEmpty()) {
-                VolumeDescriptor rootVolume = VolumeDescriptor.of(ZNodeLabel.Path.root());
-                Orchestra.Volumes.Entity.create(rootVolume, materializer);
+                VolumeDescriptor rootVolume = VolumeDescriptor.all();
+                Orchestra.Volumes.Entity.create(rootVolume, materializer, MoreExecutors.sameThreadExecutor()).get();
             }
             
             // Calculate "my" volumes using distance in the identifier space
@@ -165,7 +166,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected class RoleOverseer implements FutureCallback<WatchEvent> {
     
         protected final ZNodeLabel.Path leaderPath;
-        protected final Orchestra.Ensembles.Entity.Leader.Proposer proposer;
+        protected final Orchestra.Ensembles.Entity.Leader.Proposer<?,?> proposer;
         protected final Automatons.SynchronizedEventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
         protected final StampedReference.Updater<Orchestra.Ensembles.Entity.Leader> leader;
         
@@ -174,15 +175,16 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
             this.myRole = Automatons.createSynchronizedEventful(
                     control, Automatons.createSimple(EnsembleRole.LOOKING));
             this.leader = StampedReference.Updater.newInstance(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(0L, null));
-            this.proposer = new Orchestra.Ensembles.Entity.Leader.Proposer(myMember.get(), myEnsemble, control.materializer());
-            
+            this.proposer = Orchestra.Ensembles.Entity.Leader.Proposer.of(
+                    control.materializer(), 
+                            MoreExecutors.sameThreadExecutor());
             myRole.register(this);
             control.materializer().register(this);
             subscribeLeaderWatch();
         }
         
-        public EnsembleRole elect() throws InterruptedException, ExecutionException, KeeperException {
-            Orchestra.Ensembles.Entity.Leader ensembleLeader = proposer.call();
+        public EnsembleRole elect() throws InterruptedException, ExecutionException {
+            Orchestra.Ensembles.Entity.Leader ensembleLeader = proposer.apply(Entity.Leader.of(myMember.get(), myEnsemble)).get();
             return myRoleFor(ensembleLeader);
         }
 

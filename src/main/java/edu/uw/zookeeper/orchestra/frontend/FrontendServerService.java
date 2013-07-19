@@ -1,14 +1,11 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
-import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
-import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -18,7 +15,6 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.data.ZNodeDataTrie;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -30,37 +26,20 @@ import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
-import edu.uw.zookeeper.orchestra.peer.EnsemblePeerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
-import edu.uw.zookeeper.protocol.ConnectMessage;
-import edu.uw.zookeeper.protocol.FourLetterRequest;
-import edu.uw.zookeeper.protocol.FourLetterResponse;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.SessionOperation;
-import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.protocol.server.AssignZxidProcessor;
-import edu.uw.zookeeper.protocol.server.ConnectTableProcessor;
-import edu.uw.zookeeper.protocol.server.ExpiringSessionRequestExecutor;
-import edu.uw.zookeeper.protocol.server.FourLetterRequestProcessor;
-import edu.uw.zookeeper.protocol.server.ProtocolResponseProcessor;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
-import edu.uw.zookeeper.protocol.server.ToTxnRequestProcessor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
 import edu.uw.zookeeper.server.ExpiringSessionService;
 import edu.uw.zookeeper.server.ExpiringSessionTable;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
-import edu.uw.zookeeper.util.Pair;
-import edu.uw.zookeeper.util.Processor;
-import edu.uw.zookeeper.util.Processors;
-import edu.uw.zookeeper.util.Publisher;
-import edu.uw.zookeeper.util.TaskExecutor;
 
-@DependsOn({EnsemblePeerService.class})
+@DependsOn({EnsembleConnectionsService.class})
 public class FrontendServerService extends DependentService.SimpleDependentService {
 
     public static Module module() {
@@ -88,35 +67,12 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
 
         @Provides @Singleton
         public ServerTaskExecutor getServerExecutor(
-                EnsemblePeerService peers,
+                ServiceLocator locator,
+                EnsembleConnectionsService peers,
                 ExpiringSessionTable sessions,
                 RuntimeModule runtime) {
             ZxidEpochIncrementer zxids = ZxidEpochIncrementer.fromZero();
-            final ConcurrentMap<Long, Publisher> listeners = new MapMaker().makeMap();
-            TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor = 
-                    ServerTaskExecutor.ProcessorExecutor.of(
-                            FourLetterRequestProcessor.getInstance());
-            TaskExecutor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> connectExecutor = 
-                    ServerTaskExecutor.ProcessorExecutor.of(
-                            FrontendConnectProcessor.newInstance(
-                                    peers,
-                                    ConnectTableProcessor.create(sessions, zxids), 
-                                    listeners));
-            Processor<SessionOperation.Request<Records.Request>, Message.ServerResponse<Records.Response>> processor = 
-                    Processors.bridge(
-                            ToTxnRequestProcessor.create(
-                                    AssignZxidProcessor.newInstance(zxids)), 
-                            ProtocolResponseProcessor.create(
-                                    ServerApplicationModule.defaultTxnProcessor(ZNodeDataTrie.newInstance(), sessions,
-                                            new Function<Long, Publisher>() {
-                                                @Override
-                                                public @Nullable Publisher apply(@Nullable Long input) {
-                                                    return listeners.get(input);
-                                                }
-                                    })));
-            TaskExecutor<SessionOperation.Request<Records.Request>, Message.ServerResponse<Records.Response>> sessionExecutor = 
-                    ExpiringSessionRequestExecutor.newInstance(sessions, runtime.executors().asListeningExecutorServiceFactory().get(), listeners, processor);
-            return ServerTaskExecutor.newInstance(anonymousExecutor, connectExecutor, sessionExecutor);
+            return FrontendServerTaskExecutor.newInstance(locator, sessions, zxids);
         }
         
         @Provides @Singleton

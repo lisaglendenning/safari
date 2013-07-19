@@ -4,6 +4,7 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -37,18 +38,16 @@ public class PeerConfiguration {
         public PeerConfiguration getPeerConfiguration(
                 ControlMaterializerService<?> controlClient, 
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
-            Materializer<?,?> materializer = controlClient.materializer();
             ServerInetAddressView conductorAddress = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
                             "Peer", "address", "peerAddress", "", 2281).get(runtime.configuration());
-            Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.create(conductorAddress, materializer);
+            Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.create(conductorAddress, controlClient.materializer(), MoreExecutors.sameThreadExecutor()).get();
             return new PeerConfiguration(PeerAddressView.of(entityNode.get(), conductorAddress));
         }
     }
 
     public static void advertise(Identifier peerId, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
-        Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(peerId);
-        Orchestra.Peers.Entity.Presence presenceNode = Orchestra.Peers.Entity.Presence.of(entityNode);
-        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = materializer.operator().create(presenceNode.path()).submit().get();
+        Orchestra.Peers.Entity entity = Orchestra.Peers.Entity.of(peerId);
+        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = entity.presence().create(materializer).get();
         Operations.unlessError(result.second().getRecord(), result.toString());
     }
     

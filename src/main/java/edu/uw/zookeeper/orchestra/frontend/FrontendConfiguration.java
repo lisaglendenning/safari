@@ -38,7 +38,7 @@ public class FrontendConfiguration {
     
     public static void advertise(Identifier peerId, ServerInetAddressView address, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
         Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(peerId);
-        Orchestra.Peers.Entity.ClientAddress clientAddressNode = Orchestra.Peers.Entity.ClientAddress.create(address, entityNode, materializer);
+        Orchestra.Peers.Entity.ClientAddress clientAddressNode = Orchestra.Peers.Entity.ClientAddress.create(address, entityNode, materializer).get();
         if (! address.equals(clientAddressNode.get())) {
             throw new IllegalStateException(clientAddressNode.get().toString());
         }        

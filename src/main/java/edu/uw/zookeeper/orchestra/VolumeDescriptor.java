@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
+import java.util.Collection;
 import java.util.SortedSet;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -8,8 +9,17 @@ import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableSortedSet;
 
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.util.Reference;
 
 public class VolumeDescriptor {
+    
+    public static VolumeDescriptor all() {
+        return Holder.ALL.get();
+    }
+
+    public static VolumeDescriptor none() {
+        return Holder.NONE.get();
+    }
     
     public static VolumeDescriptor of(ZNodeLabel.Path root) {
         return of(root, ImmutableSortedSet.<ZNodeLabel>of());
@@ -17,17 +27,33 @@ public class VolumeDescriptor {
 
     public static VolumeDescriptor of(
             ZNodeLabel.Path root, 
-            SortedSet<ZNodeLabel> leaves) {
+            Collection<ZNodeLabel> leaves) {
         return new VolumeDescriptor(root, leaves);
+    }
+
+    protected static enum Holder implements Reference<VolumeDescriptor> {
+        NONE(new VolumeDescriptor(ZNodeLabel.Path.root(), ImmutableSortedSet.<ZNodeLabel>of(ZNodeLabel.Path.root()))),
+        ALL(new VolumeDescriptor(ZNodeLabel.Path.root(), ImmutableSortedSet.<ZNodeLabel>of()));
+        
+        private final VolumeDescriptor instance;
+        
+        private Holder(VolumeDescriptor instance) {
+            this.instance = instance;
+        }
+
+        @Override
+        public VolumeDescriptor get() {
+            return instance;
+        }
     }
     
     protected final ZNodeLabel.Path root;
-    protected final SortedSet<ZNodeLabel> leaves;
+    protected final ImmutableSortedSet<ZNodeLabel> leaves;
 
     @JsonCreator
     public VolumeDescriptor(
             @JsonProperty("root") ZNodeLabel.Path root, 
-            @JsonProperty("leaves") SortedSet<ZNodeLabel> leaves) {
+            @JsonProperty("leaves") Collection<ZNodeLabel> leaves) {
         this.root = root;
         this.leaves = ImmutableSortedSet.copyOf(leaves);
     }

@@ -3,14 +3,16 @@ package edu.uw.zookeeper.orchestra.peer;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
+import javax.annotation.Nullable;
+
 import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
@@ -19,7 +21,6 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -35,6 +36,7 @@ import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
+import edu.uw.zookeeper.orchestra.CachedFunction;
 import edu.uw.zookeeper.orchestra.DependentService;
 import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
@@ -101,6 +103,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         @Provides @Singleton
         public PeerConnectionsService<Connection<MessagePacket>> getPeerConnectionsService(
                 PeerConfiguration configuration,
+                ControlMaterializerService<?> control,
                 ServiceLocator locator,
                 NettyModule netModule,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
@@ -121,7 +124,14 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                     IntraVmConnectionEndpoint.create(loopbackAddress, runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
             Pair<IntraVmConnection<InetSocketAddress>, IntraVmConnection<InetSocketAddress>> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
-            PeerConnectionsService<Connection<MessagePacket>> instance = PeerConnectionsService.newInstance(configuration.getView().id(), serverConnections, clientConnections, loopback, locator);
+            PeerConnectionsService<Connection<MessagePacket>> instance = 
+                    PeerConnectionsService.newInstance(
+                            configuration.getView().id(), 
+                            serverConnections, 
+                            clientConnections, 
+                            loopback, 
+                            control.materializer(),
+                            locator);
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
@@ -132,14 +142,21 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             ServerConnectionFactory<? super MessagePacket, C> serverConnectionFactory,
             ClientConnectionFactory<? super MessagePacket, C> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
+            Materializer<?,?> control,
             ServiceLocator locator) {
         PeerConnectionsService<C> instance = new PeerConnectionsService<C>(
-                identifier, serverConnectionFactory, clientConnectionFactory, loopback, locator);
+                identifier, 
+                serverConnectionFactory, 
+                clientConnectionFactory, 
+                loopback, 
+                control,
+                locator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
 
     protected final Identifier identifier;
+    protected final Materializer<?,?> control;
     protected final ServerPeerConnections servers;
     protected final ClientPeerConnections clients;
     
@@ -148,9 +165,11 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             ServerConnectionFactory<? super MessagePacket, C> serverConnectionFactory,
             ClientConnectionFactory<? super MessagePacket, C> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
+            Materializer<?,?> control,
             ServiceLocator locator) {
         super(locator);
         this.identifier = identifier;
+        this.control = control;
         this.servers = new ServerPeerConnections(serverConnectionFactory);
         this.clients = new ClientPeerConnections(clientConnectionFactory);
         
@@ -199,9 +218,8 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         @Override
         public void running() {
             Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
-            Identifier peerId = locator().getInstance(PeerConfiguration.class).getView().id();
             try {
-                PeerConfiguration.advertise(peerId, materializer);
+                PeerConfiguration.advertise(identifier(), materializer);
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             }
@@ -220,37 +238,6 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
 
-    public class LookupAddressTask implements Callable<Orchestra.Peers.Entity.PeerAddress> {
-        
-        protected final Identifier peer;
-        
-        public LookupAddressTask(Identifier peer) {
-            this.peer = peer;
-        }
-            
-        @Override
-        public Orchestra.Peers.Entity.PeerAddress call() throws KeeperException, InterruptedException, ExecutionException {
-            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
-            return Orchestra.Peers.Entity.PeerAddress.lookup(Orchestra.Peers.Entity.of(peer), materializer);
-        }
-    }
-    
-    public class PresenceTask implements Callable<Boolean> {
-
-        protected final Orchestra.Peers.Entity.Presence presence;
-        
-        public PresenceTask(Identifier peer) {
-            this.presence = Orchestra.Peers.Entity.Presence.of(Orchestra.Peers.Entity.of(peer));
-        }
-        
-        @Override
-        public Boolean call() throws InterruptedException, ExecutionException {
-            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
-            return presence.exists(materializer);
-        }
-        
-    }
-    
     public class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements Publisher {
         
         protected final ConnectionFactory<? super MessagePacket, C> connections;
@@ -356,10 +343,12 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
 
         protected final MessagePacket handshake = MessagePacket.of(MessageHandshake.of(identifier));
         protected final ConnectionTask connectionTask = new ConnectionTask();
+        protected final CachedFunction<Identifier, Orchestra.Peers.Entity.PeerAddress> lookup;
         
         public ClientPeerConnections(
                 ClientConnectionFactory<? super MessagePacket, C> connections) {
             super(connections);
+            this.lookup = Orchestra.Peers.Entity.PeerAddress.lookup(control);
         }
 
         @Override
@@ -367,24 +356,28 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             return (ClientConnectionFactory<? super MessagePacket, C>) connections;
         }
 
-        protected ListenableFuture<MessagePacket> handshake(ClientPeerConnection peer) {
-            return peer.write(handshake);
-        }
-
-        public ListenableFuture<ClientPeerConnection> connect(Identifier identifier, Executor executor) {
+        public ListenableFuture<ClientPeerConnection> connect(Identifier identifier) {
             ClientPeerConnection connection = get(identifier);
             if (connection != null) {
                 return Futures.immediateFuture(connection);
             } else {
-                ListenableFutureTask<Orchestra.Peers.Entity.PeerAddress> lookupFuture = ListenableFutureTask.create(new LookupAddressTask(identifier));
-                ListenableFuture<C> connectionFuture = Futures.transform(lookupFuture, connectionTask, executor);
+                ListenableFuture<Orchestra.Peers.Entity.PeerAddress> lookupFuture;
+                try {
+                    lookupFuture = lookup.apply(identifier);
+                } catch (Exception e) {
+                    return Futures.immediateFailedFuture(e);
+                }
+                ListenableFuture<C> connectionFuture = Futures.transform(lookupFuture, connectionTask);
                 ConnectTask connectTask = new ConnectTask(identifier);
-                Futures.addCallback(connectionFuture, connectTask, executor);
-                executor.execute(lookupFuture);
+                Futures.addCallback(connectionFuture, connectTask);
                 return connectTask;
             }
         }
-        
+
+        protected ListenableFuture<MessagePacket> handshake(ClientPeerConnection peer) {
+            return peer.write(handshake);
+        }
+
         protected ClientPeerConnection put(ClientPeerConnection v) {
             ClientPeerConnection prev = put(v.remoteAddress().getIdentifier(), v);
             handshake(v);
@@ -397,6 +390,22 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                 handshake(v);
             }
             return prev;
+        }
+        
+        public CachedFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection> connectFunction() {
+            return CachedFunction.create(
+                    new Function<Identifier, PeerConnectionsService<?>.ClientPeerConnection>() {
+                        @Override
+                        public @Nullable PeerConnectionsService<?>.ClientPeerConnection apply(Identifier ensemble) {
+                            return get(ensemble);
+                        }                    
+                    }, 
+                    new AsyncFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection>() {
+                        @Override
+                        public ListenableFuture<PeerConnectionsService<?>.ClientPeerConnection> apply(Identifier ensemble) {
+                            return connect(ensemble);
+                        }
+                    });
         }
         
         protected class ConnectionTask implements AsyncFunction<Orchestra.Peers.Entity.PeerAddress, C> {

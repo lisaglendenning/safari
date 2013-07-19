@@ -4,6 +4,7 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -35,7 +36,10 @@ public class EnsembleConfiguration {
                 ControlMaterializerService<?> controlClient) throws InterruptedException, ExecutionException, KeeperException {
             // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
-            Orchestra.Ensembles.Entity ensembleNode = Orchestra.Ensembles.Entity.create(myView, controlClient.materializer());
+            Orchestra.Ensembles.Entity ensembleNode = Orchestra.Ensembles.Entity.create(
+                    myView, 
+                    controlClient.materializer(),
+                    MoreExecutors.sameThreadExecutor()).get();
             return new EnsembleConfiguration(ensembleNode.get());
         }
     }

@@ -1,6 +1,8 @@
 package edu.uw.zookeeper.orchestra.control;
 
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -8,12 +10,17 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
+import javax.annotation.Nullable;
+
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -30,14 +37,22 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.data.Schema.ZNodeSchema.Builder.ZNodeTraversal;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.Operation.ProtocolRequest;
+import edu.uw.zookeeper.protocol.Operation.ProtocolResponse;
+import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
+import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.protocol.proto.Records.Request;
+import edu.uw.zookeeper.protocol.proto.Records.Response;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
 import edu.uw.zookeeper.util.Reference;
+import edu.uw.zookeeper.util.SettableFuturePromise;
 
 public abstract class Control {
     
@@ -69,14 +84,14 @@ public abstract class Control {
             }
         };
         
-        Materializer.Operator<?,?> operator = materializer.operator();
+        Materializer<?,?>.Operator operator = materializer.operator();
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
             Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.exists(node.path()).submit().get();
-            Operation.Response response = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
-            if (response instanceof Operation.Error) {
+            Optional<Operation.Error> error = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
+            if (error.isPresent()) {
                 result = operator.create(node.path()).submit().get();
-                response = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
+                error = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
             }
         }
     }
@@ -213,23 +228,44 @@ public abstract class Control {
         }
         
         @SuppressWarnings("unchecked")
-        public static <T, C extends TypedValueZNode<T>> C get(Class<C> cls, Object parent, Materializer<?, ? > materializer) throws InterruptedException, ExecutionException, KeeperException {
-            ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
-            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = materializer.operator().getData(path).submit().get();
-            Operations.unlessError(result.second().getRecord(), result.toString());
-            T value = (T) materializer.get(path).get().get();
-            return newInstance(cls, value, parent);
+        public static <T, C extends TypedValueZNode<T>> ListenableFuture<C> get(
+                final Class<C> cls, 
+                final Object parent, 
+                final Materializer<?, ?> materializer) {
+            final ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
+            return Futures.transform(
+                    materializer.operator().getData(path).submit(),
+                    new AsyncFunction<Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>>, C>() {
+                        @Override
+                        public @Nullable
+                        ListenableFuture<C> apply(Pair<? extends ProtocolRequest<Request>, ? extends ProtocolResponse<Response>> input) throws KeeperException {
+                            Operations.unlessError(input.second().getRecord());
+                            T value = (T) materializer.get(path).get().get();
+                            return Futures.immediateFuture(newInstance(cls, value, parent));
+                        }
+                    });
         }
         
-        public static <T, C extends TypedValueZNode<T>> C create(Class<C> cls, T value, Object parent, Materializer<?, ?> materializer) throws InterruptedException, ExecutionException, KeeperException {
-            C instance = newInstance(cls, value, parent);
-            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = materializer.operator().create(instance.path(), instance.get()).submit().get();
-            Operation.Response reply = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
-            if (reply instanceof Operation.Error) {
-                return get(cls, parent, materializer);
-            } else {
-                return instance;
-            }
+        public static <T, C extends TypedValueZNode<T>> ListenableFuture<C> create(
+                final Class<C> cls, 
+                final T value, 
+                final Object parent, 
+                final Materializer<?, ?> materializer) {
+            final C instance = newInstance(cls, value, parent);
+            return Futures.transform(
+                    materializer.operator().create(instance.path(), instance.get()).submit(),
+                    new AsyncFunction<Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>>, C>() {
+                        @Override
+                        public @Nullable
+                        ListenableFuture<C> apply(Pair<? extends ProtocolRequest<Request>, ? extends ProtocolResponse<Response>> input) throws KeeperException {
+                            Optional<Operation.Error> error = Operations.maybeError(input.second().getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
+                            if (error.isPresent()) {
+                                return get(cls, parent, materializer);
+                            } else {
+                                return Futures.immediateFuture(instance);
+                            }
+                        }
+                    });
         }
         
         protected final T value;
@@ -254,18 +290,18 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<T extends Operation.ProtocolRequest<?>, V extends Operation.ProtocolResponse<?>> extends PromiseTask<Materializer<T,V>, Void> implements FutureCallback<ZNodeLabel.Path> {
+    public static class FetchUntil<T extends Operation.ProtocolRequest<Records.Request>, U extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Materializer<T,U>, Void> implements FutureCallback<Void> {
 
-        public static <T extends Operation.ProtocolRequest<?>, V extends Operation.ProtocolResponse<?>> FetchUntil<T,V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?,?>> predicate, Materializer<T,V> materializer, Executor executor) throws InterruptedException, ExecutionException {
+        public static <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> FetchUntil<T,V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?,?>> predicate, Materializer<T,V> materializer, Executor executor) throws InterruptedException, ExecutionException {
             Promise<Void> delegate = newPromise();
             return new FetchUntil<T,V>(root, predicate, materializer, delegate, executor);
         }
         
         protected class Updater implements Runnable {
-            protected final ListenableFuture<ZNodeLabel.Path> future;
+            protected final ListenableFuture<Void> future;
             
             public Updater(ZNodeLabel.Path root) {
-                this.future = TreeFetcher.Builder.<T,V>create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).setRoot(root).build().call();
+                this.future = TreeFetcher.Builder.<T,U,Void>create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).build().apply(root);
                 Futures.addCallback(future, FetchUntil.this, executor);
                 FetchUntil.this.addListener(this, executor);
             }
@@ -283,7 +319,7 @@ public abstract class Control {
         protected FetchUntil(
                 ZNodeLabel.Path root, 
                 Predicate<Materializer<?,?>> predicate, 
-                Materializer<T,V> task, 
+                Materializer<T,U> task, 
                 Promise<Void> delegate, 
                 Executor executor) throws InterruptedException, ExecutionException {
             super(task, delegate);
@@ -308,7 +344,7 @@ public abstract class Control {
         }
 
         @Override
-        public void onSuccess(ZNodeLabel.Path result) {
+        public void onSuccess(Void result) {
             boolean done = predicate.apply(task());
 
             if (done) {
@@ -316,7 +352,7 @@ public abstract class Control {
             } else {
                 try {
                     // force watches
-                    task().operator().sync(result).submit().get();
+                    task().operator().sync(root).submit().get();
                 } catch (Exception e) {
                     setException(e);
                 }
@@ -359,6 +395,138 @@ public abstract class Control {
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;
+        }
+    }
+    
+    public static class RegisterHashedTask<I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode> extends PromiseTask<T,V> implements Runnable {
+
+        public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode>
+        RegisterHashedTask<I,O,T,V> of(
+                T task,
+                Hash.Hashed hashed,
+                Function<Identifier, V> entityOf,
+                Function<V, ZNodeLabel.Path> pathOfValue,
+                AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf,
+                Materializer<I,O> materializer,
+                Executor executor) {
+            Promise<V> promise = SettableFuturePromise.create();
+            return new RegisterHashedTask<I,O,T,V>(task, hashed, entityOf, pathOfValue, valueOf, materializer, executor, promise);
+        }
+        
+        protected final Executor executor;
+        protected final Materializer<I,O> materializer;
+        protected final Function<Identifier, V> entityOf;
+        protected final Function<V, ZNodeLabel.Path> pathOfValue;
+        protected final AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf;
+        protected volatile Hash.Hashed hashed;
+        protected volatile ListenableFuture<Pair<I,O>> createFuture;
+        protected volatile ListenableFuture<? extends TypedValueZNode<T>> valueFuture;
+        
+        public RegisterHashedTask(
+                T task,
+                Hash.Hashed hashed,
+                Function<Identifier, V> entityOf,
+                Function<V, ZNodeLabel.Path> pathOfValue,
+                AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf,
+                Materializer<I,O> materializer,
+                Executor executor,
+                Promise<V> delegate) {
+            super(task, delegate);
+            this.materializer = checkNotNull(materializer);
+            this.executor = checkNotNull(executor);
+            this.hashed = checkNotNull(hashed);
+            this.entityOf = checkNotNull(entityOf);
+            this.pathOfValue = checkNotNull(pathOfValue);
+            this.valueOf = checkNotNull(valueOf);
+            this.createFuture = null;
+            this.valueFuture = null;
+        }
+        
+        @Override
+        public synchronized void run() {
+            try {
+                doRun();
+            } catch (Throwable t) {
+                setException(t);
+            }
+        }
+        
+        protected void doRun() throws Exception {
+            if (isDone()) {
+                return;
+            }
+            if (createFuture == null) {
+                Identifier id = hashed.asIdentifier();
+                while (id.equals(Identifier.zero())) {
+                    hashed = hashed.rehash();
+                    id = hashed.asIdentifier();
+                }
+                V entity = entityOf.apply(id);
+                createFuture = materializer.submit(
+                        Operations.Requests.multi()
+                            .add(materializer.operator().create(
+                                    entity.path()).get())
+                            .add(materializer.operator().create(
+                                    pathOfValue.apply(entity), 
+                                    task()).get())
+                            .build());
+                createFuture.addListener(this, executor);
+                return;
+            } else if (! createFuture.isDone()) {
+                return;
+            } else {
+                IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().second().getRecord());
+                Operation.Error error = null;
+                for (Records.MultiOpResponse e: response) {
+                    if (e instanceof Operation.Error) {
+                        error = (Operation.Error) e;
+                        if (error.getError() != KeeperException.Code.NODEEXISTS) {
+                            throw KeeperException.create(error.getError());
+                        }
+                        break;
+                    }
+                }
+                if (error == null) {
+                    // success!
+                    set(entityOf.apply(hashed.asIdentifier()));
+                    return;
+                } else {
+                    // now, check that the existing node is my address!
+                }
+            }
+            if (isDone()) {
+                return;
+            }
+            assert ((createFuture != null) && createFuture.isDone());
+            if (valueFuture == null) {
+                valueFuture = valueOf.apply(entityOf.apply(hashed.asIdentifier()));
+                valueFuture.addListener(this, executor);
+            } else if (! valueFuture.isDone()) {
+                return;
+            } else {
+                try {
+                    T value = valueFuture.get().get();
+                    assert (value != null);
+                    if (task().equals(value)) {
+                        // success!
+                        set(entityOf.apply(hashed.asIdentifier()));
+                        return;
+                    } else {
+                        // collision! try again...
+                        hashed = hashed.rehash();
+                        valueFuture = null;
+                        createFuture = null;
+                    }
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof KeeperException.NoNodeException) {
+                        // hmm...try again?
+                        valueFuture = null;
+                        createFuture = null;
+                    } else {
+                        throw e;
+                    }
+                }
+            }
         }
     }
 }

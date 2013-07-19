@@ -55,17 +55,18 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     }
     
     @Override
-    public ListenableFuture<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> submit(Operation.Request request) {
-        return submit(request, SettableFuturePromise.<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>>create());
+    public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> submit(Operation.Request request) {
+        return submit(request, SettableFuturePromise.<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>>create());
     }
 
     @Override
-    public ListenableFuture<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> submit(Operation.Request request, Promise<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> promise) {
+    public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> submit(Operation.Request request, Promise<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> promise) {
         ShardedRequestTask task = new ShardedRequestTask(request, promise, shard(request));
         send(task);
         return task;
     }
     
+    @SuppressWarnings("unchecked")
     public ShardedRequest<?> shard(Operation.Request request) {
         ShardedRequest<?> sharded;
         if (request instanceof ShardedRequest) {
@@ -93,7 +94,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                 }
             } 
             if (translated instanceof Message.ClientRequest) {
-                sharded = ShardedRequestMessage.of(id, (Message.ClientRequest<?>) translated);
+                sharded = ShardedRequestMessage.of(id, (Message.ClientRequest<Records.Request>) translated);
             } else {
                 sharded = ShardedRequest.of(id, translated);
             }
@@ -103,27 +104,28 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
 
     @Override
     @Subscribe
-    public void handleResponse(Message.ServerResponse<?> message) throws InterruptedException {
+    public void handleResponse(Message.ServerResponse<Records.Response> message) throws InterruptedException {
         if ((state.get() != State.TERMINATED) && ! (message instanceof ShardedResponseMessage)) {
             receive(message);
         }
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    protected void applyReceived(PendingTask task, Message.ServerResponse<?> response) {
-        ShardedResponseMessage<?> unshardedResponse;
+    protected void applyReceived(PendingTask task, Message.ServerResponse<Records.Response> response) {
+        ShardedResponseMessage<Records.Response> unshardedResponse;
 
         if ((task != null) && (task.task().getXid() == response.getXid())) {
             ShardedRequestTask shardedTask = (ShardedRequestTask) task.delegate();
             Identifier id = shardedTask.sharded().getId();
             Operation.Request input = shardedTask.input();
-            ShardedRequestMessage<?> unshardedRequest;
+            ShardedRequestMessage<Records.Request> unshardedRequest;
             if (input instanceof ShardedRequestMessage) {
-                unshardedRequest = (ShardedRequestMessage<?>) input;
+                unshardedRequest = (ShardedRequestMessage<Records.Request>) input;
             } else {
-                Message.ClientRequest<?> request;
+                Message.ClientRequest<Records.Request> request;
                 if (input instanceof Message.ClientRequest) {
-                    request = (Message.ClientRequest<?>) input;
+                    request = (Message.ClientRequest<Records.Request>) input;
                 } else {
                     request = ProtocolRequestMessage.of(
                                 task.task().getXid(),
@@ -143,8 +145,8 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                                 response.getXid(), response.getZxid(), translated));
             }
             
-            Pair<Message.ClientRequest<?>, Message.ServerResponse<?>> result = 
-                    Pair.<Message.ClientRequest<?>, Message.ServerResponse<?>>create(unshardedRequest, unshardedResponse);
+            Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> result = 
+                    Pair.<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>create(unshardedRequest, unshardedResponse);
             task.set(result);
         } else {
             Identifier id = null;
@@ -170,14 +172,14 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
         post(unshardedResponse);
     }
 
-    protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> {
+    protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> {
 
         protected final Operation.Request input;
         protected final ShardedRequest<?> sharded;
         
         public ShardedRequestTask(
                 Operation.Request input,
-                Promise<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> delegate,
+                Promise<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> delegate,
                 ShardedRequest<?> sharded) {
             super(sharded.getRequest(), delegate);
             this.input = input;

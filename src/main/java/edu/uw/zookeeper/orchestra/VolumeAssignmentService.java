@@ -29,7 +29,7 @@ import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.util.Reference;
 
 @DependsOn(ControlMaterializerService.class)
-public class VolumeLookupService extends AbstractIdleService implements Reference<VolumeLookup> {
+public class VolumeAssignmentService extends AbstractIdleService implements Reference<VolumeLookup> {
 
     public static Module module() {
         return new Module();
@@ -44,32 +44,32 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
         }
 
         @Provides @Singleton
-        public VolumeLookupService getVolumeLookupService(
+        public VolumeAssignmentService getVolumeLookupService(
                 ControlMaterializerService<?> controlClient,
                 RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
-            VolumeLookupService instance = new VolumeLookupService(controlClient);
+            VolumeAssignmentService instance = new VolumeAssignmentService(controlClient.materializer());
             runtime.serviceMonitor().addOnStart(instance);
             return instance;
         }
     }
     
-    public VolumeLookupService newInstance(
-            ControlMaterializerService<?> controlClient) {
-        return new VolumeLookupService(controlClient);
+    public VolumeAssignmentService newInstance(
+            Materializer<?,?> client) {
+        return new VolumeAssignmentService(client);
     }
     
     private static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
 
     protected final Logger logger;
-    protected final ControlMaterializerService<?> controlClient;
+    protected final Materializer<?,?> client;
     protected final VolumeLookup lookup;
     protected final ConcurrentMap<Identifier, Identifier> assignments;
     protected final UpdateFromCache updater;
     
-    public VolumeLookupService(
-            ControlMaterializerService<?> controlClient) {
+    public VolumeAssignmentService(
+            Materializer<?,?> client) {
         this.logger = LoggerFactory.getLogger(getClass());
-        this.controlClient = controlClient;
+        this.client = client;
         this.lookup = VolumeLookup.newInstance();
         this.assignments = new MapMaker().makeMap();
         this.updater = new UpdateFromCache();
@@ -121,9 +121,9 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
         public UpdateFromCache() {}
         
         public void initialize() {
-            controlClient.register(this);
+            client.register(this);
             
-            Materializer.MaterializedNode volumes = controlClient.materializer().get(VOLUMES_PATH);
+            Materializer.MaterializedNode volumes = client.get(VOLUMES_PATH);
             if (volumes != null) {
                 for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
                     Identifier volumeId = Identifier.valueOf(child.getKey().toString());
@@ -186,7 +186,7 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
                 return;
             }
             
-            Materializer.MaterializedNode node = controlClient.materializer().get(path);
+            Materializer.MaterializedNode node = client.get(path);
             ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
             if (! VOLUMES_PATH.equals(pointer.get().path())) {
                 Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());

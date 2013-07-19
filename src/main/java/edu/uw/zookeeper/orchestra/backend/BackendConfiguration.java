@@ -66,7 +66,7 @@ public class BackendConfiguration {
 
     public static void advertise(Identifier myEntity, BackendView view, Materializer<?, ?> materializer) throws InterruptedException, ExecutionException, KeeperException {
         Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(myEntity);
-        Orchestra.Peers.Entity.Backend backendNode = Orchestra.Peers.Entity.Backend.create(view, entityNode, materializer);
+        Orchestra.Peers.Entity.Backend backendNode = Orchestra.Peers.Entity.Backend.create(view, entityNode, materializer).get();
         if (! view.equals(backendNode.get())) {
             throw new IllegalStateException(backendNode.get().toString());
         }

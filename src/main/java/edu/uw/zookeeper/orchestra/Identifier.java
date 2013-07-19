@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import java.util.Iterator;
 import java.util.NavigableSet;
 import java.util.TreeSet;
@@ -14,6 +16,10 @@ import edu.uw.zookeeper.util.Reference;
 
 public class Identifier implements Reference<UnsignedInteger>, Comparable<Identifier> {
 
+    public static Identifier zero() {
+        return Holder.ZERO.get();
+    }
+    
     @Serializes(from=String.class, to=Identifier.class)
     public static Identifier valueOf(String string) {
         UnsignedInteger value = UnsignedInteger.valueOf(string, RADIX);
@@ -34,10 +40,25 @@ public class Identifier implements Reference<UnsignedInteger>, Comparable<Identi
     public static final String PATTERN = "[a-f0-9]{" + CHARACTERS + "}";
     public static final String FORMAT = "%0" + CHARACTERS + "s";
     
+    protected static enum Holder implements Reference<Identifier> {
+        ZERO(new Identifier(UnsignedInteger.fromIntBits(0)));
+
+        private final Identifier instance;
+        
+        private Holder(Identifier instance) {
+            this.instance = instance;
+        }
+        
+        @Override
+        public Identifier get() {
+            return instance;
+        }
+    }
+    
     protected final UnsignedInteger value;
     
     public Identifier(UnsignedInteger value) {
-        this.value = value;
+        this.value = checkNotNull(value);
     }
     
     @Override

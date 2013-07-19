@@ -16,15 +16,15 @@ public class VolumeLookup {
     public static VolumeLookup newInstance() {
         return new VolumeLookup(
                 ZNodeLabelTrie.of(VolumeLookupNode.root()), 
-                new MapMaker().<Identifier, ZNodeLabel.Path>makeMap());
+                new MapMaker().<Identifier, VolumeLookupNode>makeMap());
     }
     
     protected final ZNodeLabelTrie<VolumeLookupNode> lookupTrie;
-    protected final ConcurrentMap<Identifier, ZNodeLabel.Path> byVolumeId;
+    protected final ConcurrentMap<Identifier, VolumeLookupNode> byVolumeId;
     
     protected VolumeLookup(
             ZNodeLabelTrie<VolumeLookupNode> lookupTrie,
-            ConcurrentMap<Identifier, ZNodeLabel.Path> byVolumeId) {
+            ConcurrentMap<Identifier, VolumeLookupNode> byVolumeId) {
         this.lookupTrie = lookupTrie;
         this.byVolumeId = byVolumeId;
     }
@@ -39,20 +39,25 @@ public class VolumeLookup {
     }
     
     public Volume put(Volume volume) {
-        ZNodeLabel.Path volumeRoot = volume.getDescriptor().getRoot();
-        byVolumeId.put(volume.getId(), volumeRoot);
-        VolumeLookupNode node = asTrie().root().add(volumeRoot);
+        VolumeLookupNode node = byVolumeId.get(volume.getId());
+        if (node == null) {
+            ZNodeLabel.Path volumeRoot = volume.getDescriptor().getRoot();
+            node = asTrie().root().add(volumeRoot);
+            VolumeLookupNode prev = byVolumeId.putIfAbsent(volume.getId(), node);
+            if (prev != null) {
+                if (prev != node) {
+                    throw new AssertionError();
+                }
+            }
+        }
         return node.set(volume);
     }
 
     public Volume remove(Identifier id) {
         Volume prev = null;
-        ZNodeLabel.Path volumeRoot = byVolumeId.remove(id);
-        if (volumeRoot != null) {
-            VolumeLookup.VolumeLookupNode lookupNode = asTrie().get(volumeRoot);
-            if (lookupNode != null) {
-                prev = lookupNode.getAndSet(null);
-            }
+        VolumeLookup.VolumeLookupNode node = byVolumeId.remove(id);
+        if (node != null) {
+            prev = node.getAndSet(null);
         }
         return prev;
     }
@@ -63,14 +68,8 @@ public class VolumeLookup {
     }
     
     public Volume get(Identifier id) {
-        ZNodeLabel.Path path = byVolumeId.get(id);
-        if (path != null) {
-            VolumeLookupNode node = asTrie().get(path);
-            if (node != null) {
-                return node.get();
-            }
-        }
-        return null;
+        VolumeLookupNode node = byVolumeId.get(id);
+        return (node == null) ? null : node.get();
     }
     
     public Set<Identifier> getVolumeIds() {

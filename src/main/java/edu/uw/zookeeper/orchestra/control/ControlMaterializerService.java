@@ -18,6 +18,7 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutorService;
 import edu.uw.zookeeper.protocol.client.PingingClient;
+import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn(ControlConnectionsService.class)
 public class ControlMaterializerService<C extends Connection<? super Operation.Request>> extends ClientConnectionExecutorService<C> {
@@ -54,7 +55,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         return new ControlMaterializerService<C>(connections);
     }
 
-    protected final Materializer<Message.ClientRequest<?>, Message.ServerResponse<?>> materializer;
+    protected final Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> materializer;
     protected final WatchPromiseTrie watches;
 
     protected ControlMaterializerService(
@@ -68,7 +69,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         this.watches = WatchPromiseTrie.newInstance();
     }
     
-    public Materializer<Message.ClientRequest<?>, Message.ServerResponse<?>> materializer() {
+    public Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> materializer() {
         return materializer;
     }
     

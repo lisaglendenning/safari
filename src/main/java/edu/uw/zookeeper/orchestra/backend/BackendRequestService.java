@@ -26,7 +26,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.VolumeLookup;
-import edu.uw.zookeeper.orchestra.VolumeLookupService;
+import edu.uw.zookeeper.orchestra.VolumeAssignmentService;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
@@ -72,7 +72,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendRequestService(
                 ServiceLocator locator,
                 BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
-                VolumeLookupService volumes,
+                VolumeAssignmentService volumes,
                 RuntimeModule runtime) throws Exception {
             BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
                     BackendRequestService.newInstance(locator, volumes.get(), connections);
@@ -248,20 +248,36 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
     
         public void handleMessageSessionClose(MessageSessionClose message) {
-            BackendClient client = clients.get(message.getSessionId());
+            final long sessionId = message.getSessionId();
+            final BackendClient client = clients.get(sessionId);
             if (client != null) {
                 try {
-                    client.disconnect();
+                    final ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> future = client.disconnect();
+                    future.addListener(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                future.get();
+                                clients.remove(client.getSessionId(), client);
+                            } catch (Exception e) {}
+                        }
+                    }, MoreExecutors.sameThreadExecutor());
                 } catch (Throwable t) {}
             }
         }
         
         public void handleMessageSessionRequest(MessageSessionRequest message) {
             BackendClient client = clients.get(message.getSessionId());
-            client.getClient().submit(message.getRequest());
+            if (client != null) {
+                client.submit(message.getRequest());
+            } else {
+                // TODO
+                throw new UnsupportedOperationException();
+            }
         }
     
         protected class BackendClient {
+            
             protected final long sessionId;
             protected final ShardedClientConnectionExecutor<?> client;
             
@@ -282,8 +298,12 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 return client;
             }
             
-            public ListenableFuture<Pair<Message.ClientRequest<?>, Message.ServerResponse<?>>> disconnect() {
-                return getClient().submit(Records.newInstance(IDisconnectRequest.class));
+            public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> disconnect() {
+                return submit(Records.newInstance(IDisconnectRequest.class));
+            }
+
+            public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> submit(Operation.Request request) {
+                return getClient().submit(request);
             }
     
             @Subscribe

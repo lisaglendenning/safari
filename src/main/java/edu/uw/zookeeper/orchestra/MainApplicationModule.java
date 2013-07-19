@@ -71,7 +71,7 @@ public class MainApplicationModule extends AbstractModule {
         return module.servers();
     }
     
-    @DependsOn({ControlMaterializerService.class, VolumeLookupService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
+    @DependsOn({ControlMaterializerService.class, VolumeAssignmentService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
     protected class MainService extends DependentService implements Reference<Injector>, ServiceLocator {
 
         protected final Injector injector;
@@ -80,7 +80,7 @@ public class MainApplicationModule extends AbstractModule {
             this.injector = Guice.createInjector(
                     MainApplicationModule.this, 
                     ControlMaterializerService.module(),
-                    VolumeLookupService.module(),
+                    VolumeAssignmentService.module(),
                     BackendRequestService.module(),
                     PeerService.module(),
                     FrontendServerService.module());
