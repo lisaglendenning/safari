@@ -118,10 +118,9 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
             runtime.serviceMonitor().addOnStart(clientConnections);
-            InetSocketAddress loopbackAddress = InetSocketAddress.createUnresolved("localhost", 0);
             Pair<IntraVmConnectionEndpoint<InetSocketAddress>, IntraVmConnectionEndpoint<InetSocketAddress>> loopbackEndpoints = Pair.create(
-                    IntraVmConnectionEndpoint.create(loopbackAddress, runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()),
-                    IntraVmConnectionEndpoint.create(loopbackAddress, runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
+                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 1), runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()),
+                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 2), runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
             Pair<IntraVmConnection<InetSocketAddress>, IntraVmConnection<InetSocketAddress>> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
             PeerConnectionsService<Connection<MessagePacket>> instance = 

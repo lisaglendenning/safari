@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.backend;
 
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -105,6 +106,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     }
 
     protected final BackendConnectionsService<C> connections;
+    protected final ConcurrentMap<PeerConnectionsService<?>.ServerPeerConnection, ServerPeerConnectionListener> peers;
     protected final ConcurrentMap<Long, ServerPeerConnectionListener.BackendClient> clients;
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
@@ -116,6 +118,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             ShardedOperationTranslators translator) {
         super(locator);
         this.connections = connections;
+        this.peers = new MapMaker().makeMap();
         this.clients = new MapMaker().makeMap();
         this.lookup = lookup;
         this.translator = translator;
@@ -134,7 +137,11 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     protected void startUp() throws Exception {
         super.startUp();
         
-        locator().getInstance(PeerConnectionsService.class).servers().register(this);
+        PeerConnectionsService<?> peers = locator().getInstance(PeerConnectionsService.class);
+        peers.servers().register(this);
+        for (Entry<Identifier, PeerConnectionsService<?>.ServerPeerConnection> e: peers.servers().entrySet()) {
+            handleServerPeerConnection(e.getValue());
+        }
     }
     
     @Override
@@ -197,8 +204,10 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         
         public ServerPeerConnectionListener(PeerConnectionsService<?>.ServerPeerConnection peer) {
             this.peer = peer;
-            
-            peer.register(this);
+            if (peers.putIfAbsent(peer, this) == null) {
+                peer.register(this);
+            }
+            // TODO: remove from map when peer closes?
         }
         
         @Override
