@@ -56,7 +56,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         }
 
         @Provides @Singleton
-        public ExpiringSessionTable getSessionManager(
+        public ExpiringSessionTable getSessionTable(
                 RuntimeModule runtime) {
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
             ExpiringSessionTable sessions = ExpiringSessionTable.newInstance(runtime.publisherFactory().get(), policy);
@@ -87,7 +87,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
             runtime.serviceMonitor().addOnStart(serverConnections);
-            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
+            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
             runtime.serviceMonitor().addOnStart(server);
             FrontendServerService instance = new FrontendServerService(configuration.getAddress(), server, locator);
             runtime.serviceMonitor().addOnStart(instance);
@@ -97,7 +97,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
     
     public static FrontendServerService newInstance(
             ServerInetAddressView address,
-            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
         FrontendServerService instance = new FrontendServerService(address, serverConnections, locator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
@@ -105,11 +105,11 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
     }
     
     protected final ServerInetAddressView address;
-    protected final ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections;
+    protected final ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections;
     
     protected FrontendServerService(
             ServerInetAddressView address,
-            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
         super(locator);
         this.address = address;
@@ -120,7 +120,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         return address;
     }
     
-    public ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections() {
+    public ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections() {
         return serverConnections;
     }
 

@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
+import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -17,7 +18,6 @@ import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerService;
 import edu.uw.zookeeper.util.Application;
 import edu.uw.zookeeper.util.ParameterizedFactory;
-import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.ServiceApplication;
 
 public class MainApplicationModule extends AbstractModule {
@@ -26,36 +26,34 @@ public class MainApplicationModule extends AbstractModule {
         return new ParameterizedFactory<RuntimeModule, Application>() {
             @Override
             public Application get(RuntimeModule runtime) {
-                MainApplicationModule module = new MainApplicationModule(runtime);
-                runtime.serviceMonitor().add(module.getMainService());
+                MainApplicationModule module = new MainApplicationModule(RuntimeModuleProvider.create(runtime));
+                Injector injector = Guice.createInjector(module);
+                MainService service =
+                    injector.getInstance(DependentServiceMonitor.class).listen(
+                            injector.getInstance(MainService.class));
+                runtime.serviceMonitor().add(service);
                 return ServiceApplication.newInstance(runtime.serviceMonitor());
             }            
         };
     }
     
-    protected final RuntimeModule runtime;
-    protected final MainService service;
+    protected final RuntimeModuleProvider runtime;
     
-    public MainApplicationModule(RuntimeModule runtime) {
+    public MainApplicationModule(
+            RuntimeModuleProvider runtime) {
         this.runtime = runtime;
-        this.service = new MainService();
     }
 
     @Override
     protected void configure() {
-        bind(ServiceLocator.class).to(MainService.class);
+        install(runtime);
+        install(ControlMaterializerService.module());
+        install(VolumeAssignmentService.module());
+        install(BackendRequestService.module());
+        install(PeerService.module());
+        install(FrontendServerService.module());
     }
 
-    @Provides
-    public RuntimeModule getRuntimeModule() {
-        return runtime;
-    }
-
-    @Provides
-    public MainService getMainService() {
-        return service;
-    }
-    
     @Provides @Singleton
     public NettyModule getNetModule(RuntimeModule runtime) {
         return NettyModule.newInstance(runtime);
@@ -71,34 +69,20 @@ public class MainApplicationModule extends AbstractModule {
         return module.servers();
     }
     
+    @Singleton
     @DependsOn({ControlMaterializerService.class, VolumeAssignmentService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
-    protected class MainService extends DependentService implements Reference<Injector>, ServiceLocator {
+    public static class MainService extends DependentService {
 
-        protected final Injector injector;
+        protected final ServiceLocator locator;
         
-        protected MainService() {
-            this.injector = Guice.createInjector(
-                    MainApplicationModule.this, 
-                    ControlMaterializerService.module(),
-                    VolumeAssignmentService.module(),
-                    BackendRequestService.module(),
-                    PeerService.module(),
-                    FrontendServerService.module());
-        }
-        
-        @Override
-        public Injector get() {
-            return injector;
-        }
-        
-        @Override
-        public <T> T getInstance(Class<T> type) {
-            return get().getInstance(type);
+        @Inject
+        public MainService(ServiceLocator locator) {
+            this.locator = locator;
         }
 
         @Override
         protected ServiceLocator locator() {
-            return this;
+            return locator;
         }
     }
 }

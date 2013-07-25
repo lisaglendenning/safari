@@ -4,9 +4,9 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.util.Configuration;
 import edu.uw.zookeeper.util.TimeValue;
 
 public class ControlConfiguration {
@@ -24,13 +24,13 @@ public class ControlConfiguration {
         }
 
         @Provides @Singleton
-        public ControlConfiguration getControlConfiguration(RuntimeModule runtime) {
+        public ControlConfiguration getControlConfiguration(Configuration configuration) {
             EnsembleView<ServerInetAddressView> ensemble = 
                     ClientApplicationModule.ConfigurableEnsembleViewFactory.newInstance(
                             CONFIG_PATH, ENSEMBLE_CONFIG_KEY, ENSEMBLE_ARG, DEFAULT_ENSEMBLE_ADDRESS, DEFAULT_ENSEMBLE_PORT)
-                        .get(runtime.configuration());
+                        .get(configuration);
             TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH)
-                        .get(runtime.configuration());
+                        .get(configuration);
             return new ControlConfiguration(ensemble, timeOut);
         }
     }

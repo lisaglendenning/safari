@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.util.concurrent.ScheduledExecutorService;
+
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -7,7 +9,6 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.EnsembleView;
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.client.ClientApplicationModule;
@@ -24,6 +25,7 @@ import edu.uw.zookeeper.util.Factory;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.Publisher;
+import edu.uw.zookeeper.util.ServiceMonitor;
 
 class ControlConnectionsService<C extends Connection<? super Operation.Request>> extends AbstractIdleService implements Factory<ClientConnectionExecutor<C>> {
 
@@ -37,27 +39,31 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
         
         @Override
         protected void configure() {
-            install(ControlConfiguration.module());
+            install(getControlConfigurationModule());
             TypeLiteral<ControlConnectionsService<?>> generic = new TypeLiteral<ControlConnectionsService<?>>(){};
             bind(ControlConnectionsService.class).to(generic);
-            bind(generic).to(new TypeLiteral<ControlConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>(){});
         }
 
         @Provides @Singleton
-        public ControlConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getControlClientConnectionFactory(
+        public ControlConnectionsService<?> getControlClientConnectionFactory(
                 ControlConfiguration configuration,
-                RuntimeModule runtime, 
+                ServiceMonitor serviceMonitor,
+                ScheduledExecutorService scheduled,
                 NettyClientModule clientModule) {
             ParameterizedFactory<Publisher, Pair<Class<Operation.Request>, AssignXidCodec>> codecFactory = ClientApplicationModule.codecFactory();
             ParameterizedFactory<Pair<Pair<Class<Operation.Request>, AssignXidCodec>, Connection<Operation.Request>>, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> pingingFactory = 
-                    PingingClient.factory(configuration.getTimeOut(), runtime.executors().asScheduledExecutorServiceFactory().get());
+                    PingingClient.factory(configuration.getTimeOut(), scheduled);
             ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
                     clientModule.get(codecFactory, pingingFactory).get();
-            runtime.serviceMonitor().addOnStart(clientConnections);
+            serviceMonitor.addOnStart(clientConnections);
             ControlConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
                     ControlConnectionsService.newInstance(clientConnections, configuration);
-            runtime.serviceMonitor().addOnStart(instance);
+            serviceMonitor.addOnStart(instance);
             return instance;
+        }
+        
+        protected com.google.inject.Module getControlConfigurationModule() {
+            return ControlConfiguration.module();
         }
     }
     
