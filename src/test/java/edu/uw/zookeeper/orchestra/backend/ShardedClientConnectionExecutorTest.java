@@ -23,7 +23,7 @@ import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.VolumeDescriptor;
-import edu.uw.zookeeper.orchestra.VolumeLookup;
+import edu.uw.zookeeper.orchestra.VolumeCache;
 import edu.uw.zookeeper.orchestra.control.Hash;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
@@ -37,7 +37,7 @@ public class ShardedClientConnectionExecutorTest {
     @Test
     public void test() throws InterruptedException, ExecutionException {
         
-        final VolumeLookup volumes = VolumeLookup.newInstance();
+        final VolumeCache volumes = VolumeCache.newInstance();
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
             @Override
             public Identifier apply(ZNodeLabel.Path input) {

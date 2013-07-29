@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -32,6 +33,7 @@ public class RuntimeModuleProvider extends AbstractModule {
     @Override
     protected void configure() {
         bind(ServiceLocator.class).to(InjectorServiceLocator.class).in(Singleton.class);
+        bind(Executor.class).to(ExecutorService.class).in(Singleton.class);
         bind(ExecutorService.class).to(ListeningExecutorService.class).in(Singleton.class);
         bind(ScheduledExecutorService.class).to(ListeningScheduledExecutorService.class).in(Singleton.class);
     }

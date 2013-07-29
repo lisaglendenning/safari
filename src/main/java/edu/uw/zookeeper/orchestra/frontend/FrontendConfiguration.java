@@ -8,12 +8,12 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.server.ServerApplicationModule;
+import edu.uw.zookeeper.util.Configuration;
 
 public class FrontendConfiguration {
 
@@ -30,8 +30,8 @@ public class FrontendConfiguration {
         }
 
         @Provides @Singleton
-        public FrontendConfiguration getFrontendConfiguration(RuntimeModule runtime) {
-            ServerInetAddressView view = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance().get(runtime.configuration());
+        public FrontendConfiguration getFrontendConfiguration(Configuration configuration) {
+            ServerInetAddressView view = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance().get(configuration);
             return new FrontendConfiguration(view);
         }
     }

@@ -19,10 +19,10 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.orchestra.CachedFunction;
 import edu.uw.zookeeper.orchestra.DependentService;
+import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
@@ -30,8 +30,8 @@ import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.peer.EnsembleConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
+import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({PeerConnectionsService.class})
@@ -57,15 +57,15 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 ControlMaterializerService<?> controlClient,
                 PeerConnectionsService<?> peerConnections,
                 ServiceLocator locator,
-                RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
+                DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
             EnsembleConnectionsService instance = 
-                    new EnsembleConnectionsService(
-                            peer.getView().id(),
-                            ensemble.getEnsemble(),
-                            peerConnections, 
-                            controlClient, 
-                            locator);
-            runtime.serviceMonitor().addOnStart(instance);
+                    monitor.listen(
+                            new EnsembleConnectionsService(
+                                peer.getView().id(),
+                                ensemble.getEnsemble(),
+                                peerConnections, 
+                                controlClient, 
+                                locator));
             return instance;
         }
     }
@@ -78,8 +78,8 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     protected final CachedFunction<Identifier, List<Orchestra.Ensembles.Entity.Peers.Member>> memberLookup;
     protected final CachedFunction<Identifier, Identifier> selectPeers;
     protected final AsyncFunction<List<Orchestra.Ensembles.Entity.Peers.Member>, Identifier> selectMemberFunction;
-    protected final CachedFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection> connectFunction;
-    protected final CachedFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection> ensembleConnections;
+    protected final CachedFunction<Identifier, ClientPeerConnection> connectFunction;
+    protected final CachedFunction<Identifier, ClientPeerConnection> ensembleConnections;
     
     public EnsembleConnectionsService(
             Identifier myId,
@@ -130,10 +130,10 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 });
         this.connectFunction = peerConnections.clients().connectFunction();
         this.ensembleConnections = CachedFunction.create(
-                new Function<Identifier, PeerConnectionsService<?>.ClientPeerConnection>() {
+                new Function<Identifier, ClientPeerConnection>() {
                     @Override
                     public @Nullable
-                    PeerConnectionsService<?>.ClientPeerConnection apply(Identifier ensemble) {
+                    ClientPeerConnection apply(Identifier ensemble) {
                         Identifier peer = selectedPeers.get(ensemble);
                         if (peer != null) {
                             return connectFunction.first().apply(peer);
@@ -142,9 +142,9 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                         }
                     }
                 }, 
-                new AsyncFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection>() {
+                new AsyncFunction<Identifier, ClientPeerConnection>() {
                     @Override
-                    public ListenableFuture<PeerConnectionsService<?>.ClientPeerConnection> apply(
+                    public ListenableFuture<ClientPeerConnection> apply(
                             Identifier ensemble) throws Exception {
                         return Futures.transform(
                                 selectPeers.apply(ensemble),
@@ -157,17 +157,8 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         return selectPeers;
     }
 
-    public CachedFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection> getConnectionForEnsemble() {
+    public CachedFunction<Identifier, ClientPeerConnection> getConnectionForEnsemble() {
         return ensembleConnections;
-    }
-    
-    public void broadcast(MessagePacket message) {
-        for (Identifier peer: selectedPeers.values()) {
-            PeerConnectionsService<?>.ClientPeerConnection connection = peerConnections.clients().get(peer);
-            if (connection != null) {
-                connection.write(message);
-            }
-        }
     }
 
     @Override
@@ -181,11 +172,11 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         
         Futures.transform(
                 Orchestra.Ensembles.getEnsembles(controlClient.materializer()), 
-                new AsyncFunction<List<Orchestra.Ensembles.Entity>, List<PeerConnectionsService<?>.ClientPeerConnection>>() {
+                new AsyncFunction<List<Orchestra.Ensembles.Entity>, List<ClientPeerConnection>>() {
                     @Override
-                    public ListenableFuture<List<PeerConnectionsService<?>.ClientPeerConnection>> apply(List<Orchestra.Ensembles.Entity> input)
+                    public ListenableFuture<List<ClientPeerConnection>> apply(List<Orchestra.Ensembles.Entity> input)
                             throws Exception {
-                        List<ListenableFuture<PeerConnectionsService<?>.ClientPeerConnection>> futures = Lists.newArrayListWithCapacity(input.size());
+                        List<ListenableFuture<ClientPeerConnection>> futures = Lists.newArrayListWithCapacity(input.size());
                         for (Orchestra.Ensembles.Entity e: input) {
                             futures.add(Futures.transform(
                                     selectPeers.second().apply(e.get()), 

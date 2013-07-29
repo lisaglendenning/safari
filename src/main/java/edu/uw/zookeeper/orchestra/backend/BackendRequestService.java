@@ -26,10 +26,11 @@ import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
-import edu.uw.zookeeper.orchestra.VolumeLookup;
-import edu.uw.zookeeper.orchestra.VolumeAssignmentService;
+import edu.uw.zookeeper.orchestra.VolumeCache;
+import edu.uw.zookeeper.orchestra.VolumeLookupService;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
+import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
@@ -73,7 +74,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendRequestService(
                 ServiceLocator locator,
                 BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
-                VolumeAssignmentService volumes,
+                VolumeLookupService volumes,
                 RuntimeModule runtime) throws Exception {
             BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
                     BackendRequestService.newInstance(locator, volumes.get(), connections);
@@ -84,7 +85,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     
     public static <C extends Connection<? super Operation.Request>> BackendRequestService<C> newInstance(
             ServiceLocator locator,
-            final VolumeLookup volumes,
+            final VolumeCache volumes,
             BackendConnectionsService<C> connections) {
 
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
@@ -106,7 +107,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     }
 
     protected final BackendConnectionsService<C> connections;
-    protected final ConcurrentMap<PeerConnectionsService<?>.ServerPeerConnection, ServerPeerConnectionListener> peers;
+    protected final ConcurrentMap<ServerPeerConnection, ServerPeerConnectionListener> peers;
     protected final ConcurrentMap<Long, ServerPeerConnectionListener.BackendClient> clients;
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
@@ -129,7 +130,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     }
 
     @Subscribe
-    public void handleServerPeerConnection(PeerConnectionsService<?>.ServerPeerConnection peer) {
+    public void handleServerPeerConnection(ServerPeerConnection peer) {
         new ServerPeerConnectionListener(peer);
     }
 
@@ -139,7 +140,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         
         PeerConnectionsService<?> peers = locator().getInstance(PeerConnectionsService.class);
         peers.servers().register(this);
-        for (Entry<Identifier, PeerConnectionsService<?>.ServerPeerConnection> e: peers.servers().entrySet()) {
+        for (Entry<Identifier, ServerPeerConnection> e: peers.servers().entrySet()) {
             handleServerPeerConnection(e.getValue());
         }
     }
@@ -198,11 +199,11 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
     }
 
-    protected class ServerPeerConnectionListener implements Reference<PeerConnectionsService<?>.ServerPeerConnection> {
+    protected class ServerPeerConnectionListener implements Reference<ServerPeerConnection> {
     
-        protected final PeerConnectionsService<?>.ServerPeerConnection peer;
+        protected final ServerPeerConnection peer;
         
-        public ServerPeerConnectionListener(PeerConnectionsService<?>.ServerPeerConnection peer) {
+        public ServerPeerConnectionListener(ServerPeerConnection peer) {
             this.peer = peer;
             if (peers.putIfAbsent(peer, this) == null) {
                 peer.register(this);
@@ -211,7 +212,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
         
         @Override
-        public PeerConnectionsService<?>.ServerPeerConnection get() {
+        public ServerPeerConnection get() {
             return peer;
         }
         
@@ -219,16 +220,16 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public void handlePeerMessage(MessagePacket message) {
             switch (message.first().type()) {
             case MESSAGE_TYPE_HANDSHAKE:
-                handleMessageHandshake((MessageHandshake) message.second());
+                handleMessageHandshake(message.getBody(MessageHandshake.class));
                 break;
             case MESSAGE_TYPE_SESSION_OPEN:
-                handleMessageSessionOpen((MessageSessionOpen) message.second());
+                handleMessageSessionOpen(message.getBody(MessageSessionOpen.class));
                 break;
             case MESSAGE_TYPE_SESSION_CLOSE:
-                handleMessageSessionClose((MessageSessionClose) message.second());
+                handleMessageSessionClose(message.getBody(MessageSessionClose.class));
                 break;
             case MESSAGE_TYPE_SESSION_REQUEST:
-                handleMessageSessionRequest((MessageSessionRequest) message.second());
+                handleMessageSessionRequest(message.getBody(MessageSessionRequest.class));
                 break;
             default:
                 throw new AssertionError(message.toString());

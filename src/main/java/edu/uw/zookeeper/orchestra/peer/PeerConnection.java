@@ -35,4 +35,25 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
     protected C delegate() {
         return delegate;
     }
+    
+    public static class ClientPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
+
+        public ClientPeerConnection(
+                Identifier localIdentifier,
+                Identifier remoteIdentifier,
+                Connection<? super MessagePacket> delegate) {
+            super(localIdentifier, remoteIdentifier, delegate);
+        }
+    }
+
+
+    public static class ServerPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
+
+        public ServerPeerConnection(
+                Identifier localIdentifier,
+                Identifier remoteIdentifier,
+                Connection<? super MessagePacket> delegate) {
+            super(localIdentifier, remoteIdentifier, delegate);
+        }
+    }
 }

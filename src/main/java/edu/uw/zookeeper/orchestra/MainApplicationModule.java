@@ -48,6 +48,7 @@ public class MainApplicationModule extends AbstractModule {
     protected void configure() {
         install(runtime);
         install(ControlMaterializerService.module());
+        install(VolumeLookupService.module());
         install(VolumeAssignmentService.module());
         install(BackendRequestService.module());
         install(PeerService.module());
@@ -70,7 +71,7 @@ public class MainApplicationModule extends AbstractModule {
     }
     
     @Singleton
-    @DependsOn({ControlMaterializerService.class, VolumeAssignmentService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
+    @DependsOn({ControlMaterializerService.class, VolumeLookupService.class, VolumeAssignmentService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
     public static class MainService extends DependentService {
 
         protected final ServiceLocator locator;

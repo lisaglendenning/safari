@@ -21,7 +21,6 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.EnsembleRole;
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.data.Operations;
@@ -29,6 +28,7 @@ import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.DependentService;
+import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
@@ -64,13 +64,13 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                 PeerConfiguration conductorConfiguration,
                 ControlMaterializerService<?> control,
                 ServiceLocator locator,
-                RuntimeModule runtime) {
+                DependentServiceMonitor monitor) {
             Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             Orchestra.Ensembles.Entity.Peers.Member myMember = Orchestra.Ensembles.Entity.Peers.Member.of(
                     conductorConfiguration.getView().id(), 
                     Orchestra.Ensembles.Entity.Peers.of(myEnsemble));
-            EnsembleMemberService instance = new EnsembleMemberService(myMember, myEnsemble, control, locator);
-            runtime.serviceMonitor().addOnStart(instance);
+            EnsembleMemberService instance = 
+                    monitor.listen(new EnsembleMemberService(myMember, myEnsemble, control, locator));
             return instance;
         }
     }

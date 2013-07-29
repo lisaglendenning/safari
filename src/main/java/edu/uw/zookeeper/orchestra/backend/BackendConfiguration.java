@@ -27,7 +27,6 @@ import com.typesafe.config.Config;
 
 import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
 import edu.uw.zookeeper.client.ClientApplicationModule;
@@ -56,10 +55,10 @@ public class BackendConfiguration {
         }
 
         @Provides @Singleton
-        public BackendConfiguration getBackendConfiguration(RuntimeModule runtime) throws Exception {
-            ServerInetAddressView clientAddress = BackendAddressDiscovery.call(runtime);
-            EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(runtime.configuration());
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(runtime.configuration());
+        public BackendConfiguration getBackendConfiguration(Configuration configuration) throws Exception {
+            ServerInetAddressView clientAddress = BackendAddressDiscovery.call(configuration);
+            EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(configuration);
+            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
             return new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
         }
     }
@@ -92,16 +91,16 @@ public class BackendConfiguration {
 
     public static class BackendAddressDiscovery implements Callable<ServerInetAddressView> {
         
-        public static ServerInetAddressView call(RuntimeModule runtime) throws Exception {
-            BackendAddressDiscovery instance = new BackendAddressDiscovery(runtime);
+        public static ServerInetAddressView call(Configuration configuration) throws Exception {
+            BackendAddressDiscovery instance = new BackendAddressDiscovery(configuration);
             return instance.call();
         }
         
         protected final Logger logger = LoggerFactory.getLogger(BackendAddressDiscovery.class);
-        protected final RuntimeModule runtime;
+        protected final Configuration configuration;
         
-        public BackendAddressDiscovery(RuntimeModule runtime) {
-            this.runtime = runtime;
+        public BackendAddressDiscovery(Configuration configuration) {
+            this.configuration = configuration;
         }
         
         @Override
@@ -112,7 +111,7 @@ public class BackendConfiguration {
             ServerInetAddressView backend = null;
             long backoff = 1000;
             while (backend == null) {
-                backend = BackendAddressViewFactory.getInstance().get(runtime.configuration());
+                backend = BackendAddressViewFactory.getInstance().get(configuration);
                 if (backend == null) {
                     logger.debug("Querying backend failed; retrying in {} ms", backoff);
                     try {

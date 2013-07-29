@@ -12,7 +12,6 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -32,14 +31,10 @@ import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
-import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
-import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
-import edu.uw.zookeeper.server.ExpiringSessionService;
-import edu.uw.zookeeper.server.ExpiringSessionTable;
 import edu.uw.zookeeper.server.ServerApplicationModule;
-import edu.uw.zookeeper.server.SessionParametersPolicy;
+import edu.uw.zookeeper.util.ServiceMonitor;
 
-@DependsOn({EnsembleConnectionsService.class})
+@DependsOn({FrontendServerExecutor.class})
 public class FrontendServerService extends DependentService.SimpleDependentService {
 
     public static Module module() {
@@ -53,44 +48,25 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         @Override
         protected void configure() {
             install(FrontendConfiguration.module());
+            install(FrontendServerExecutor.module());
         }
 
-        @Provides @Singleton
-        public ExpiringSessionTable getSessionTable(
-                RuntimeModule runtime) {
-            SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(runtime.configuration());
-            ExpiringSessionTable sessions = ExpiringSessionTable.newInstance(runtime.publisherFactory().get(), policy);
-            ExpiringSessionService expires = ExpiringSessionService.newInstance(sessions, runtime.executors().asScheduledExecutorServiceFactory().get(), runtime.configuration());   
-            runtime.serviceMonitor().addOnStart(expires);
-            return sessions;
-        }
-
-        @Provides @Singleton
-        public ServerTaskExecutor getServerExecutor(
-                ServiceLocator locator,
-                EnsembleConnectionsService peers,
-                ExpiringSessionTable sessions,
-                RuntimeModule runtime) {
-            ZxidEpochIncrementer zxids = ZxidEpochIncrementer.fromZero();
-            return FrontendServerTaskExecutor.newInstance(locator, sessions, zxids);
-        }
-        
         @Provides @Singleton
         public FrontendServerService getFrontendServerService(
                 FrontendConfiguration configuration, 
                 ServerTaskExecutor serverExecutor,
                 ServiceLocator locator,
                 NettyModule netModule,
-                RuntimeModule runtime) throws Exception {
+                ServiceMonitor monitor) throws Exception {
             ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
                     netModule.servers().get(
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
-            runtime.serviceMonitor().addOnStart(serverConnections);
+            monitor.addOnStart(serverConnections);
             ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
-            runtime.serviceMonitor().addOnStart(server);
+            monitor.addOnStart(server);
             FrontendServerService instance = new FrontendServerService(configuration.getAddress(), server, locator);
-            runtime.serviceMonitor().addOnStart(instance);
+            monitor.addOnStart(instance);
             return instance;
         }
     }

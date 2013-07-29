@@ -5,7 +5,7 @@ import edu.uw.zookeeper.util.Pair;
 
 public class MessagePacket extends Pair<MessageHeader, MessageBody> {
 
-    public static MessagePacket of (MessageBody second) {
+    public static MessagePacket of(MessageBody second) {
         MessageHeader first = MessageHeader.of(MessageBody.typeOf(second.getClass()));
         return of(first, second);
     }
@@ -16,5 +16,9 @@ public class MessagePacket extends Pair<MessageHeader, MessageBody> {
     
     public MessagePacket(MessageHeader first, MessageBody second) {
         super(checkNotNull(first), checkNotNull(second));
+    }
+    
+    public <T extends MessageBody> T getBody(Class<T> cls) {
+        return cls.cast(second());
     }
 }

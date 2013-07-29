@@ -1,6 +1,8 @@
 package edu.uw.zookeeper.orchestra.peer;
 
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -28,7 +30,6 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -37,14 +38,13 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
 import edu.uw.zookeeper.orchestra.CachedFunction;
-import edu.uw.zookeeper.orchestra.DependentService;
-import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
-import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
+import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
+import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.FramedMessagePacketCodec;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
@@ -52,14 +52,15 @@ import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageType;
 import edu.uw.zookeeper.util.Automaton;
+import edu.uw.zookeeper.util.Factory;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
 import edu.uw.zookeeper.util.Publisher;
+import edu.uw.zookeeper.util.ServiceMonitor;
 
-@DependsOn({BackendRequestService.class})
-public class PeerConnectionsService<C extends Connection<? super MessagePacket>> extends DependentService.SimpleDependentService {
+public class PeerConnectionsService<C extends Connection<? super MessagePacket>> extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -106,21 +107,22 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                 ControlMaterializerService<?> control,
                 ServiceLocator locator,
                 NettyModule netModule,
-                RuntimeModule runtime) throws InterruptedException, ExecutionException, KeeperException {
+                ServiceMonitor monitor,
+                Factory<Publisher> publishers) throws InterruptedException, ExecutionException, KeeperException {
             ServerConnectionFactory<MessagePacket, Connection<MessagePacket>> serverConnections = 
                     netModule.servers().get(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory())
                     .get(configuration.getView().address().get());
-            runtime.serviceMonitor().addOnStart(serverConnections);
+            monitor.addOnStart(serverConnections);
             ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnections =  
                     netModule.clients().get(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
-            runtime.serviceMonitor().addOnStart(clientConnections);
+            monitor.addOnStart(clientConnections);
             Pair<IntraVmConnectionEndpoint<InetSocketAddress>, IntraVmConnectionEndpoint<InetSocketAddress>> loopbackEndpoints = Pair.create(
-                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 1), runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()),
-                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 2), runtime.publisherFactory().get(), MoreExecutors.sameThreadExecutor()));
+                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 1), publishers.get(), MoreExecutors.sameThreadExecutor()),
+                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 2), publishers.get(), MoreExecutors.sameThreadExecutor()));
             Pair<IntraVmConnection<InetSocketAddress>, IntraVmConnection<InetSocketAddress>> loopback = 
                     IntraVmConnection.createPair(loopbackEndpoints);
             PeerConnectionsService<Connection<MessagePacket>> instance = 
@@ -131,7 +133,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                             loopback, 
                             control.materializer(),
                             locator);
-            runtime.serviceMonitor().addOnStart(instance);
+            monitor.addOnStart(instance);
             return instance;
         }
     }
@@ -148,9 +150,8 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                 serverConnectionFactory, 
                 clientConnectionFactory, 
                 loopback, 
-                control,
-                locator);
-        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
+                control);
+        instance.new Advertiser(locator, MoreExecutors.sameThreadExecutor());
         return instance;
     }
 
@@ -164,16 +165,14 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             ServerConnectionFactory<? super MessagePacket, C> serverConnectionFactory,
             ClientConnectionFactory<? super MessagePacket, C> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
-            Materializer<?,?> control,
-            ServiceLocator locator) {
-        super(locator);
+            Materializer<?,?> control) {
         this.identifier = identifier;
         this.control = control;
         this.servers = new ServerPeerConnections(serverConnectionFactory);
         this.clients = new ClientPeerConnections(clientConnectionFactory);
         
-        servers.put(new ServerPeerConnection(identifier, loopback.first()));
-        clients.put(new ClientPeerConnection(identifier, loopback.second()));
+        servers.put(new ServerPeerConnection(identifier, identifier, loopback.first()));
+        clients.put(new ClientPeerConnection(identifier, identifier, loopback.second()));
     }
     
     public Identifier identifier() {
@@ -190,8 +189,6 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
     
     @Override
     protected void startUp() throws Exception {
-        super.startUp();
-        
         servers().start().get();
         clients().start().get();
     }
@@ -200,13 +197,16 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
     protected void shutDown() throws Exception {
         servers().stop().get();
         clients().stop().get();
-
-        super.shutDown();
     }
 
     public class Advertiser implements Service.Listener {
     
-        public Advertiser(Executor executor) {
+        protected final ServiceLocator locator;
+        
+        public Advertiser(
+                ServiceLocator locator,
+                Executor executor) {
+            this.locator = locator;
             addListener(this, executor);
         }
         
@@ -216,7 +216,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
     
         @Override
         public void running() {
-            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
+            Materializer<?,?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
             try {
                 PeerConfiguration.advertise(identifier(), materializer);
             } catch (Exception e) {
@@ -237,7 +237,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
 
-    public class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements Publisher {
+    public class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements ConnectionFactory<MessagePacket, V> {
         
         protected final ConnectionFactory<? super MessagePacket, C> connections;
         protected final ConcurrentMap<Identifier, V> peers;
@@ -258,6 +258,11 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         
         public Set<Map.Entry<Identifier, V>> entrySet() {
             return peers.entrySet();
+        }
+
+        @Override
+        public Iterator<V> iterator() {
+            return peers.values().iterator();
         }
 
         @Override
@@ -329,16 +334,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
     
-    public class ClientPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
-
-        public ClientPeerConnection(
-                Identifier remoteIdentifier,
-                Connection<? super MessagePacket> delegate) {
-            super(identifier(), remoteIdentifier, delegate);
-        }
-    }
-
-    public class ClientPeerConnections extends PeerConnections<ClientPeerConnection> {
+    public class ClientPeerConnections extends PeerConnections<ClientPeerConnection> implements ClientConnectionFactory<MessagePacket, ClientPeerConnection> {
 
         protected final MessagePacket handshake = MessagePacket.of(MessageHandshake.of(identifier));
         protected final ConnectionTask connectionTask = new ConnectionTask();
@@ -373,6 +369,13 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             }
         }
 
+        @Override
+        public ListenableFuture<ClientPeerConnection> connect(
+                SocketAddress remoteAddress) {
+            IdentifierSocketAddress id = (IdentifierSocketAddress) remoteAddress;
+            return connect(id.getIdentifier());
+        }
+
         protected ListenableFuture<MessagePacket> handshake(ClientPeerConnection peer) {
             return peer.write(handshake);
         }
@@ -391,17 +394,17 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             return prev;
         }
         
-        public CachedFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection> connectFunction() {
+        public CachedFunction<Identifier, ClientPeerConnection> connectFunction() {
             return CachedFunction.create(
-                    new Function<Identifier, PeerConnectionsService<?>.ClientPeerConnection>() {
+                    new Function<Identifier, ClientPeerConnection>() {
                         @Override
-                        public @Nullable PeerConnectionsService<?>.ClientPeerConnection apply(Identifier ensemble) {
+                        public @Nullable ClientPeerConnection apply(Identifier ensemble) {
                             return get(ensemble);
                         }                    
                     }, 
-                    new AsyncFunction<Identifier, PeerConnectionsService<?>.ClientPeerConnection>() {
+                    new AsyncFunction<Identifier, ClientPeerConnection>() {
                         @Override
-                        public ListenableFuture<PeerConnectionsService<?>.ClientPeerConnection> apply(Identifier ensemble) {
+                        public ListenableFuture<ClientPeerConnection> apply(Identifier ensemble) {
                             return connect(ensemble);
                         }
                     });
@@ -430,7 +433,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             public void onSuccess(C result) {
                 try {
                     if (! isDone()) {
-                        ClientPeerConnection peer = new ClientPeerConnection(task(), result);
+                        ClientPeerConnection peer = new ClientPeerConnection(identifier(), task(), result);
                         ClientPeerConnection prev = putIfAbsent(peer);
                         if (prev != null) {
                             set(prev);
@@ -453,16 +456,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
 
-    public class ServerPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
-
-        public ServerPeerConnection(
-                Identifier remoteIdentifier,
-                Connection<? super MessagePacket> delegate) {
-            super(identifier(), remoteIdentifier, delegate);
-        }
-    }
-    
-    public class ServerPeerConnections extends PeerConnections<ServerPeerConnection> {
+    public class ServerPeerConnections extends PeerConnections<ServerPeerConnection> implements ServerConnectionFactory<MessagePacket, ServerPeerConnection> {
 
         public ServerPeerConnections(
                 ServerConnectionFactory<? super MessagePacket, C> connections) {
@@ -476,11 +470,16 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
 
         @Subscribe
         public void handleServerConnection(Connection<MessagePacket> connection) {
-            if (! (connection instanceof PeerConnectionsService.ServerPeerConnection)) {
+            if (! (connection instanceof ServerPeerConnection)) {
                 new ServerAcceptTask(connection);
             }
         }
         
+        @Override
+        public SocketAddress listenAddress() {
+            return IdentifierSocketAddress.of(identifier(), connections().listenAddress());
+        }
+
         @Override
         protected void startUp() throws Exception {
             connections().register(this);
@@ -518,8 +517,8 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             @Subscribe
             public void handleMessage(MessagePacket event) {
                 if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.first().type()) {
-                    MessageHandshake body = (MessageHandshake) event.second();
-                    ServerPeerConnection peer = new ServerPeerConnection(body.getId(), connection);
+                    MessageHandshake body = event.getBody(MessageHandshake.class);
+                    ServerPeerConnection peer = new ServerPeerConnection(identifier(), body.getId(), connection);
                     connection.unregister(this);
                     put(peer);
                 } else {
