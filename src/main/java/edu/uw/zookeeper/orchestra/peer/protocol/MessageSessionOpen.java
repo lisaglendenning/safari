@@ -1,35 +1,29 @@
 package edu.uw.zookeeper.orchestra.peer.protocol;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
 
-@MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_OPEN)
-public class MessageSessionOpen extends MessageSessionBody {
+import edu.uw.zookeeper.protocol.ConnectMessage;
 
-    public static MessageSessionOpen of(long sessionId, int timeOutMillis) {
-        return new MessageSessionOpen(sessionId, timeOutMillis);
+public abstract class MessageSessionOpen<V extends ConnectMessage<?>> extends EncodableMessage<V> {
+
+    private final long sessionId;
+    
+    protected MessageSessionOpen(
+            long sessionId,
+            V record) {
+        super(record);
+        this.sessionId = sessionId;
     }
     
-    private final int timeOutMillis;
-    
-    @JsonCreator
-    public MessageSessionOpen(
-            @JsonProperty("sessionId") long sessionId,
-            @JsonProperty("timeOutMillis") int timeOutMillis) {
-        super(sessionId);
-        this.timeOutMillis = timeOutMillis;
-    }
-    
-    public int getTimeOutMillis() {
-        return timeOutMillis;
+    public long getSessionId() {
+        return sessionId;
     }
 
     @Override
     public String toString() {
         return Objects.toStringHelper(this)
-                .add("sessionId", getSessionId())
-                .add("timeOutMillis", getTimeOutMillis())
+                .add("sesisonId", getSessionId())
+                .add("delegate", delegate())
                 .toString();
     }
 
@@ -41,13 +35,13 @@ public class MessageSessionOpen extends MessageSessionBody {
         if ((obj == null) || (obj.getClass() != getClass())) {
             return false;
         }
-        MessageSessionOpen other = (MessageSessionOpen) obj;
+        MessageSessionOpen<?> other = (MessageSessionOpen<?>) obj;
         return Objects.equal(getSessionId(), other.getSessionId())
-                && Objects.equal(getTimeOutMillis(), other.getTimeOutMillis());
+                && Objects.equal(delegate(), other.delegate());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(getSessionId(), getTimeOutMillis());
+        return Objects.hashCode(getSessionId(), delegate());
     }
 }

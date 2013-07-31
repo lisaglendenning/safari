@@ -4,25 +4,29 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
 
-import edu.uw.zookeeper.orchestra.backend.ShardedResponseMessage;
 
 @MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_RESPONSE)
-public class MessageSessionResponse extends MessageSessionBody {
+public class MessageSessionResponse extends MessageBody {
 
     public static MessageSessionResponse of(
             long sessionId, 
             ShardedResponseMessage<?> response) {
         return new MessageSessionResponse(sessionId, response);
     }
-    
+
+    private final long sessionId;
     private final ShardedResponseMessage<?> response;
 
     @JsonCreator
     public MessageSessionResponse(
             @JsonProperty("sessionId") long sessionId, 
             @JsonProperty("response") ShardedResponseMessage<?> response) {
-        super(sessionId);
+        this.sessionId = sessionId;
         this.response = response;
+    }
+
+    public long getSessionId() {
+        return sessionId;
     }
     
     public ShardedResponseMessage<?> getResponse() {

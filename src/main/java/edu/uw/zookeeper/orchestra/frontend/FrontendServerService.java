@@ -18,6 +18,7 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.DependentService;
+import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
@@ -32,7 +33,6 @@ import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.server.ServerApplicationModule;
-import edu.uw.zookeeper.util.ServiceMonitor;
 
 @DependsOn({FrontendServerExecutor.class})
 public class FrontendServerService extends DependentService.SimpleDependentService {
@@ -57,47 +57,38 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                 ServerTaskExecutor serverExecutor,
                 ServiceLocator locator,
                 NettyModule netModule,
-                ServiceMonitor monitor) throws Exception {
+                DependentServiceMonitor monitor) throws Exception {
             ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
                     netModule.servers().get(
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
-            monitor.addOnStart(serverConnections);
+            monitor.get().addOnStart(serverConnections);
             ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
-            monitor.addOnStart(server);
-            FrontendServerService instance = new FrontendServerService(configuration.getAddress(), server, locator);
-            monitor.addOnStart(instance);
-            return instance;
+            monitor.get().addOnStart(server);
+            return monitor.add(
+                    FrontendServerService.newInstance(server, locator));
         }
     }
     
     public static FrontendServerService newInstance(
-            ServerInetAddressView address,
             ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
-        FrontendServerService instance = new FrontendServerService(address, serverConnections, locator);
+        FrontendServerService instance = new FrontendServerService(serverConnections, locator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
     
-    protected final ServerInetAddressView address;
-    protected final ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections;
+    protected final ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections;
     
     protected FrontendServerService(
-            ServerInetAddressView address,
-            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections,
             ServiceLocator locator) {
         super(locator);
-        this.address = address;
-        this.serverConnections = serverConnections;
+        this.connections = connections;
     }
-    
-    public ServerInetAddressView address() {
-        return address;
-    }
-    
-    public ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections() {
-        return serverConnections;
+
+    public ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections() {
+        return connections;
     }
 
     @SuppressWarnings("unchecked")
@@ -124,12 +115,12 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         };
         Control.FetchUntil.newInstance(VOLUMES_PATH, allAssigned, locator().getInstance(ControlMaterializerService.class).materializer(), MoreExecutors.sameThreadExecutor()).get();
 
-        serverConnections().start().get();
+        connections().start().get();
     }
 
     @Override
     protected void shutDown() throws Exception {
-        serverConnections().stop().get();
+        connections().stop().get();
         
         super.shutDown();
     }

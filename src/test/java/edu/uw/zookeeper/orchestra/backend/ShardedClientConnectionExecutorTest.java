@@ -25,6 +25,8 @@ import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.VolumeCache;
 import edu.uw.zookeeper.orchestra.control.Hash;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
@@ -80,8 +82,8 @@ public class ShardedClientConnectionExecutorTest {
         ListenableFuture<Message.ServerResponse<Records.Response>> serverFuture = connections.second().write(response);
         connections.first().read();
         serverFuture.get();
-        assertEquals(volume.getId(), ((ShardedRequestMessage<?>) clientFuture.get().first()).getId());
-        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get().second()).getId());
+        assertEquals(volume.getId(), ((ShardedRequestMessage<?>) clientFuture.get().first()).getIdentifier());
+        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get().second()).getIdentifier());
         
         volume = volumes.get(ZNodeLabel.Path.of("/v1"));
         requestEvent = GetEvent.newInstance(connections.second());
@@ -94,8 +96,8 @@ public class ShardedClientConnectionExecutorTest {
         serverFuture = connections.second().write(response);
         connections.first().read();
         serverFuture.get();
-        assertEquals(volume.getId(), ((ShardedRequestMessage<?>) clientFuture.get().first()).getId());
-        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get().second()).getId());
+        assertEquals(volume.getId(), ((ShardedRequestMessage<?>) clientFuture.get().first()).getIdentifier());
+        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get().second()).getIdentifier());
 
     }
 }

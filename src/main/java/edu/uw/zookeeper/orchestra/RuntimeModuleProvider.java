@@ -8,6 +8,7 @@ import java.util.concurrent.ThreadFactory;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.ListeningScheduledExecutorService;
 import com.google.inject.AbstractModule;
+import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -18,7 +19,7 @@ import edu.uw.zookeeper.util.Factory;
 import edu.uw.zookeeper.util.Publisher;
 import edu.uw.zookeeper.util.ServiceMonitor;
 
-public class RuntimeModuleProvider extends AbstractModule {
+public class RuntimeModuleProvider extends AbstractModule implements Provider<RuntimeModule> {
 
     public static RuntimeModuleProvider create(RuntimeModule runtime) {
         return new RuntimeModuleProvider(runtime);
@@ -39,42 +40,49 @@ public class RuntimeModuleProvider extends AbstractModule {
     }
 
     @Provides @Singleton
-    public RuntimeModule getRuntimeModule() {
+    public RuntimeModule get() {
         return runtime;
     }
 
     @Provides @Singleton
-    public ServiceMonitor getServiceMonitor() {
+    public ServiceMonitor getServiceMonitor(
+            RuntimeModule runtime) {
         return runtime.serviceMonitor();
     }
 
     @Provides @Singleton
-    public Configuration getConfiguration() {
+    public Configuration getConfiguration(
+            RuntimeModule runtime) {
         return runtime.configuration();
     }
 
     @Provides @Singleton
-    public Factory<ThreadFactory> getThreadFactory() {
+    public Factory<ThreadFactory> getThreadFactory(
+            RuntimeModule runtime) {
         return runtime.threadFactory();
     }
 
     @Provides @Singleton
-    public Factory<Publisher> getPublisherFactory() {
+    public Factory<Publisher> getPublisherFactory(
+            RuntimeModule runtime) {
         return runtime.publisherFactory();
     }
 
     @Provides @Singleton
-    public ListeningExecutorServiceFactory getExecutors() {
+    public ListeningExecutorServiceFactory getExecutors(
+            RuntimeModule runtime) {
         return runtime.executors();
     }
     
     @Provides @Singleton
-    public ListeningExecutorService getListeningExecutor() {
-        return runtime.executors().asListeningExecutorServiceFactory().get();
+    public ListeningExecutorService getListeningExecutor(
+            ListeningExecutorServiceFactory instance) {
+        return instance.asListeningExecutorServiceFactory().get();
     }
     
     @Provides @Singleton
-    public ListeningScheduledExecutorService getListeningScheduledExecutor() {
-        return runtime.executors().asListeningScheduledExecutorServiceFactory().get();
+    public ListeningScheduledExecutorService getListeningScheduledExecutor(
+            ListeningExecutorServiceFactory instance) {
+        return instance.asListeningScheduledExecutorServiceFactory().get();
     }
 }

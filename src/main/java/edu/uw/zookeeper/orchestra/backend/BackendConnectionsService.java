@@ -1,12 +1,13 @@
 package edu.uw.zookeeper.orchestra.backend;
 
+import java.util.concurrent.ScheduledExecutorService;
+
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
@@ -20,6 +21,7 @@ import edu.uw.zookeeper.util.Factory;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.ParameterizedFactory;
 import edu.uw.zookeeper.util.Publisher;
+import edu.uw.zookeeper.util.ServiceMonitor;
 
 public class BackendConnectionsService<C extends Connection<? super Operation.Request>> extends AbstractIdleService implements Factory<C> {
 
@@ -43,60 +45,55 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
         public BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendConnectionService(
                 BackendConfiguration configuration,
                 NettyClientModule clientModule,
-                RuntimeModule runtime) throws Exception {
+                ScheduledExecutorService executor,
+                ServiceMonitor monitor) throws Exception {
             ParameterizedFactory<Publisher, Pair<Class<Operation.Request>, AssignXidCodec>> codecFactory = ClientApplicationModule.codecFactory();
             ParameterizedFactory<Pair<Pair<Class<Operation.Request>, AssignXidCodec>, Connection<Operation.Request>>, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> pingingFactory = 
-                    PingingClient.factory(configuration.getTimeOut(), runtime.executors().asScheduledExecutorServiceFactory().get());
-            ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
+                    PingingClient.factory(configuration.getTimeOut(), executor);
+            ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
                    clientModule.get(codecFactory, pingingFactory).get();
-            runtime.serviceMonitor().addOnStart(clientConnections);
+            monitor.addOnStart(connections);
+            ServerViewFactory.FixedClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
+                    ServerViewFactory.FixedClientConnectionFactory.create(configuration.getView().getClientAddress().get(), connections);
             BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    BackendConnectionsService.newInstance(configuration.getView(), clientConnections);
-            runtime.serviceMonitor().addOnStart(instance);
+                    BackendConnectionsService.newInstance(clientConnections);
+            monitor.addOnStart(instance);
             return instance;
         }
     }
     
     public static <C extends Connection<? super Operation.Request>> BackendConnectionsService<C> newInstance(
-            BackendView view,
-            ClientConnectionFactory<?, C> clientConnections) {
-        return new BackendConnectionsService<C>(view, clientConnections);
+            ServerViewFactory.FixedClientConnectionFactory<C> connections) {
+        return new BackendConnectionsService<C>(connections);
     }
 
-    protected final BackendView view;
-    protected final ServerViewFactory.FixedClientConnectionFactory<C> clientConnections;
+    protected final ServerViewFactory.FixedClientConnectionFactory<C> connections;
     protected final ZxidTracker zxids;
     
     protected BackendConnectionsService(
-            BackendView view,
-            ClientConnectionFactory<?, C> clientConnections) {
-        this.view = view;
-        this.clientConnections = ServerViewFactory.FixedClientConnectionFactory.create(view.getClientAddress().get(), clientConnections);
+            ServerViewFactory.FixedClientConnectionFactory<C> connections) {
+        this.connections = connections;
         this.zxids = ZxidTracker.create();
     }
 
-    public BackendView view() {
-        return view;
-    }
-    
     public ZxidTracker zxids() {
         return zxids;
     }
     
     @Override
     public C get() {
-        C client = clientConnections.get();
+        C client = connections.get();
         ZxidTracker.ZxidListener.create(zxids, client);
         return client;
     }
     
     @Override
     protected void startUp() throws Exception {
-        clientConnections.second().start().get();
+        connections.second().start().get();
     }
 
     @Override
     protected void shutDown() throws Exception {
-        clientConnections.second().stop().get();
+        connections.second().stop().get();
     }
 }

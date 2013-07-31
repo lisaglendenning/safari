@@ -4,10 +4,9 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
 
-import edu.uw.zookeeper.orchestra.backend.ShardedRequestMessage;
 
 @MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_REQUEST)
-public class MessageSessionRequest extends MessageSessionBody {
+public class MessageSessionRequest extends MessageBody {
 
     public static MessageSessionRequest of(
             long sessionId, 
@@ -15,14 +14,19 @@ public class MessageSessionRequest extends MessageSessionBody {
         return new MessageSessionRequest(sessionId, request);
     }
     
+    private final long sessionId;
     private final ShardedRequestMessage<?> request;
 
     @JsonCreator
     public MessageSessionRequest(
             @JsonProperty("sessionId") long sessionId, 
             @JsonProperty("request") ShardedRequestMessage<?> request) {
-        super(sessionId);
+        this.sessionId = sessionId;
         this.request = request;
+    }
+    
+    public long getSessionId() {
+        return sessionId;
     }
     
     public ShardedRequestMessage<?> getRequest() {

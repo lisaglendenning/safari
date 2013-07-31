@@ -9,6 +9,10 @@ import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedOperation;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequest;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
@@ -67,10 +71,10 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     }
     
     @SuppressWarnings("unchecked")
-    public ShardedRequest<?> shard(Operation.Request request) {
-        ShardedRequest<?> sharded;
-        if (request instanceof ShardedRequest) {
-            sharded = (ShardedRequest<?>) request;
+    public ShardedOperation.Request<?> shard(Operation.Request request) {
+        ShardedOperation.Request<?> sharded;
+        if (request instanceof ShardedOperation.Request) {
+            sharded = (ShardedOperation.Request<?>) request;
         } else {
             Records.Request record = (request instanceof Records.Request)
                     ? (Records.Request) request 
@@ -117,7 +121,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
 
         if ((task != null) && (task.task().getXid() == response.getXid())) {
             ShardedRequestTask shardedTask = (ShardedRequestTask) task.delegate();
-            Identifier id = shardedTask.sharded().getId();
+            Identifier id = shardedTask.sharded().getIdentifier();
             Operation.Request input = shardedTask.input();
             ShardedRequestMessage<Records.Request> unshardedRequest;
             if (input instanceof ShardedRequestMessage) {
@@ -175,12 +179,12 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> {
 
         protected final Operation.Request input;
-        protected final ShardedRequest<?> sharded;
+        protected final ShardedOperation.Request<?> sharded;
         
         public ShardedRequestTask(
                 Operation.Request input,
                 Promise<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> delegate,
-                ShardedRequest<?> sharded) {
+                ShardedOperation.Request<?> sharded) {
             super(sharded.getRequest(), delegate);
             this.input = input;
             this.sharded = sharded;
@@ -190,7 +194,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
             return input;
         }
         
-        public ShardedRequest<?> sharded() {
+        public ShardedOperation.Request<?> sharded() {
             return sharded;
         }
     }
