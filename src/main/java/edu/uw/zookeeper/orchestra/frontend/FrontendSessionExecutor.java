@@ -126,6 +126,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     public void handleTransition(Identifier peer, Automaton.Transition<?> event) {
         if (Connection.State.CONNECTION_CLOSED == event.to()) {
             // FIXME
+            throw new AssertionError();
         }
     }
     
@@ -134,7 +135,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             throw new IllegalStateException();
         }
         Identifier ensemble = backends().getEnsembleForPeer().apply(peer);
-        backends().get().get(ensemble).getResponses().add(message);
+        backends().get().get(ensemble).handleResponse(message);
         schedule();
     }
 
@@ -438,6 +439,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         protected final Identifier ensemble;
         protected final Session session;
         protected final ClientPeerConnection connection;
+        protected final Queue<RequestTask.ResponseTask> requests;
         protected final Queue<ShardedResponseMessage<?>> responses;
 
         public BackendSession(
@@ -447,6 +449,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             this.ensemble = ensemble;
             this.session = session;
             this.connection = connection;
+            this.requests = new ConcurrentLinkedQueue<RequestTask.ResponseTask>();
             this.responses = new ConcurrentLinkedQueue<ShardedResponseMessage<?>>();
         }
         
@@ -465,6 +468,19 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         public Queue<ShardedResponseMessage<?>> getResponses() {
             return responses;
         }
+        
+        public RequestTask.ResponseTask submit(RequestTask task, ShardedRequestMessage<?> request) {
+            MessagePacket message = MessagePacket.of(
+                    MessageSessionRequest.of(session().id(), request));
+            ListenableFuture<MessagePacket> future = getConnection().write(message);
+            RequestTask.ResponseTask result = task.new ResponseTask(request, future);
+            return result;
+        }
+        
+        @Subscribe
+        public void handleResponse(ShardedResponseMessage<?> response) {
+            getResponses().add(response);
+        }
     }
     
     protected static enum RequestState {
@@ -478,7 +494,6 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         protected final Map<ZNodeLabel.Path, Volume> volumes;
         protected final Map<Volume, ShardedRequestMessage<?>> shards;
         protected final Map<Identifier, ResponseTask> submitted;
-        protected volatile ListenableFuture<List<ShardedResponseMessage<Records.Response>>> submittedFuture;
         protected final Set<ListenableFuturePending<?>> pending;
         
         public RequestTask(
@@ -490,7 +505,6 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             this.volumes = Collections.synchronizedMap(Maps.<ZNodeLabel.Path, Volume>newHashMap());
             this.shards = Collections.synchronizedMap(Maps.<Volume, ShardedRequestMessage<?>>newHashMap());
             this.submitted = Collections.synchronizedMap(Maps.<Identifier, ResponseTask>newHashMap());
-            this.submittedFuture = null;
             this.pending = Collections.synchronizedSet(Sets.<ListenableFuturePending<?>>newHashSet());
         }
         
@@ -512,7 +526,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             if (task().getXid() != response.getXid()) {
                 return false;
             }
-            FrontendSessionExecutor.ResponseTask task = submitted.get(peer);
+            ResponseTask task = submitted.get(peer);
             if (task == null) {
                 // FIXME
                 throw new AssertionError();
@@ -668,24 +682,20 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             }
         }
         
-        protected Map<Identifier, FrontendSessionExecutor.ResponseTask> submit(
+        protected Map<Identifier, ResponseTask> submit(
                 Map<Volume, ShardedRequestMessage<?>> shards,
                 Map<Volume, Set<BackendSession>> backends) throws Exception {
             this.state.compareAndSet(RequestState.LOOKING, RequestState.SUBMITTING);
             for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
-                MessagePacket message = MessagePacket.of(
-                        MessageSessionRequest.of(session().id(), e.getValue()));
                 for (BackendSession backend: backends.get(e.getKey())) {
                     ClientPeerConnection connection = backend.getConnection();
                     Identifier k = connection.remoteAddress().getIdentifier();
                     if (! submitted.containsKey(k)) {
-                        ListenableFuture<MessagePacket> future = backend.getConnection().write(message);
-                        FrontendSessionExecutor.ResponseTask task = new ResponseTask(e.getValue(), future);
+                        ResponseTask task = backend.submit(this, e.getValue());
                         submitted.put(k, task);
                     }
                 }
             }
-            // TODO submittedFuture
             return submitted;
         }
         
@@ -696,7 +706,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             }
             // FIXME
             Message.ServerResponse<Records.Response> result = null;
-            for (FrontendSessionExecutor.ResponseTask response: submitted.values()) {
+            for (ResponseTask response: submitted.values()) {
                 if (! response.isDone()) {
                     result = null;
                     break;
@@ -716,43 +726,47 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 publisher.post(get());
             }
         }
-    }
 
-    protected static class ResponseTask extends PromiseTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> implements FutureCallback<MessagePacket> {
+        protected class ResponseTask extends PromiseTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> implements FutureCallback<MessagePacket> {
 
-        protected final ListenableFuture<MessagePacket> future;
+            protected final ListenableFuture<MessagePacket> future;
 
-        public ResponseTask(
-                ShardedRequestMessage<?> request,
-                ListenableFuture<MessagePacket> future) {
-            this(request, future, SettableFuturePromise.<ShardedResponseMessage<?>>create());
-        }
-        
-        public ResponseTask(
-                ShardedRequestMessage<?> request,
-                ListenableFuture<MessagePacket> future,
-                Promise<ShardedResponseMessage<?>> delegate) {
-            super(request, delegate);
-            this.future = future;
-            Futures.addCallback(future, this);
-        }
-        
-        @Override
-        public boolean cancel(boolean mayInterruptIfRunning) {
-            boolean cancelled = super.cancel(mayInterruptIfRunning);
-            if (cancelled) {
-                future.cancel(mayInterruptIfRunning);
+            public ResponseTask(
+                    ShardedRequestMessage<?> request,
+                    ListenableFuture<MessagePacket> future) {
+                this(request, future, SettableFuturePromise.<ShardedResponseMessage<?>>create());
             }
-            return cancelled;
-        }
+            
+            public ResponseTask(
+                    ShardedRequestMessage<?> request,
+                    ListenableFuture<MessagePacket> future,
+                    Promise<ShardedResponseMessage<?>> delegate) {
+                super(request, delegate);
+                this.future = future;
+                Futures.addCallback(future, this);
+            }
+            
+            public RequestTask getRequest() {
+                return RequestTask.this;
+            }
+            
+            @Override
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                boolean cancelled = super.cancel(mayInterruptIfRunning);
+                if (cancelled) {
+                    future.cancel(mayInterruptIfRunning);
+                }
+                return cancelled;
+            }
 
-        @Override
-        public void onSuccess(MessagePacket result) {
-        }
+            @Override
+            public void onSuccess(MessagePacket result) {
+            }
 
-        @Override
-        public void onFailure(Throwable t) {
-            setException(t);
+            @Override
+            public void onFailure(Throwable t) {
+                setException(t);
+            }
         }
     }
 }

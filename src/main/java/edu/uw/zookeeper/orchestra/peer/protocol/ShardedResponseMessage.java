@@ -15,11 +15,11 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @JsonIgnoreProperties({"response", "xid", "zxid", "record"})
-public class ShardedResponseMessage<V extends Records.Response> extends EncodableMessage<Message.ServerResponse<V>> implements Message.ServerResponse<V>, ShardedOperation.Response<Message.ServerResponse<V>> {
+public class ShardedResponseMessage<V extends Records.Response> extends ShardedMessage<Message.ServerResponse<V>> implements Message.ServerResponse<V>, ShardedOperation.Response<Message.ServerResponse<V>> {
 
     public static <V extends Records.Response> ShardedResponseMessage<V> of(
-            Identifier identifier, Message.ServerResponse<V> response) {
-        return new ShardedResponseMessage<V>(identifier, response);
+            Identifier identifier, Message.ServerResponse<V> message) {
+        return new ShardedResponseMessage<V>(identifier, message);
     }
 
     @SuppressWarnings("unchecked")
@@ -31,16 +31,8 @@ public class ShardedResponseMessage<V extends Records.Response> extends Encodabl
         this(identifier, (Message.ServerResponse<V>) ProtocolResponseMessage.decode(OpCode.of(opCode), Unpooled.wrappedBuffer(payload)));
     }
 
-    private final Identifier identifier;
-    
-    public ShardedResponseMessage(Identifier identifier, Message.ServerResponse<V> response) {
-        super(response);
-        this.identifier = identifier;
-    }
-
-    @Override
-    public Identifier getIdentifier() {
-        return identifier;
+    public ShardedResponseMessage(Identifier identifier, Message.ServerResponse<V> message) {
+        super(identifier, message);
     }
 
     @Override

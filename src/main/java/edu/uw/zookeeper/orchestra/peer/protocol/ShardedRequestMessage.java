@@ -14,12 +14,12 @@ import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @JsonIgnoreProperties({"request", "xid", "record"})
-public class ShardedRequestMessage<V extends Records.Request> extends EncodableMessage<Message.ClientRequest<V>> implements Message.ClientRequest<V>, ShardedOperation.Request<Message.ClientRequest<V>> {
+public class ShardedRequestMessage<V extends Records.Request> extends ShardedMessage<Message.ClientRequest<V>> implements Message.ClientRequest<V>, ShardedOperation.Request<Message.ClientRequest<V>> {
 
     public static <V extends Records.Request> ShardedRequestMessage<V> of(
             Identifier identifier,
-            Message.ClientRequest<V> request) {
-        return new ShardedRequestMessage<V>(identifier, request);
+            Message.ClientRequest<V> message) {
+        return new ShardedRequestMessage<V>(identifier, message);
     }
 
     @SuppressWarnings("unchecked")
@@ -30,16 +30,8 @@ public class ShardedRequestMessage<V extends Records.Request> extends EncodableM
         this(identifier, (Message.ClientRequest<V>) ProtocolRequestMessage.decode(Unpooled.wrappedBuffer(payload)));
     }
 
-    private final Identifier identifier;
-    
-    public ShardedRequestMessage(Identifier identifier, Message.ClientRequest<V> request) {
-        super(request);
-        this.identifier = identifier;
-    }
-    
-    @Override
-    public Identifier getIdentifier() {
-        return identifier;
+    public ShardedRequestMessage(Identifier identifier, Message.ClientRequest<V> message) {
+        super(identifier, message);
     }
     
     @Override

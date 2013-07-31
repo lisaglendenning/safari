@@ -292,7 +292,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
 
         public void handleMessageSessionOpen(MessageSessionOpenRequest message) {
-            long sessionId = message.delegate().getSessionId();
+            long sessionId = message.getSessionId();
             BackendClient client = clients.get(sessionId);
             if (client == null) {
                 ListenableFuture<ShardedClientConnectionExecutor<C>> connection = connect(message);
