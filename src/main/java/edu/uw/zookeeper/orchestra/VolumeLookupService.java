@@ -60,7 +60,7 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
         return new VolumeLookupService(client);
     }
     
-    private static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
+    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
 
     protected final Logger logger;
     protected final Materializer<?,?> client;

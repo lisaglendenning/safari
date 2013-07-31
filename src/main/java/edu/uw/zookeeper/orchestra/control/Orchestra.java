@@ -105,7 +105,7 @@ public abstract class Orchestra extends Control.ControlZNode {
                 };
                 return CachedFunction.create(cached, lookup);
             }
-            
+
             public static Peers.Entity valueOf(String label) {
                 return of(Identifier.valueOf(label));
             }

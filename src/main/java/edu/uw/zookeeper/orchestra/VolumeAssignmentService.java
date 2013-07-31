@@ -61,7 +61,7 @@ public class VolumeAssignmentService extends AbstractIdleService {
         return new VolumeAssignmentService(client);
     }
     
-    private static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
+    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
 
     protected final Logger logger;
     protected final Materializer<?,?> client;

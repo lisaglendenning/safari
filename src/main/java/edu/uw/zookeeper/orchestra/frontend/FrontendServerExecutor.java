@@ -4,12 +4,14 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import com.google.common.base.Function;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.orchestra.VolumeAssignmentService;
@@ -50,6 +52,7 @@ import edu.uw.zookeeper.util.Generator;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Processor;
 import edu.uw.zookeeper.util.Publisher;
+import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.ServiceMonitor;
 import edu.uw.zookeeper.util.TaskExecutor;
 
@@ -67,6 +70,8 @@ public class FrontendServerExecutor extends DependentService {
         @Override
         protected void configure() {
             bind(ServerTaskExecutor.class).to(FrontendServerTaskExecutor.class).in(Singleton.class);
+            bind(new TypeLiteral<Generator<Long>>() {}).to(ZxidEpochIncrementer.class).in(Singleton.class);
+            bind(new TypeLiteral<Reference<Long>>() {}).to(ZxidEpochIncrementer.class).in(Singleton.class);
         }
 
         @Provides @Singleton
@@ -81,6 +86,11 @@ public class FrontendServerExecutor extends DependentService {
             monitor.add(expires);
             return sessions;
         }
+        
+        @Provides @Singleton
+        public ZxidEpochIncrementer getZxids() {
+            return ZxidEpochIncrementer.fromZero();
+        }
 
         @Provides @Singleton
         public FrontendServerExecutor getServerExecutor(
@@ -90,8 +100,8 @@ public class FrontendServerExecutor extends DependentService {
                 EnsembleConnectionsService peers,
                 Executor executor,
                 ExpiringSessionTable sessions,
-                DependentServiceMonitor monitor) {
-            ZxidEpochIncrementer zxids = ZxidEpochIncrementer.fromZero();
+                DependentServiceMonitor monitor,
+                Generator<Long> zxids) {
             return monitor.add(FrontendServerExecutor.newInstance(
                     volumes, assignments, peers, executor, sessions, zxids, locator));
         }
@@ -158,6 +168,7 @@ public class FrontendServerExecutor extends DependentService {
                                 handlers,
                                 volumes.lookup(),
                                 assignments.lookup(),
+                                connections.getEnsembleForPeer(),
                                 connections.getConnectionForEnsemble(),
                                 ConnectTableProcessor.create(sessions, zxids),
                                 executor));
@@ -206,19 +217,22 @@ public class FrontendServerExecutor extends DependentService {
         protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
         protected final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup;
         protected final CachedFunction<Identifier, Identifier> assignmentLookup;
-        protected final CachedFunction<Identifier, ? extends Connection<MessagePacket>> connectionLookup;
+        protected final Function<Identifier, Identifier> ensembleForPeer;
+        protected final CachedFunction<Identifier, ClientPeerConnection> connectionLookup;
         protected final Executor executor;
         
         public ConnectProcessor(
                 ConcurrentMap<Long, FrontendSessionExecutor> handlers,
                 CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
                 CachedFunction<Identifier, Identifier> assignmentLookup,
-                CachedFunction<Identifier, ? extends Connection<MessagePacket>> connectionLookup,
+                Function<Identifier, Identifier> ensembleForPeer,
+                CachedFunction<Identifier, ClientPeerConnection> connectionLookup,
                 ConnectTableProcessor processor,
                 Executor executor) {
             this.processor = processor;
             this.volumeLookup = volumeLookup;
             this.assignmentLookup = assignmentLookup;
+            this.ensembleForPeer = ensembleForPeer;
             this.connectionLookup = connectionLookup;
             this.executor = executor;
             this.handlers = handlers;
@@ -236,6 +250,7 @@ public class FrontendServerExecutor extends DependentService {
                                 input.second(),
                                 volumeLookup,
                                 assignmentLookup,
+                                ensembleForPeer,
                                 connectionLookup,
                                 executor));
                 // TODO: what about reconnects?
@@ -272,7 +287,7 @@ public class FrontendServerExecutor extends DependentService {
         public void handleTransition(Automaton.Transition<?> event) {
             if (Connection.State.CONNECTION_CLOSED == event.to()) {
                 for (FrontendSessionExecutor handler: handlers.values()) {
-                    handler.handleTransition(event);
+                    handler.handleTransition(connection.remoteAddress().getIdentifier(), event);
                 }
                 try {
                     connection.unregister(this);
@@ -287,7 +302,7 @@ public class FrontendServerExecutor extends DependentService {
             {
                 MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
                 FrontendSessionExecutor handler = handlers.get(body.getSessionId());
-                handler.handleResponse(body.getResponse());
+                handler.handleResponse(connection.remoteAddress().getIdentifier(), body.getResponse());
                 break;
             }
             default:

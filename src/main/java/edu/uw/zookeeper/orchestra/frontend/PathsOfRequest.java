@@ -30,7 +30,7 @@ public enum PathsOfRequest implements Function<Records.Request, ZNodeLabel.Path[
                 paths[0] = path;
                 paths[1] = (ZNodeLabel.Path) path.head();
             }
-            return paths;
+            break;
         }
         case CHECK:
         case EXISTS:
@@ -44,6 +44,7 @@ public enum PathsOfRequest implements Function<Records.Request, ZNodeLabel.Path[
         {
             paths = new ZNodeLabel.Path[1];
             paths[0] = ZNodeLabel.Path.of(((Records.PathGetter) input).getPath());
+            break;
         }
         case MULTI:
         {
@@ -55,6 +56,7 @@ public enum PathsOfRequest implements Function<Records.Request, ZNodeLabel.Path[
             }
             ImmutableSet<ZNodeLabel.Path> built = builder.build();
             paths = built.toArray(new ZNodeLabel.Path[built.size()]);
+            break;
         }
         case SET_WATCHES:
             // TODO

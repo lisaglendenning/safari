@@ -15,6 +15,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
@@ -36,6 +38,7 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.CachedFunction;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
+import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenResponse;
@@ -62,122 +65,37 @@ import edu.uw.zookeeper.util.Stateful;
 import edu.uw.zookeeper.util.TaskExecutor;
 
 // FIXME: disconnect
+// FIXME: zxids
 public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecutor.RequestTask> implements TaskExecutor<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> {
     
+    protected final Logger logger;
     protected final Session session;
     protected final Publisher publisher;
     protected final Lookups<ZNodeLabel.Path, Volume> volumes;
     protected final Lookups<Identifier, Identifier> assignments;
     protected final BackendLookups backends;
-    protected final Queue<ShardedResponseMessage<?>> responses;
 
     protected FrontendSessionExecutor(
             Session session,
             Publisher publisher,
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
-            CachedFunction<Identifier, ? extends Connection<MessagePacket>> connectionLookup,
+            Function<Identifier, Identifier> ensembleForPeer,
+            CachedFunction<Identifier, ClientPeerConnection> connectionLookup,
             Executor executor) {
         super(executor, FutureQueue.<RequestTask>create(), AbstractActor.newState());
+        this.logger = LoggerFactory.getLogger(getClass());
         this.session = session;
         this.publisher = publisher;
-        this.volumes = new Lookups<ZNodeLabel.Path, Volume>(volumeLookup);
-        this.assignments = new Lookups<Identifier, Identifier>(assignmentLookup);
-        this.backends = new BackendLookups(connectionLookup);
-        this.responses = new ConcurrentLinkedQueue<ShardedResponseMessage<?>>();
-    }
-    
-    protected static class Lookups<I,O> extends Pair<CachedFunction<I,O>, ConcurrentMap<I, ListenableFuturePending<O>>> {
-
-        public Lookups(CachedFunction<I, O> first) {
-            super(first, new MapMaker().<I, ListenableFuturePending<O>>makeMap());
-        }
-        
-        public Optional<O> apply(I input, RequestTask listener) throws Exception {
-            O output = first().first().apply(input);
-            if (output != null) {
-                return Optional.of(output);
-            } else {
-                ListenableFuturePending<O> pending = second().get(input);
-                if (pending == null) {
-                    ListenableFuture<O> future = first().apply(input);
-                    ListenableFuturePending<O> prev = second().putIfAbsent(input, new ListenableFuturePending<O>(future));
-                    if (prev != null) {
-                        future.cancel(true);
-                        pending = prev;
-                    }
-                    // TODO add runnable
-                }
-                listener.pending.add(pending);
-                pending.second().add(listener);
-                // TODO: if pending was processed...
-                return Optional.absent();
-            }
-        }
-    }
-    
-    // TODO handle disconnects and reconnects
-    protected class BackendLookups extends Lookups<Identifier, BackendSessionTask> implements Reference<ConcurrentMap<Identifier, BackendSessionTask>> {
-
-        protected final ConcurrentMap<Identifier, BackendSessionTask> backendSessions;
-        protected final CachedFunction<Identifier, ? extends Connection<MessagePacket>> connectionLookup;
-        
-        public BackendLookups(
-                CachedFunction<Identifier, ? extends Connection<MessagePacket>> connectionLookup) {
-            this(connectionLookup, new MapMaker().<Identifier, BackendSessionTask>makeMap());
-        }
-        
-        public ConcurrentMap<Identifier, BackendSessionTask> get() {
-            return backendSessions;
-        }
-        
-        public BackendLookups(
-                final CachedFunction<Identifier, ? extends Connection<MessagePacket>> connectionLookup,
-                final ConcurrentMap<Identifier, BackendSessionTask> backendSessions) {
-            super(CachedFunction.create(
-                    new Function<Identifier, BackendSessionTask>() {
-                        @Override
-                        public BackendSessionTask apply(Identifier ensemble) {
-                            return backendSessions.get(ensemble);
-                        }
-                    }, 
-                    new AsyncFunction<Identifier, BackendSessionTask>() {
-                        @Override
-                        public ListenableFuture<BackendSessionTask> apply(Identifier ensemble) throws Exception {
-                            final BackendSessionTask backend = new BackendSessionTask(
-                                    Optional.<Session>absent(),
-                                    ensemble, 
-                                    connectionLookup.apply(ensemble),
-                                    SettableFuturePromise.<Session>create());
-                            return Futures.transform(
-                                    backend, 
-                                    new Function<Session, BackendSessionTask>() {
-                                        @Override
-                                        @Nullable
-                                        public BackendSessionTask apply(Session input) {
-                                            BackendSessionTask prev = backendSessions.putIfAbsent(backend.task(), backend);
-                                            if (prev != null) {
-                                                // TODO
-                                                throw new AssertionError();
-                                            }
-                                            return backend;
-                                        }
-                                        
-                                    });
-                        }
-                    }));
-            this.connectionLookup = connectionLookup;
-            this.backendSessions = backendSessions;
-        }
-    }
-    
-    protected static class ListenableFuturePending<V> extends Pair<ListenableFuture<V>, Set<RequestTask>> {
-
-        public ListenableFuturePending(
-                ListenableFuture<V> first) {
-            super(first, Collections.synchronizedSet(Sets.<RequestTask>newHashSet()));
-        }
-        
+        this.volumes = new Lookups<ZNodeLabel.Path, Volume>(
+                volumeLookup, 
+                this,
+                MoreExecutors.sameThreadExecutor());
+        this.assignments = new Lookups<Identifier, Identifier>(
+                assignmentLookup, 
+                this,
+                MoreExecutors.sameThreadExecutor());
+        this.backends = new BackendLookups(ensembleForPeer, connectionLookup);
     }
     
     public Session session() {
@@ -205,17 +123,18 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         return task;
     }
     
-    public void handleTransition(Automaton.Transition<?> event) {
+    public void handleTransition(Identifier peer, Automaton.Transition<?> event) {
         if (Connection.State.CONNECTION_CLOSED == event.to()) {
             // FIXME
         }
     }
     
-    public void handleResponse(ShardedResponseMessage<?> message) {
+    public void handleResponse(Identifier peer, ShardedResponseMessage<?> message) {
         if (state.get() == State.TERMINATED) {
             throw new IllegalStateException();
         }
-        responses.add(message);
+        Identifier ensemble = backends().getEnsembleForPeer().apply(peer);
+        backends().get().get(ensemble).getResponses().add(message);
         schedule();
     }
 
@@ -239,26 +158,50 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     protected void doRun() throws Exception {
         RequestTask prev = null;
         for (RequestTask task: mailbox) {
-            task.apply(prev);
+            switch (task.state()) {
+            case NEW:
+            {
+                task.call();
+                if (task.state() != RequestState.LOOKING) {
+                    break;
+                }
+            }
+            case LOOKING:
+            {
+                if ((prev != null) && (prev.state().compareTo(RequestState.SUBMITTING) < 0)) {
+                    // we need to preserve ordering of requests per volume
+                    // as a proxy for this requirement, 
+                    // don't submit until the task before us has submitted
+                    // (note this is stronger than necessary)
+                    break;
+                }
+                task.call();
+                break;
+            }
+            default:
+                break;
+            }
             prev = task;
         }
         
-        ShardedResponseMessage<?> response = null;
-        while ((response = responses.poll()) != null) {
-            int xid = response.getXid();
-            if (OpCodeXid.has(xid)) {
-                publisher.post(response.getResponse());
-            } else {
-                prev = null;
-                for (RequestTask request: mailbox) {
-                    if (request.handleResponse(response)) {
-                        request.apply(prev);
-                        break;
+        for (BackendSession backend: backends.get().values()) {
+            ShardedResponseMessage<?> response = null;
+            while ((response = backend.responses.poll()) != null) {
+                int xid = response.getXid();
+                if (OpCodeXid.has(xid)) {
+                    publisher.post(response.getResponse());
+                } else {
+                    prev = null;
+                    for (RequestTask request: mailbox) {
+                        if (request.handleResponse(backend.getConnection().remoteAddress().getIdentifier(), response)) {
+                            request.call();
+                            break;
+                        }
+                        prev = request;
                     }
-                    prev = request;
+                    
+                    super.doRun();
                 }
-                
-                super.doRun();
             }
         }
         
@@ -272,15 +215,131 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         return running;
     }
 
+    protected static class ListenableFuturePending<V> extends Pair<ListenableFuture<V>, Set<RequestTask>> {
+    
+        public ListenableFuturePending(
+                ListenableFuture<V> first) {
+            super(first, Collections.synchronizedSet(Sets.<RequestTask>newHashSet()));
+        }
+        
+    }
+
+    protected static class Lookups<I,O> extends Pair<CachedFunction<I,O>, ConcurrentMap<I, ListenableFuturePending<O>>> {
+    
+        protected final Runnable runnable;
+        protected final Executor executor;
+        
+        public Lookups(
+                CachedFunction<I, O> first,
+                Runnable runnable,
+                Executor executor) {
+            super(first, new MapMaker().<I, ListenableFuturePending<O>>makeMap());
+            this.runnable = runnable;
+            this.executor = executor;
+        }
+        
+        public Optional<O> apply(I input, RequestTask listener) throws Exception {
+            O output = first().first().apply(input);
+            if (output != null) {
+                return Optional.of(output);
+            } else {
+                ListenableFuturePending<O> pending = second().get(input);
+                if (pending == null) {
+                    ListenableFuture<O> future = first().apply(input);
+                    pending = new ListenableFuturePending<O>(future);
+                    ListenableFuturePending<O> prev = second().putIfAbsent(input, pending);
+                    if (prev != null) {
+                        future.cancel(true);
+                        pending = prev;
+                    } else {
+                        pending.first().addListener(runnable, executor);
+                    }
+                }
+                listener.pending.add(pending);
+                pending.second().add(listener);
+                // TODO: if pending was processed...
+                return Optional.absent();
+            }
+        }
+    }
+
+    // TODO handle disconnects and reconnects
+    protected class BackendLookups extends Lookups<Identifier, BackendSession> implements Reference<ConcurrentMap<Identifier, BackendSession>> {
+    
+        protected final ConcurrentMap<Identifier, BackendSession> backendSessions;
+        protected final CachedFunction<Identifier, ClientPeerConnection> connectionLookup;
+        protected final Function<Identifier, Identifier> ensembleForPeer;
+        
+        public BackendLookups(
+                Function<Identifier, Identifier> ensembleForPeer,
+                CachedFunction<Identifier, ClientPeerConnection> connectionLookup) {
+            this(ensembleForPeer, connectionLookup, 
+                    new MapMaker().<Identifier, BackendSession>makeMap());
+        }
+        
+        public BackendLookups(
+                final Function<Identifier, Identifier> ensembleForPeer,
+                final CachedFunction<Identifier, ClientPeerConnection> connectionLookup,
+                final ConcurrentMap<Identifier, BackendSession> backendSessions) {
+            super(CachedFunction.create(
+                    new Function<Identifier, BackendSession>() {
+                        @Override
+                        public BackendSession apply(Identifier ensemble) {
+                            return backendSessions.get(ensemble);
+                        }
+                    }, 
+                    new AsyncFunction<Identifier, BackendSession>() {
+                        @Override
+                        public ListenableFuture<BackendSession> apply(Identifier ensemble) throws Exception {
+                            final BackendSessionTask task = new BackendSessionTask(
+                                    Optional.<Session>absent(),
+                                    ensemble, 
+                                    connectionLookup.apply(ensemble),
+                                    SettableFuturePromise.<Session>create());
+                            return Futures.transform(
+                                    task, 
+                                    new Function<Session, BackendSession>() {
+                                        @Override
+                                        @Nullable
+                                        public BackendSession apply(Session input) {
+                                            BackendSession backend = task.toBackendSession();
+                                            BackendSession prev = backendSessions.putIfAbsent(backend.getEnsemble(), backend);
+                                            if (prev != null) {
+                                                // TODO
+                                                throw new AssertionError();
+                                            }
+                                            return backend;
+                                        }
+                                        
+                                    });
+                        }
+                    }),
+                    FrontendSessionExecutor.this,
+                    MoreExecutors.sameThreadExecutor());
+            this.ensembleForPeer = ensembleForPeer;
+            this.connectionLookup = connectionLookup;
+            this.backendSessions = backendSessions;
+        }
+        
+        public Function<Identifier, Identifier> getEnsembleForPeer() {
+            return ensembleForPeer;
+        }
+        
+        @Override
+        public ConcurrentMap<Identifier, BackendSession> get() {
+            return backendSessions;
+        }
+    }
+
     protected class BackendSessionTask extends PromiseTask<Identifier, Session> implements Runnable, FutureCallback<MessagePacket> {
         
         protected final Optional<Session> existing;
-        protected final ListenableFuture<? extends Connection<MessagePacket>> connection;
+        protected final ListenableFuture<ClientPeerConnection> connection;
         
         public BackendSessionTask(
                 Optional<Session> existing,
                 Identifier ensemble,
-                ListenableFuture<? extends Connection<MessagePacket>> connection,
+                ListenableFuture<ClientPeerConnection> connection,
                 Promise<Session> promise) throws Exception {
             super(ensemble, promise);
             this.existing = existing;
@@ -288,7 +347,14 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             this.connection.addListener(this, MoreExecutors.sameThreadExecutor());
         }
         
-        public ListenableFuture<? extends Connection<MessagePacket>> connection() {
+        public BackendSession toBackendSession() {
+            return new BackendSession(
+                    task(),
+                    Futures.getUnchecked(this),
+                    Futures.getUnchecked(connection()));
+        }
+        
+        public ListenableFuture<ClientPeerConnection> connection() {
             return connection;
         }
         
@@ -329,7 +395,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         @Override
         public void run() {
             if (connection.isDone()) {
-                Connection<MessagePacket> c;
+                ClientPeerConnection c;
                 try {
                     c = connection.get();
                 } catch (Exception e) {
@@ -364,6 +430,40 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         @Override
         public void onFailure(Throwable t) {
             setException(t);
+        }
+    }
+    
+    protected class BackendSession {
+
+        protected final Identifier ensemble;
+        protected final Session session;
+        protected final ClientPeerConnection connection;
+        protected final Queue<ShardedResponseMessage<?>> responses;
+
+        public BackendSession(
+                Identifier ensemble,
+                Session session,
+                ClientPeerConnection connection) {
+            this.ensemble = ensemble;
+            this.session = session;
+            this.connection = connection;
+            this.responses = new ConcurrentLinkedQueue<ShardedResponseMessage<?>>();
+        }
+        
+        public Identifier getEnsemble() {
+            return ensemble;
+        }
+        
+        public Session getSession() {
+            return session;
+        }
+        
+        public ClientPeerConnection getConnection() {
+            return connection;
+        }
+        
+        public Queue<ShardedResponseMessage<?>> getResponses() {
+            return responses;
         }
     }
     
@@ -408,11 +508,11 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             FrontendSessionExecutor.this.run();
         }
         
-        public boolean handleResponse(ShardedResponseMessage<?> response) {
+        public boolean handleResponse(Identifier peer, ShardedResponseMessage<?> response) {
             if (task().getXid() != response.getXid()) {
                 return false;
             }
-            FrontendSessionExecutor.ResponseTask task = submitted.get(response.getIdentifier());
+            FrontendSessionExecutor.ResponseTask task = submitted.get(peer);
             if (task == null) {
                 // FIXME
                 throw new AssertionError();
@@ -424,9 +524,18 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return true;
         }
         
-        public ListenableFuture<Message.ServerResponse<Records.Response>> apply(RequestTask prev) throws Exception {
+        public ListenableFuture<Message.ServerResponse<Records.Response>> call() throws Exception {
             switch (state()) {
             case NEW:
+            {
+                Optional<Map<ZNodeLabel.Path, Volume>> volumes = getVolumes(paths());
+                if (! volumes.isPresent()) {
+                    break;
+                }
+                Set<Volume> uniqueVolumes = getUniqueVolumes(volumes.get().values());
+                getConnections(uniqueVolumes);
+                break;
+            }
             case LOOKING:
             {
                 Optional<Map<ZNodeLabel.Path, Volume>> volumes = getVolumes(paths());
@@ -434,22 +543,22 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     break;
                 }
                 Set<Volume> uniqueVolumes = getUniqueVolumes(volumes.get().values());
-                Optional<Map<Volume, BackendSessionTask>> backends = getConnections(uniqueVolumes);
+                Optional<Map<Volume, Set<BackendSession>>> backends = getConnections(uniqueVolumes);
                 if (! backends.isPresent()) {
                     break;
                 }
-                if ((prev != null) && (prev.state().compareTo(RequestState.SUBMITTING) < 0)) {
-                    // we need to preserve ordering of requests per volume
-                    // as a proxy for this requirement, 
-                    // don't submit until the task before us has submitted
-                    // (note this is stronger than necessary)
-                    break;
-                }
                 submit(getShards(volumes.get()), backends.get());
+                break;
             }
             case SUBMITTING:
             {
                 complete();
+                break;
+            }
+            case COMPLETE:
+            {
+                publish();
+                break;
             }
             default:
                 break;
@@ -524,15 +633,31 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return shards;
         }
 
-        protected Optional<Map<Volume, BackendSessionTask>> getConnections(Set<Volume> volumes) throws Exception {
+        protected Optional<Map<Volume, Set<BackendSession>>> getConnections(Set<Volume> volumes) throws Exception {
             this.state.compareAndSet(RequestState.NEW, RequestState.LOOKING);
-            Map<Volume, BackendSessionTask> backends = Maps.newHashMapWithExpectedSize(volumes.size());
+            Map<Volume, Set<BackendSession>> backends = Maps.newHashMapWithExpectedSize(volumes.size());
             for (Volume v: volumes) {
-                Optional<Identifier> assignment = assignments().apply(v.getId(), this);
-                if (assignment.isPresent()) {
-                    Optional<BackendSessionTask> backend = backends().apply(assignment.get(), this);
-                    if (backend.isPresent()) {
-                        backends.put(v, backend.get());
+                if (v.equals(Volume.none())) {
+                    boolean done = false;
+                    ImmutableSet.Builder<BackendSession> builder = ImmutableSet.builder();
+                    for (Identifier ensemble: backends().get().keySet()) {
+                        Optional<BackendSession> backend = backends().apply(ensemble, this);
+                        if (backend.isPresent()) {
+                            builder.add(backend.get());
+                        } else {
+                            done = false;
+                        }
+                    }
+                    if (done) {
+                        backends.put(v, builder.build());
+                    }
+                } else {
+                    Optional<Identifier> assignment = assignments().apply(v.getId(), this);
+                    if (assignment.isPresent()) {
+                        Optional<BackendSession> backend = backends().apply(assignment.get(), this);
+                        if (backend.isPresent()) {
+                            backends.put(v, ImmutableSet.of(backend.get()));
+                        }
                     }
                 }
             }
@@ -545,19 +670,20 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         
         protected Map<Identifier, FrontendSessionExecutor.ResponseTask> submit(
                 Map<Volume, ShardedRequestMessage<?>> shards,
-                Map<Volume, BackendSessionTask> backends) throws Exception {
+                Map<Volume, Set<BackendSession>> backends) throws Exception {
             this.state.compareAndSet(RequestState.LOOKING, RequestState.SUBMITTING);
             for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
-                if (submitted.containsKey(e.getKey().getId())) {
-                    continue;
-                }
-                BackendSessionTask backend = backends.get(e.getKey());
-                Connection<MessagePacket> connection = backend.connection().get();
                 MessagePacket message = MessagePacket.of(
                         MessageSessionRequest.of(session().id(), e.getValue()));
-                ListenableFuture<MessagePacket> future = connection.write(message);
-                FrontendSessionExecutor.ResponseTask task = new ResponseTask(e.getValue(), future);
-                submitted.put(e.getKey().getId(), task);
+                for (BackendSession backend: backends.get(e.getKey())) {
+                    ClientPeerConnection connection = backend.getConnection();
+                    Identifier k = connection.remoteAddress().getIdentifier();
+                    if (! submitted.containsKey(k)) {
+                        ListenableFuture<MessagePacket> future = backend.getConnection().write(message);
+                        FrontendSessionExecutor.ResponseTask task = new ResponseTask(e.getValue(), future);
+                        submitted.put(k, task);
+                    }
+                }
             }
             // TODO submittedFuture
             return submitted;
@@ -585,7 +711,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return this;
         }
         
-        public void publish() throws InterruptedException, ExecutionException {
+        protected void publish() throws InterruptedException, ExecutionException {
             if (this.state.compareAndSet(RequestState.COMPLETE, RequestState.PUBLISHED)) {
                 publisher.post(get());
             }
