@@ -105,13 +105,14 @@ public class FrontendServerExecutor extends DependentService {
                 ServiceLocator locator,
                 VolumeLookupService volumes,
                 VolumeAssignmentService assignments,
-                EnsembleConnectionsService peers,
+                PeerConnectionsService<?> peers,
+                EnsembleConnectionsService ensembles,
                 Executor executor,
                 ExpiringSessionTable sessions,
                 DependentServiceMonitor monitor,
                 Generator<Long> zxids) {
             return monitor.add(FrontendServerExecutor.newInstance(
-                    volumes, assignments, peers, executor, sessions, zxids, locator));
+                    volumes, assignments, peers, ensembles, executor, sessions, zxids, locator));
         }
 
         @Provides @Singleton
@@ -124,29 +125,31 @@ public class FrontendServerExecutor extends DependentService {
     public static FrontendServerExecutor newInstance(
             VolumeLookupService volumes,
             VolumeAssignmentService assignments,
-            EnsembleConnectionsService peers,
+            PeerConnectionsService<?> peers,
+            EnsembleConnectionsService ensembles,
             Executor executor,
             ExpiringSessionTable sessions,
             Generator<Long> zxids,
             ServiceLocator locator) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
-        FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peers, executor, sessions, zxids);
-        return new FrontendServerExecutor(handlers, server, locator);
+        FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, ensembles, executor, sessions, zxids);
+        return new FrontendServerExecutor(handlers, server, peers.clients(), locator);
     }
     
     protected final ServiceLocator locator;
     protected final FrontendServerTaskExecutor executor;
     protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
+    protected final ClientPeerConnectionListener connections;
     
     protected FrontendServerExecutor(
             ConcurrentMap<Long, FrontendSessionExecutor> handlers,
             FrontendServerTaskExecutor executor,
+            PeerConnectionsService<?>.ClientPeerConnections connections,
             ServiceLocator locator) {
         this.locator = locator;
         this.handlers = handlers;
         this.executor = executor;
-        
-        new ClientPeerConnectionListener(locator().getInstance(PeerConnectionsService.class));
+        this.connections = new ClientPeerConnectionListener(handlers, connections);
     }
     
     public FrontendServerTaskExecutor asTaskExecutor() {
@@ -156,6 +159,13 @@ public class FrontendServerExecutor extends DependentService {
     @Override
     protected ServiceLocator locator() {
         return locator;
+    }
+    
+    @Override
+    protected void startUp() throws Exception {
+        super.startUp();
+        
+        connections.start();
     }
     
     protected static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> {
@@ -351,53 +361,68 @@ public class FrontendServerExecutor extends DependentService {
         }
     }
     
-    protected class ClientPeerConnectionListener {
+    protected static class ClientPeerConnectionListener {
+        
+        protected final PeerConnectionsService<?>.ClientPeerConnections connections;
+        protected final ConcurrentMap<Long, FrontendSessionExecutor> executors;
+        protected final ConcurrentMap<ClientPeerConnection, ClientPeerConnectionDispatcher> dispatchers;
         
         public ClientPeerConnectionListener(
-                PeerConnectionsService<?> connections) {
-            connections.clients().register(this);
+                ConcurrentMap<Long, FrontendSessionExecutor> executors,
+                PeerConnectionsService<?>.ClientPeerConnections connections) {
+            this.executors = executors;
+            this.connections = connections;
+            this.dispatchers = new MapMaker().makeMap();
+        }
+        
+        public void start() {
+            connections.register(this);
+            for (ClientPeerConnection c: connections) {
+                handleConnection(c);
+            }
         }
         
         @Subscribe
         public void handleConnection(ClientPeerConnection connection) {
-            new ClientPeerConnectionDispatcher(connection);
+            ClientPeerConnectionDispatcher d = new ClientPeerConnectionDispatcher(connection);
+            if (dispatchers.putIfAbsent(connection, d) == null) {
+                connection.register(d);
+            }
         }
-    }
-    
-    protected class ClientPeerConnectionDispatcher {
-        protected final ClientPeerConnection connection;
-        
-        public ClientPeerConnectionDispatcher(
-                ClientPeerConnection connection) {
-            this.connection = connection;
+
+        protected class ClientPeerConnectionDispatcher {
+            protected final ClientPeerConnection connection;
             
-            connection.register(this);
-        }
-        
-        @Subscribe
-        public void handleTransition(Automaton.Transition<?> event) {
-            if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                for (FrontendSessionExecutor handler: handlers.values()) {
-                    handler.handleTransition(connection.remoteAddress().getIdentifier(), event);
+            public ClientPeerConnectionDispatcher(
+                    ClientPeerConnection connection) {
+                this.connection = connection;
+            }
+            
+            @Subscribe
+            public void handleTransition(Automaton.Transition<?> event) {
+                if (Connection.State.CONNECTION_CLOSED == event.to()) {
+                    try {
+                        connection.unregister(this);
+                    } catch (IllegalArgumentException e) {}
+                    for (FrontendSessionExecutor e: executors.values()) {
+                        e.handleTransition(connection.remoteAddress().getIdentifier(), event);
+                    }
                 }
-                try {
-                    connection.unregister(this);
-                } catch (IllegalArgumentException e) {}
             }
-        }
-        
-        @Subscribe
-        public void handleMessage(MessagePacket message) {
-            switch (message.first().type()) {
-            case MESSAGE_TYPE_SESSION_RESPONSE:
-            {
-                MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
-                FrontendSessionExecutor handler = handlers.get(body.getSessionId());
-                handler.handleResponse(connection.remoteAddress().getIdentifier(), body.getResponse());
-                break;
-            }
-            default:
-                break;
+            
+            @Subscribe
+            public void handleMessage(MessagePacket message) {
+                switch (message.first().type()) {
+                case MESSAGE_TYPE_SESSION_RESPONSE:
+                {
+                    MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
+                    FrontendSessionExecutor e = executors.get(body.getSessionId());
+                    e.handleResponse(connection.remoteAddress().getIdentifier(), body.getResponse());
+                    break;
+                }
+                default:
+                    break;
+                }
             }
         }
     }
