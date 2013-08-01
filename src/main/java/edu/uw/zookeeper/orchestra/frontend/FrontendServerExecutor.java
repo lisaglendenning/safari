@@ -16,7 +16,7 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.Session;
-import edu.uw.zookeeper.orchestra.VolumeAssignmentService;
+import edu.uw.zookeeper.orchestra.AssignmentCacheService;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.event.SessionStateEvent;
 import edu.uw.zookeeper.net.Connection;
@@ -27,7 +27,7 @@ import edu.uw.zookeeper.orchestra.DependsOn;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.Volume;
-import edu.uw.zookeeper.orchestra.VolumeLookupService;
+import edu.uw.zookeeper.orchestra.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
@@ -66,7 +66,7 @@ import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.ServiceMonitor;
 import edu.uw.zookeeper.util.TaskExecutor;
 
-@DependsOn({EnsembleConnectionsService.class, VolumeLookupService.class, VolumeAssignmentService.class})
+@DependsOn({EnsembleConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
 public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {
@@ -105,8 +105,8 @@ public class FrontendServerExecutor extends DependentService {
         @Provides @Singleton
         public FrontendServerExecutor getServerExecutor(
                 ServiceLocator locator,
-                VolumeLookupService volumes,
-                VolumeAssignmentService assignments,
+                VolumeCacheService volumes,
+                AssignmentCacheService assignments,
                 PeerConnectionsService<?> peers,
                 EnsembleConnectionsService ensembles,
                 Executor executor,
@@ -125,8 +125,8 @@ public class FrontendServerExecutor extends DependentService {
     }
     
     public static FrontendServerExecutor newInstance(
-            VolumeLookupService volumes,
-            VolumeAssignmentService assignments,
+            VolumeCacheService volumes,
+            AssignmentCacheService assignments,
             PeerConnectionsService<?> peers,
             EnsembleConnectionsService ensembles,
             Executor executor,
@@ -236,8 +236,8 @@ public class FrontendServerExecutor extends DependentService {
         
         public static FrontendServerTaskExecutor newInstance(
                 ConcurrentMap<Long, FrontendSessionExecutor> handlers,
-                VolumeLookupService volumes,
-                VolumeAssignmentService assignments,
+                VolumeCacheService volumes,
+                AssignmentCacheService assignments,
                 EnsembleConnectionsService connections,
                 Executor executor,
                 ExpiringSessionTable sessions,

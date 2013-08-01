@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 
 import javax.annotation.Nullable;
@@ -11,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -27,11 +29,10 @@ import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.ServiceMonitor;
 
 @DependsOn(ControlMaterializerService.class)
-public class VolumeLookupService extends AbstractIdleService implements Reference<VolumeCache> {
+public class AssignmentCacheService extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -46,58 +47,53 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
         }
 
         @Provides @Singleton
-        public VolumeLookupService getVolumeLookupService(
+        public AssignmentCacheService getVolumeAssignmentService(
                 ControlMaterializerService<?> controlClient,
                 ServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
-            VolumeLookupService instance = new VolumeLookupService(controlClient.materializer());
+            AssignmentCacheService instance = new AssignmentCacheService(controlClient.materializer());
             monitor.addOnStart(instance);
             return instance;
         }
     }
     
-    public VolumeLookupService newInstance(
+    public AssignmentCacheService newInstance(
             Materializer<?,?> client) {
-        return new VolumeLookupService(client);
+        return new AssignmentCacheService(client);
     }
     
     protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
     protected final Materializer<?,?> client;
-    protected final VolumeCache volumes;
-    protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
+    protected final ConcurrentMap<Identifier, Identifier> assignments;
+    protected final CachedFunction<Identifier, Identifier> lookup;
     protected final UpdateFromCache updater;
     
-    public VolumeLookupService(
+    public AssignmentCacheService(
             Materializer<?,?> client) {
         this.logger = LoggerFactory.getLogger(getClass());
         this.client = client;
-        this.volumes = VolumeCache.newInstance();
+        this.assignments = new MapMaker().makeMap();
         this.lookup = CachedFunction.create(
-                new Function<ZNodeLabel.Path, Volume>() {
+                new Function<Identifier, Identifier>() {
                     @Override
                     public @Nullable
-                    Volume apply(@Nullable ZNodeLabel.Path input) {
-                        return get().get(input);
+                    Identifier apply(@Nullable Identifier input) {
+                        return assignments.get(input);
                     }
                 },
-                new AsyncFunction<ZNodeLabel.Path, Volume>() {
+                new AsyncFunction<Identifier, Identifier>() {
                     @Override
-                    public ListenableFuture<Volume> apply(ZNodeLabel.Path input)
+                    public ListenableFuture<Identifier> apply(Identifier input)
                             throws Exception {
                         // FIXME
-                        return Futures.immediateFuture(get().get(input));
+                        return Futures.immediateFuture(assignments.get(input));
                     }
                 });
         this.updater = new UpdateFromCache();
     }
-    
-    @Override
-    public VolumeCache get() {
-        return volumes;
-    }
-    
-    public CachedFunction<ZNodeLabel.Path, Volume> lookup() {
+
+    public CachedFunction<Identifier, Identifier> lookup() {
         return lookup;
     }
 
@@ -106,7 +102,7 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
         updater.initialize();
         
         if (logger.isInfoEnabled()) {
-            logger.info("{}", get());
+            logger.info("{}", assignments);
         }
     }
 
@@ -125,12 +121,11 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
             if (volumes != null) {
                 for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
                     Identifier volumeId = Identifier.valueOf(child.getKey().toString());
-                    Materializer.MaterializedNode volumeChild = child.getValue().get(ControlSchema.Volumes.Entity.Volume.LABEL);
-                    if (volumeChild != null) {
-                        VolumeDescriptor volumeDescriptor = (VolumeDescriptor) volumeChild.get().get();
-                        if (volumeDescriptor != null) {
-                            Volume volume = Volume.of(volumeId, volumeDescriptor);
-                            get().put(volume);
+                    Materializer.MaterializedNode assignmentChild = child.getValue().get(ControlSchema.Volumes.Entity.Ensemble.LABEL);
+                    if (assignmentChild != null) {
+                        Identifier assignment = (Identifier) assignmentChild.get().get();
+                        if (assignment != null) {
+                            assignments.put(volumeId, assignment);
                         }
                     }
                 }
@@ -146,17 +141,17 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
             }
             
             if (VOLUMES_PATH.equals(path)) {
-                get().clear();
+                assignments.clear();
             } else {
                 ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();
                 ZNodeLabel pathTail = path.tail();
                 if (VOLUMES_PATH.equals(pathHead)) {
                     Identifier volumeId = Identifier.valueOf(pathTail.toString());
-                    get().remove(volumeId);
+                    assignments.remove(volumeId);
                 } else {
                     Identifier volumeId = Identifier.valueOf(pathHead.tail().toString());
-                    if (ControlSchema.Volumes.Entity.Volume.LABEL.equals(pathTail)) {
-                        get().remove(volumeId);
+                    if (ControlSchema.Volumes.Entity.Ensemble.LABEL.equals(pathTail)) {
+                        assignments.remove(volumeId);
                     }
                 }
             }
@@ -175,13 +170,12 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
             ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
             if (! VOLUMES_PATH.equals(pointer.get().path())) {
                 Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());
-                if (ControlSchema.Volumes.Entity.Volume.LABEL.equals(pointer.label())) {
-                    VolumeDescriptor volumeDescriptor = (VolumeDescriptor) node.get().get();
-                    Volume volume = Volume.of(volumeId, volumeDescriptor);
-                    Volume prev = (volumeDescriptor == null) ? get().remove(volumeId) : get().put(volume);
+                if (ControlSchema.Volumes.Entity.Ensemble.LABEL.equals(pointer.label())) {
+                    Identifier assignment = (Identifier) node.get().get();
+                    Identifier prevAssignment = (assignment == null) ? assignments.remove(volumeId) : assignments.put(volumeId, assignment);
                     if (logger.isInfoEnabled()) {
-                        if (! Objects.equal(volume, prev)) {
-                            logger.info("{} -> {}", prev, volume);
+                        if (! Objects.equal(prevAssignment, assignment)) {
+                            logger.info("Assignment ({}) {} -> {}", volumeId, prevAssignment, assignment);
                         }
                     }
                 }

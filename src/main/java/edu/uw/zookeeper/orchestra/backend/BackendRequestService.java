@@ -31,7 +31,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.VolumeCache;
-import edu.uw.zookeeper.orchestra.VolumeLookupService;
+import edu.uw.zookeeper.orchestra.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
@@ -88,7 +88,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 ServiceLocator locator,
                 BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
                 PeerConnectionsService<?> peers,
-                VolumeLookupService volumes,
+                VolumeCacheService volumes,
                 DependentServiceMonitor monitor,
                 Executor executor) throws Exception {
             return monitor.add(BackendRequestService.newInstance(

@@ -85,6 +85,10 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                 shard = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) record).getPath()));
             } 
         }
+        if (shard == null) {
+            // TODO
+            throw new UnsupportedOperationException();
+        }
         record = translator.get(shard).apply(record);
         ShardedOperation.Request<?> sharded;
         if (request instanceof Records.Request) {

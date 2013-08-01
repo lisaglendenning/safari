@@ -4,6 +4,7 @@ import com.google.common.base.Function;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
+import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Pair;
 
 // TODO: what about volume changes?
@@ -41,5 +42,16 @@ public class VolumeShardedOperationTranslators extends ShardedOperationTranslato
 
     public VolumeShardedOperationTranslators(Function<Identifier, Volume> lookup) {
         super(new VolumePrefix(lookup));
+    }
+    
+    @Override
+    protected OperationPrefixTranslator newTranslator(Identifier id) {
+        if (id.equals(Identifier.zero())) {
+            return OperationPrefixTranslator.create(
+                    RecordPrefixTranslator.<Records.Request>none(), 
+                    RecordPrefixTranslator.<Records.Response>none());
+        } else {
+            return super.newTranslator(id);
+        }
     }
 }

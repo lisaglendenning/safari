@@ -9,6 +9,10 @@ import edu.uw.zookeeper.util.AbstractPair;
 
 public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPair<ZNodeLabel.Path, ZNodeLabel.Path> implements Function<T,T> {
 
+    public static <T extends Records.Coded> RecordPrefixTranslator<T> none() {
+        return new NoPrefix<T>();
+    }
+    
     public static <T extends Records.Coded> RecordPrefixTranslator<T> of(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
         return new RecordPrefixTranslator<T>(fromPrefix, toPrefix);
     }
@@ -48,5 +52,17 @@ public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPai
             }
         }
         return output;
+    }
+    
+    public static class NoPrefix<T extends Records.Coded> extends RecordPrefixTranslator<T> {
+
+        public NoPrefix() {
+            super(ZNodeLabel.Path.root(), ZNodeLabel.Path.root());
+        }
+
+        @Override
+        public T apply(T input) {
+            return input;
+        }
     }
 }

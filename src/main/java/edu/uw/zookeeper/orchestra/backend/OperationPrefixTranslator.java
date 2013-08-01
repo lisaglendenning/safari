@@ -12,13 +12,23 @@ import edu.uw.zookeeper.util.AbstractPair;
 
 public class OperationPrefixTranslator extends AbstractPair<RecordPrefixTranslator<Records.Request>, RecordPrefixTranslator<Records.Response>> {
 
-    public static OperationPrefixTranslator of(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
-        return new OperationPrefixTranslator(fromPrefix, toPrefix);
-    }
-    
-    public OperationPrefixTranslator(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
-        super(RecordPrefixTranslator.<Records.Request>of(fromPrefix, toPrefix),
+    public static OperationPrefixTranslator create(
+            ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
+        return create(
+                RecordPrefixTranslator.<Records.Request>of(fromPrefix, toPrefix),
                 RecordPrefixTranslator.<Records.Response>of(toPrefix, fromPrefix));
+    }
+
+    public static OperationPrefixTranslator create(
+            RecordPrefixTranslator<Records.Request> forward, 
+            RecordPrefixTranslator<Records.Response> reverse) {
+        return new OperationPrefixTranslator(forward, reverse);
+    }
+        
+    public OperationPrefixTranslator(
+            RecordPrefixTranslator<Records.Request> forward, 
+            RecordPrefixTranslator<Records.Response> reverse) {
+        super(forward, reverse);
     }
     
     public RecordPrefixTranslator<Records.Request> forward() {

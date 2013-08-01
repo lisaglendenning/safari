@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.MapMaker;
 
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -45,8 +46,8 @@ public class VolumeCache {
     }
 
     public Volume get(ZNodeLabel.Path path) {
-        Volume volume = null;
         VolumeLookupNode node = asTrie().longestPrefix(path);
+        Volume volume = null;
         while ((volume == null) && (node != null) && node.path().prefixOf(path)) {
             volume = node.get();
             node = node.parent().isPresent() ? node.parent().get().get() : null;
@@ -99,7 +100,9 @@ public class VolumeCache {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).addValue(asTrie()).toString();
+        return Objects.toStringHelper(this)
+                .addValue(Iterators.toString(asTrie().iterator()))
+                .toString();
     }
     
     protected static class VolumeLookupNode extends ZNodeLabelTrie.DefaultsNode<VolumeLookupNode> implements Reference<Volume> {
@@ -139,6 +142,15 @@ public class VolumeCache {
             } else {
                 return set(volume);
             }
+        }
+
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this)
+                    .add("path", path())
+                    .add("children", keySet())
+                    .add("volume", get())
+                    .toString();
         }
 
         protected VolumeLookupNode newChild(ZNodeLabel.Component label) {

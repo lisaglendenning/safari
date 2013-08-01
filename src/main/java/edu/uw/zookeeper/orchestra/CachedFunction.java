@@ -10,12 +10,12 @@ import edu.uw.zookeeper.util.Pair;
 public class CachedFunction<I,O> extends Pair<Function<I,O>, AsyncFunction<I,O>> implements AsyncFunction<I,O> {
 
     public static <I,O> CachedFunction<I,O> create(
-            Function<I, O> first, AsyncFunction<I, O> second) {
+            Function<I,O> first, AsyncFunction<I,O> second) {
         return new CachedFunction<I,O>(first, second);
     }
     
     public CachedFunction(
-            Function<I, O> first, AsyncFunction<I, O> second) {
+            Function<I,O> first, AsyncFunction<I,O> second) {
         super(first, second);
     }
 

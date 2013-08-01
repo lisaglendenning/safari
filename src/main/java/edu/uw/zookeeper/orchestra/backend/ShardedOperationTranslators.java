@@ -23,8 +23,7 @@ public class ShardedOperationTranslators {
     public OperationPrefixTranslator get(Identifier id) {
         OperationPrefixTranslator translator = translators.get(id);
         if (translator == null) {
-            Pair<ZNodeLabel.Path, ZNodeLabel.Path> prefixes = prefix.apply(id);
-            translators.putIfAbsent(id, OperationPrefixTranslator.of(prefixes.first(), prefixes.second()));
+            translators.putIfAbsent(id, newTranslator(id));
             translator = translators.get(id);
         }
         return translator;
@@ -32,5 +31,10 @@ public class ShardedOperationTranslators {
     
     public OperationPrefixTranslator remove(Identifier id) {
         return translators.remove(id);
+    }
+    
+    protected OperationPrefixTranslator newTranslator(Identifier id) {
+        Pair<ZNodeLabel.Path, ZNodeLabel.Path> prefixes = prefix.apply(id);
+        return OperationPrefixTranslator.create(prefixes.first(), prefixes.second());
     }
 }

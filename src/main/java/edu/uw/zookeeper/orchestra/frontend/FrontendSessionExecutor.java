@@ -70,6 +70,7 @@ import edu.uw.zookeeper.protocol.server.PingProcessor;
 import edu.uw.zookeeper.util.AbstractActor;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.FutureQueue;
+import edu.uw.zookeeper.util.LoggingPromise;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Processors;
 import edu.uw.zookeeper.util.Promise;
@@ -549,7 +550,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         public RequestTask(
                 Message.ClientRequest<Records.Request> task,
                 Promise<Message.ServerResponse<Records.Response>> delegate) {
-            super(task, delegate);
+            super(task, LoggingPromise.create(logger, delegate));
             this.state = new AtomicReference<FrontendSessionExecutor.RequestState>(RequestState.NEW);
         }
 
@@ -564,12 +565,8 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             if (RequestState.COMPLETE.compareTo(state) > 0) {
                 this.state.compareAndSet(state, RequestState.COMPLETE);
             }
-            
-            boolean isSet = super.set(result);
-            if (logger.isTraceEnabled()) {
-                logger.trace("Set {} -> {}", this, result);
-            }
-            return isSet;
+
+            return super.set(result);
         }
         
         @Override
@@ -772,7 +769,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 return Optional.of(volumes);
             } else {
                 if (logger.isTraceEnabled()) {
-                    logger.trace("Waiting for path lookup {}", difference);
+                    logger.trace("Waiting for path lookups {}", difference);
                 }
                 return Optional.<Map<ZNodeLabel.Path, Volume>>absent();
             }
@@ -888,7 +885,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 return Optional.of(backends);
             } else {
                 if (logger.isTraceEnabled()) {
-                    logger.trace("Waiting for volume lookup {}", difference);
+                    logger.trace("Waiting for volume connections {}", difference);
                 }
                 return Optional.absent();
             }
@@ -1048,7 +1045,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     ShardedRequestMessage<?> request,
                     ListenableFuture<MessagePacket> future,
                     Promise<ShardedResponseMessage<?>> delegate) {
-                super(request, delegate);
+                super(request, LoggingPromise.create(logger, delegate));
                 this.future = future;
                 Futures.addCallback(future, this);
             }
