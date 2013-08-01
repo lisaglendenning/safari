@@ -37,7 +37,8 @@ import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.Orchestra;
 import edu.uw.zookeeper.orchestra.control.Orchestra.Ensembles.Entity;
-import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Automatons;
 import edu.uw.zookeeper.util.Pair;
@@ -104,11 +105,11 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected void startUp() throws Exception {      
         super.startUp();
         
-        Materializer<?,?> materializer = control.materializer();
-        Materializer<?,?>.Operator operator = materializer.operator();
+        Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> materializer = control.materializer();
+        Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>.Operator operator = materializer.operator();
 
         // Register my identifier
-        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.create(Control.path(myMember.parent())).submit().get();
+        Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> result = operator.create(Control.path(myMember.parent())).submit().get();
         Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
         result = operator.create(myMember.path()).submit().get();
         Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());

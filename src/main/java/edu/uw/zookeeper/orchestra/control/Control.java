@@ -68,7 +68,7 @@ public abstract class Control {
         return ControlZNode.path(element);
     }
     
-    public static void createPrefix(Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+    public static <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> void createPrefix(Materializer<T,V> materializer) throws InterruptedException, ExecutionException, KeeperException {
         // The prefix is small enough that there's no need to get fancy here
         final Predicate<Schema.SchemaNode> isPrefix = new Predicate<Schema.SchemaNode>() {
             @Override
@@ -84,10 +84,10 @@ public abstract class Control {
             }
         };
         
-        Materializer<?,?>.Operator operator = materializer.operator();
+        Materializer<T,V>.Operator operator = materializer.operator();
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
-            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = operator.exists(node.path()).submit().get();
+            Pair<T,V> result = operator.exists(node.path()).submit().get();
             Optional<Operation.Error> error = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
             if (error.isPresent()) {
                 result = operator.create(node.path()).submit().get();

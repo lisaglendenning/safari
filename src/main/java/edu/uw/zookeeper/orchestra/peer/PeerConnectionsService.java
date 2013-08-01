@@ -156,7 +156,6 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
     }
 
     protected final Identifier identifier;
-    protected final Materializer<?,?> control;
     protected final ServerPeerConnections servers;
     protected final ClientPeerConnections clients;
     
@@ -167,9 +166,8 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
             Materializer<?,?> control) {
         this.identifier = identifier;
-        this.control = control;
         this.servers = new ServerPeerConnections(serverConnectionFactory);
-        this.clients = new ClientPeerConnections(clientConnectionFactory);
+        this.clients = new ClientPeerConnections(control, clientConnectionFactory);
         
         servers.put(new ServerPeerConnection(identifier, identifier, loopback.first()));
         clients.put(new ClientPeerConnection(identifier, identifier, loopback.second()));
@@ -341,6 +339,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         protected final CachedFunction<Identifier, Orchestra.Peers.Entity.PeerAddress> lookup;
         
         public ClientPeerConnections(
+                Materializer<?,?> control,
                 ClientConnectionFactory<? super MessagePacket, C> connections) {
             super(connections);
             this.lookup = Orchestra.Peers.Entity.PeerAddress.lookup(control);

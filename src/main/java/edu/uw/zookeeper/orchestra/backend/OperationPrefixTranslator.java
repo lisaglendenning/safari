@@ -1,5 +1,9 @@
 package edu.uw.zookeeper.orchestra.backend;
 
+import java.util.List;
+
+import com.google.common.collect.Lists;
+
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
@@ -28,11 +32,11 @@ public class OperationPrefixTranslator extends AbstractPair<RecordPrefixTranslat
     public Records.Request apply(Records.Request input) {
         Records.Request output = input;
         if (input instanceof IMultiRequest) {
-            IMultiRequest multi = new IMultiRequest();
+            List<Records.MultiOpRequest> ops = Lists.newArrayListWithExpectedSize(((IMultiRequest) input).size());
             for (Records.MultiOpRequest e: (IMultiRequest) input) {
-                multi.add((Records.MultiOpRequest) forward().apply(e));
+                ops.add((Records.MultiOpRequest) forward().apply(e));
             }
-            output = multi;
+            output = new IMultiRequest(ops);
         } else {
             output = forward().apply(input);
         }
@@ -42,11 +46,11 @@ public class OperationPrefixTranslator extends AbstractPair<RecordPrefixTranslat
     public Records.Response apply(Records.Response input) {
         Records.Response output = input;
         if (input instanceof IMultiResponse) {
-            IMultiResponse multi = new IMultiResponse();
-            for (Records.MultiOpResponse e: (IMultiResponse)input) {
-                multi.add((Records.MultiOpResponse) reverse().apply(e));
+            List<Records.MultiOpResponse> ops = Lists.newArrayListWithExpectedSize(((IMultiResponse) input).size());
+            for (Records.MultiOpResponse e: (IMultiResponse) input) {
+                ops.add((Records.MultiOpResponse) reverse().apply(e));
             }
-            output = multi;
+            output = new IMultiResponse(ops);
         } else {
             output = reverse().apply(input);
         }

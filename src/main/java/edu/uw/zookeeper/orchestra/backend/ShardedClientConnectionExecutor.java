@@ -72,36 +72,29 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     
     @SuppressWarnings("unchecked")
     public ShardedOperation.Request<?> shard(Operation.Request request) {
-        ShardedOperation.Request<?> sharded;
-        if (request instanceof ShardedOperation.Request) {
-            sharded = (ShardedOperation.Request<?>) request;
+        Records.Request record = (request instanceof Records.Request) ?
+                (Records.Request) request :
+                ((Operation.RecordHolder<Records.Request>) request).getRecord();
+        Identifier shard = Identifier.zero();
+        if (request instanceof ShardedOperation) {
+            shard = ((ShardedOperation) request).getIdentifier();
         } else {
-            Records.Request record = (request instanceof Records.Request)
-                    ? (Records.Request) request 
-                            : ((Operation.ProtocolRequest<?>) request).getRecord();
-
-            Identifier id = null;
             if (record instanceof IMultiRequest) {
-                // TODO
                 throw new UnsupportedOperationException();
             } else if (record instanceof Records.PathGetter) {
-                id = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) record).getPath()));
+                shard = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) record).getPath()));
             } 
-            Operation.Request translated = request;
-            if (id != null) {
-                record = translator.get(id).apply(record);
-                if (request instanceof Records.Request) {
-                    translated = record;
-                } else {
-                    translated = ProtocolRequestMessage.of(
-                            ((Operation.ProtocolRequest<?>) request).getXid(), record);
-                }
-            } 
-            if (translated instanceof Message.ClientRequest) {
-                sharded = ShardedRequestMessage.of(id, (Message.ClientRequest<Records.Request>) translated);
-            } else {
-                sharded = ShardedRequest.of(id, translated);
-            }
+        }
+        record = translator.get(shard).apply(record);
+        ShardedOperation.Request<?> sharded;
+        if (request instanceof Records.Request) {
+            sharded = ShardedRequest.of(
+                    shard, record);
+        } else {
+            sharded = ShardedRequestMessage.of(
+                    shard,
+                    ProtocolRequestMessage.of(
+                        ((Operation.ProtocolRequest<?>) request).getXid(), record));
         }
         return sharded;
     }

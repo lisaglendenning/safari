@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra.backend;
 
-import java.util.Map.Entry;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
@@ -53,10 +52,10 @@ import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Automaton;
+import edu.uw.zookeeper.util.Factories;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
-import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.SettableFuturePromise;
 import edu.uw.zookeeper.util.TimeValue;
 
@@ -83,11 +82,12 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendRequestService(
                 ServiceLocator locator,
                 BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
+                PeerConnectionsService<?> peers,
                 VolumeLookupService volumes,
                 DependentServiceMonitor monitor,
                 Executor executor) throws Exception {
             return monitor.add(BackendRequestService.newInstance(
-                    locator, volumes.get(), connections, executor));
+                    locator, volumes.get(), connections, peers.servers(), executor));
         }
     }
     
@@ -95,6 +95,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             ServiceLocator locator,
             final VolumeCache volumes,
             BackendConnectionsService<C> connections,
+            PeerConnectionsService<?>.ServerPeerConnections peers,
             Executor executor) {
 
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
@@ -111,22 +112,24 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                     }
                 });
         BackendRequestService<C> instance = new BackendRequestService<C>(
-                locator, connections, lookup, translator, executor);
+                locator, connections, peers, lookup, translator, executor);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
 
     protected final BackendConnectionsService<C> connections;
     protected final ConcurrentMap<ServerPeerConnection, ServerPeerConnectionListener> peers;
-    protected final ConcurrentMap<Long, ServerPeerConnectionListener.BackendClient> clients;
+    protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendClient> clients;
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     protected final ConnectionTask connectionTask;
     protected final Executor executor;
+    protected final ServerPeerConnectionListener listener;
     
     protected BackendRequestService(
             ServiceLocator locator,
             BackendConnectionsService<C> connections,
+            PeerConnectionsService<?>.ServerPeerConnections peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ShardedOperationTranslators translator,
             Executor executor) {
@@ -138,33 +141,23 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         this.translator = translator;
         this.connectionTask = new ConnectionTask();
         this.executor = executor;
+        this.listener = new ServerPeerConnectionListener(peers);
     }
     
-    public ServerPeerConnectionListener.BackendClient get(Long sessionId) {
+    public ServerPeerConnectionDispatcher.BackendClient get(Long sessionId) {
         return clients.get(sessionId);
-    }
-
-    @Subscribe
-    public void handleServerPeerConnection(ServerPeerConnection peer) {
-        new ServerPeerConnectionListener(peer);
     }
 
     @Override
     protected void startUp() throws Exception {
         super.startUp();
         
-        PeerConnectionsService<?> peers = locator().getInstance(PeerConnectionsService.class);
-        peers.servers().register(this);
-        for (Entry<Identifier, ServerPeerConnection> e: peers.servers().entrySet()) {
-            handleServerPeerConnection(e.getValue());
-        }
+        listener.start();
     }
     
     @Override
     protected void shutDown() throws Exception {
-        try {
-            locator().getInstance(PeerConnectionsService.class).servers().unregister(this);
-        } catch (IllegalArgumentException e) {}
+        listener.stop();
         
         super.shutDown();
     }
@@ -253,21 +246,53 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
     }
 
-    protected class ServerPeerConnectionListener implements Reference<ServerPeerConnection> {
-    
-        protected final ServerPeerConnection peer;
+    protected class ServerPeerConnectionListener {
         
-        public ServerPeerConnectionListener(ServerPeerConnection peer) {
-            this.peer = peer;
-            if (peers.putIfAbsent(peer, this) == null) {
-                peer.register(this);
-            }
-            // TODO: remove from map when peer closes?
+        protected final PeerConnectionsService<?>.ServerPeerConnections connections;
+        protected final ConcurrentMap<ServerPeerConnection, ServerPeerConnectionDispatcher> dispatchers;
+        
+        public ServerPeerConnectionListener(
+                PeerConnectionsService<?>.ServerPeerConnections connections) {
+            this.connections = connections;
+            this.dispatchers = new MapMaker().makeMap();
         }
         
-        @Override
-        public ServerPeerConnection get() {
-            return peer;
+        public void start() {
+            connections.register(this);
+            for (ServerPeerConnection c: connections) {
+                handleConnection(c);
+            }
+        }
+        
+        public void stop() {
+            try {
+                connections.unregister(this);
+            } catch (IllegalArgumentException e) {}
+        }
+        
+        @Subscribe
+        public void handleConnection(ServerPeerConnection connection) {
+            ServerPeerConnectionDispatcher d = new ServerPeerConnectionDispatcher(connection);
+            if (dispatchers.putIfAbsent(connection, d) == null) {
+                connection.register(d);
+            }
+        }
+    }
+    
+    protected class ServerPeerConnectionDispatcher extends Factories.Holder<ServerPeerConnection> {
+    
+        public ServerPeerConnectionDispatcher(ServerPeerConnection connection) {
+            super(connection);
+        }
+
+        @Subscribe
+        public void handleTransition(Automaton.Transition<?> event) {
+            if (Connection.State.CONNECTION_CLOSED == event.to()) {
+                try {
+                    get().unregister(this);
+                } catch (IllegalArgumentException e) {}
+                listener.dispatchers.remove(get(), this);
+            }
         }
         
         @Subscribe

@@ -54,6 +54,7 @@ import edu.uw.zookeeper.server.SessionParametersPolicy;
 import edu.uw.zookeeper.server.SessionTable;
 import edu.uw.zookeeper.util.Automaton;
 import edu.uw.zookeeper.util.Configuration;
+import edu.uw.zookeeper.util.Factories;
 import edu.uw.zookeeper.util.Factory;
 import edu.uw.zookeeper.util.Generator;
 import edu.uw.zookeeper.util.Pair;
@@ -166,6 +167,14 @@ public class FrontendServerExecutor extends DependentService {
         super.startUp();
         
         connections.start();
+    }
+
+    
+    @Override
+    protected void shutDown() throws Exception {
+        super.shutDown();
+        
+        connections.stop();
     }
     
     protected static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> {
@@ -382,6 +391,12 @@ public class FrontendServerExecutor extends DependentService {
             }
         }
         
+        public void stop() {
+            try {
+                connections.unregister(this);
+            } catch (IllegalArgumentException e) {}
+        }
+        
         @Subscribe
         public void handleConnection(ClientPeerConnection connection) {
             ClientPeerConnectionDispatcher d = new ClientPeerConnectionDispatcher(connection);
@@ -390,22 +405,22 @@ public class FrontendServerExecutor extends DependentService {
             }
         }
 
-        protected class ClientPeerConnectionDispatcher {
-            protected final ClientPeerConnection connection;
-            
+        protected class ClientPeerConnectionDispatcher extends Factories.Holder<ClientPeerConnection> {
+
             public ClientPeerConnectionDispatcher(
                     ClientPeerConnection connection) {
-                this.connection = connection;
+                super(connection);
             }
-            
+
             @Subscribe
             public void handleTransition(Automaton.Transition<?> event) {
                 if (Connection.State.CONNECTION_CLOSED == event.to()) {
                     try {
-                        connection.unregister(this);
+                        get().unregister(this);
                     } catch (IllegalArgumentException e) {}
+                    dispatchers.remove(get(), this);
                     for (FrontendSessionExecutor e: executors.values()) {
-                        e.handleTransition(connection.remoteAddress().getIdentifier(), event);
+                        e.handleTransition(get().remoteAddress().getIdentifier(), event);
                     }
                 }
             }
@@ -417,7 +432,7 @@ public class FrontendServerExecutor extends DependentService {
                 {
                     MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
                     FrontendSessionExecutor e = executors.get(body.getSessionId());
-                    e.handleResponse(connection.remoteAddress().getIdentifier(), body.getResponse());
+                    e.handleResponse(get().remoteAddress().getIdentifier(), body.getResponse());
                     break;
                 }
                 default:
