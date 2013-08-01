@@ -36,16 +36,20 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Pair;
 import edu.uw.zookeeper.util.Promise;
 import edu.uw.zookeeper.util.PromiseTask;
+import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.SettableFuturePromise;
 
-public abstract class Orchestra extends Control.ControlZNode {
+public abstract class ControlSchema extends Control.ControlZNode {
     
     @Label
     public static final ZNodeLabel.Path ROOT = ZNodeLabel.Path.of("/orchestra");
     
-    @ZNode(label="peers")
+    @ZNode()
     public static abstract class Peers extends Control.ControlZNode {
 
+        @Label
+        public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peers");
+        
         @ZNode
         public static class Entity extends Control.TypedLabelZNode<Identifier> {
 
@@ -56,31 +60,31 @@ public abstract class Orchestra extends Control.ControlZNode {
                     final ServerInetAddressView value, 
                     final Materializer<I,O> materializer,
                     final Executor executor) {
-                Control.RegisterHashedTask<I, O, ServerInetAddressView, Orchestra.Peers.Entity> task = 
+                Control.RegisterHashedTask<I, O, ServerInetAddressView, ControlSchema.Peers.Entity> task = 
                         Control.RegisterHashedTask.of(
                                 value,
-                                Orchestra.Peers.Entity.hashOf(value),
-                                new Function<Identifier, Orchestra.Peers.Entity>() {
+                                ControlSchema.Peers.Entity.hashOf(value),
+                                new Function<Identifier, ControlSchema.Peers.Entity>() {
                                     @Override
                                     @Nullable
                                     public
                                     Peers.Entity apply(@Nullable Identifier input) {
-                                        return Orchestra.Peers.Entity.of(input);
+                                        return ControlSchema.Peers.Entity.of(input);
                                     }
                                 },
-                                new Function<Orchestra.Peers.Entity, ZNodeLabel.Path>() {
+                                new Function<ControlSchema.Peers.Entity, ZNodeLabel.Path>() {
                                     @Override
                                     @Nullable
                                     public
                                     ZNodeLabel.Path apply(@Nullable Peers.Entity input) {
-                                        return Orchestra.Peers.Entity.PeerAddress.pathOf(input);
+                                        return ControlSchema.Peers.Entity.PeerAddress.pathOf(input);
                                     }
                                 },
-                                new AsyncFunction<Orchestra.Peers.Entity, Orchestra.Peers.Entity.PeerAddress>() {
+                                new AsyncFunction<ControlSchema.Peers.Entity, ControlSchema.Peers.Entity.PeerAddress>() {
                                     @Override
-                                    public ListenableFuture<Orchestra.Peers.Entity.PeerAddress> apply(
+                                    public ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> apply(
                                             Peers.Entity input) {
-                                        return Orchestra.Peers.Entity.PeerAddress.get(input, materializer);
+                                        return ControlSchema.Peers.Entity.PeerAddress.get(input, materializer);
                                     }
                                 },
                                 materializer, 
@@ -327,31 +331,31 @@ public abstract class Orchestra extends Control.ControlZNode {
                     final EnsembleView<ServerInetAddressView> value, 
                     final Materializer<I,O> materializer,
                     final Executor executor) {
-                Control.RegisterHashedTask<I, O, EnsembleView<ServerInetAddressView>, Orchestra.Ensembles.Entity> task = 
+                Control.RegisterHashedTask<I, O, EnsembleView<ServerInetAddressView>, ControlSchema.Ensembles.Entity> task = 
                         Control.RegisterHashedTask.of(
                                 value,
-                                Orchestra.Ensembles.Entity.hashOf(value),
-                                new Function<Identifier, Orchestra.Ensembles.Entity>() {
+                                ControlSchema.Ensembles.Entity.hashOf(value),
+                                new Function<Identifier, ControlSchema.Ensembles.Entity>() {
                                     @Override
                                     @Nullable
                                     public
                                     Ensembles.Entity apply(@Nullable Identifier input) {
-                                        return Orchestra.Ensembles.Entity.of(input);
+                                        return ControlSchema.Ensembles.Entity.of(input);
                                     }
                                 },
-                                new Function<Orchestra.Ensembles.Entity, ZNodeLabel.Path>() {
+                                new Function<ControlSchema.Ensembles.Entity, ZNodeLabel.Path>() {
                                     @Override
                                     @Nullable
                                     public
                                     ZNodeLabel.Path apply(@Nullable Ensembles.Entity input) {
-                                        return Orchestra.Ensembles.Entity.Backend.pathOf(input);
+                                        return ControlSchema.Ensembles.Entity.Backend.pathOf(input);
                                     }
                                 },
-                                new AsyncFunction<Orchestra.Ensembles.Entity, Orchestra.Ensembles.Entity.Backend>() {
+                                new AsyncFunction<ControlSchema.Ensembles.Entity, ControlSchema.Ensembles.Entity.Backend>() {
                                     @Override
-                                    public ListenableFuture<Orchestra.Ensembles.Entity.Backend> apply(
+                                    public ListenableFuture<ControlSchema.Ensembles.Entity.Backend> apply(
                                             Ensembles.Entity input) {
-                                        return Orchestra.Ensembles.Entity.Backend.get(input, materializer);
+                                        return ControlSchema.Ensembles.Entity.Backend.get(input, materializer);
                                     }
                                 },
                                 materializer, 
@@ -609,31 +613,31 @@ public abstract class Orchestra extends Control.ControlZNode {
                     final VolumeDescriptor value, 
                     final Materializer<I,O> materializer,
                     final Executor executor) {
-                Control.RegisterHashedTask<I, O, VolumeDescriptor, Orchestra.Volumes.Entity> task = 
+                Control.RegisterHashedTask<I, O, VolumeDescriptor, ControlSchema.Volumes.Entity> task = 
                         Control.RegisterHashedTask.of(
                                 value,
-                                Orchestra.Volumes.Entity.hashOf(value),
-                                new Function<Identifier, Orchestra.Volumes.Entity>() {
+                                ControlSchema.Volumes.Entity.hashOf(value),
+                                new Function<Identifier, ControlSchema.Volumes.Entity>() {
                                     @Override
                                     @Nullable
                                     public
                                     Volumes.Entity apply(@Nullable Identifier input) {
-                                        return Orchestra.Volumes.Entity.of(input);
+                                        return ControlSchema.Volumes.Entity.of(input);
                                     }
                                 },
-                                new Function<Orchestra.Volumes.Entity, ZNodeLabel.Path>() {
+                                new Function<ControlSchema.Volumes.Entity, ZNodeLabel.Path>() {
                                     @Override
                                     @Nullable
                                     public
                                     ZNodeLabel.Path apply(@Nullable Volumes.Entity input) {
-                                        return Orchestra.Volumes.Entity.Volume.pathOf(input);
+                                        return ControlSchema.Volumes.Entity.Volume.pathOf(input);
                                     }
                                 },
-                                new AsyncFunction<Orchestra.Volumes.Entity, Orchestra.Volumes.Entity.Volume>() {
+                                new AsyncFunction<ControlSchema.Volumes.Entity, ControlSchema.Volumes.Entity.Volume>() {
                                     @Override
-                                    public ListenableFuture<Orchestra.Volumes.Entity.Volume> apply(
+                                    public ListenableFuture<ControlSchema.Volumes.Entity.Volume> apply(
                                             Volumes.Entity input) {
-                                        return Orchestra.Volumes.Entity.Volume.get(input, materializer);
+                                        return ControlSchema.Volumes.Entity.Volume.get(input, materializer);
                                     }
                                 },
                                 materializer, 
@@ -714,4 +718,26 @@ public abstract class Orchestra extends Control.ControlZNode {
             }
         }            
     }
-}
+    
+    public static SchemaInstance getInstance() {
+        return Holder.getInstance().get();
+    }
+    
+    public static enum Holder implements Reference<SchemaInstance> {
+        SCHEMA(ControlSchema.class);
+        
+        public static Holder getInstance() {
+            return SCHEMA;
+        }
+        
+        private final SchemaInstance instance;
+        
+        private Holder(Object root) {
+            this.instance = SchemaInstance.newInstance(root);
+        }
+    
+        @Override
+        public SchemaInstance get() {
+            return instance;
+        }
+    }}

@@ -35,7 +35,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.EnsembleConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
@@ -98,9 +98,9 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     protected final PeerConnectionsService<?> peerConnections;
     protected final Cache<Identifier, Identifier> peerToEnsemble;
     protected final Cache<Identifier, Identifier> selectedPeers;
-    protected final CachedFunction<Identifier, List<Orchestra.Ensembles.Entity.Peers.Member>> memberLookup;
+    protected final CachedFunction<Identifier, List<ControlSchema.Ensembles.Entity.Peers.Member>> memberLookup;
     protected final CachedFunction<Identifier, Identifier> selectPeers;
-    protected final AsyncFunction<List<Orchestra.Ensembles.Entity.Peers.Member>, Identifier> selectMemberFunction;
+    protected final AsyncFunction<List<ControlSchema.Ensembles.Entity.Peers.Member>, Identifier> selectMemberFunction;
     protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectFunction;
     protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> ensembleConnections;
     protected final UpdatePeersFromCache updater;
@@ -119,7 +119,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         this.peerToEnsemble = new Cache<Identifier, Identifier>(new MapMaker().<Identifier, Identifier>makeMap());
         this.selectedPeers = new Cache<Identifier, Identifier>(new MapMaker().<Identifier, Identifier>makeMap());
         selectedPeers.get().put(myEnsemble, myId);
-        this.memberLookup = Orchestra.Ensembles.Entity.Peers.getMembers(controlClient.materializer());
+        this.memberLookup = ControlSchema.Ensembles.Entity.Peers.getMembers(controlClient.materializer());
         this.selectMemberFunction = SelectMemberTask.of(controlClient.materializer());
         this.selectPeers = CachedFunction.create(
                 selectedPeers, 
@@ -197,13 +197,13 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         updater.initialize();
         
         Futures.transform(
-                Orchestra.Ensembles.getEnsembles(control.materializer()), 
-                new AsyncFunction<List<Orchestra.Ensembles.Entity>, List<ClientPeerConnection<Connection<? super MessagePacket>>>>() {
+                ControlSchema.Ensembles.getEnsembles(control.materializer()), 
+                new AsyncFunction<List<ControlSchema.Ensembles.Entity>, List<ClientPeerConnection<Connection<? super MessagePacket>>>>() {
                     @Override
-                    public ListenableFuture<List<ClientPeerConnection<Connection<? super MessagePacket>>>> apply(List<Orchestra.Ensembles.Entity> input)
+                    public ListenableFuture<List<ClientPeerConnection<Connection<? super MessagePacket>>>> apply(List<ControlSchema.Ensembles.Entity> input)
                             throws Exception {
                         List<ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>>> futures = Lists.newArrayListWithCapacity(input.size());
-                        for (Orchestra.Ensembles.Entity e: input) {
+                        for (ControlSchema.Ensembles.Entity e: input) {
                             futures.add(Futures.transform(
                                     selectPeers.second().apply(e.get()), 
                                     ensembleConnections));
@@ -237,31 +237,31 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         }
     }
 
-    public static class SelectMemberTask implements AsyncFunction<List<Orchestra.Ensembles.Entity.Peers.Member>, Identifier> {
+    public static class SelectMemberTask implements AsyncFunction<List<ControlSchema.Ensembles.Entity.Peers.Member>, Identifier> {
 
         public static SelectMemberTask of(
                 ClientExecutor<? super Records.Request, ?, ?> client) {
             return new SelectMemberTask(
                     client,
-                    new SelectRandom<Orchestra.Ensembles.Entity.Peers.Member>());
+                    new SelectRandom<ControlSchema.Ensembles.Entity.Peers.Member>());
         }
         
         protected final ClientExecutor<? super Records.Request, ?, ?> client;
-        protected final Function<List<Orchestra.Ensembles.Entity.Peers.Member>, Orchestra.Ensembles.Entity.Peers.Member> selector;
+        protected final Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector;
         
         public SelectMemberTask(
                 ClientExecutor<? super Records.Request, ?, ?> client,
-                Function<List<Orchestra.Ensembles.Entity.Peers.Member>, Orchestra.Ensembles.Entity.Peers.Member> selector) {
+                Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector) {
             this.client = client;
             this.selector = selector;
         }
         
         @Override
         public ListenableFuture<Identifier> apply(
-                List<Orchestra.Ensembles.Entity.Peers.Member> members) {
+                List<ControlSchema.Ensembles.Entity.Peers.Member> members) {
             List<ListenableFuture<Boolean>> presence = Lists.newArrayListWithCapacity(members.size());
-            for (Orchestra.Ensembles.Entity.Peers.Member e: members) {
-                presence.add(Orchestra.Peers.Entity.of(e.get()).presence().exists(client));
+            for (ControlSchema.Ensembles.Entity.Peers.Member e: members) {
+                presence.add(ControlSchema.Peers.Entity.of(e.get()).presence().exists(client));
             }
             ListenableFuture<List<Boolean>> future = Futures.successfulAsList(presence);
             return Futures.transform(future, SelectPresentMemberFunction.of(members, selector));
@@ -271,36 +271,36 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     public static class SelectPresentMemberFunction implements Function<List<Boolean>, Identifier> {
 
         public static SelectPresentMemberFunction of(
-                List<Orchestra.Ensembles.Entity.Peers.Member> members,
-                Function<List<Orchestra.Ensembles.Entity.Peers.Member>, Orchestra.Ensembles.Entity.Peers.Member> selector) {
+                List<ControlSchema.Ensembles.Entity.Peers.Member> members,
+                Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector) {
             return new SelectPresentMemberFunction(members, selector);
         }
         
-        protected final List<Orchestra.Ensembles.Entity.Peers.Member> members;
-        protected final Function<List<Orchestra.Ensembles.Entity.Peers.Member>, Orchestra.Ensembles.Entity.Peers.Member> selector;
+        protected final List<ControlSchema.Ensembles.Entity.Peers.Member> members;
+        protected final Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector;
         
         public SelectPresentMemberFunction(
-                List<Orchestra.Ensembles.Entity.Peers.Member> members,
-                Function<List<Orchestra.Ensembles.Entity.Peers.Member>, Orchestra.Ensembles.Entity.Peers.Member> selector) {
+                List<ControlSchema.Ensembles.Entity.Peers.Member> members,
+                Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector) {
             this.members = members;
             this.selector = selector;
         }
         
         @Override
         public Identifier apply(List<Boolean> presence) {
-            List<Orchestra.Ensembles.Entity.Peers.Member> living = Lists.newArrayListWithCapacity(members.size());
+            List<ControlSchema.Ensembles.Entity.Peers.Member> living = Lists.newArrayListWithCapacity(members.size());
             for (int i=0; i<members.size(); ++i) {
                 if (Boolean.TRUE.equals(presence.get(i))) {
                     living.add(members.get(i));
                 }
             }
-            Orchestra.Ensembles.Entity.Peers.Member selected = selector.apply(living);
+            ControlSchema.Ensembles.Entity.Peers.Member selected = selector.apply(living);
             return (selected == null) ? null : selected.get();
         }
     }
     
 
-    protected static final ZNodeLabel.Path ENSEMBLES_PATH = Control.path(Orchestra.Ensembles.class);
+    protected static final ZNodeLabel.Path ENSEMBLES_PATH = Control.path(ControlSchema.Ensembles.class);
 
     protected class UpdatePeersFromCache {
         
@@ -313,7 +313,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
             if (ensembles != null) {
                 for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> ensemble: ensembles.entrySet()) {
                     Identifier ensembleId = Identifier.valueOf(ensemble.getKey().toString());
-                    Materializer.MaterializedNode peers = ensemble.getValue().get(Orchestra.Ensembles.Entity.Peers.LABEL);
+                    Materializer.MaterializedNode peers = ensemble.getValue().get(ControlSchema.Ensembles.Entity.Peers.LABEL);
                     if (peers != null) {
                         for (ZNodeLabel.Component peer: peers.keySet()) {
                             Identifier peerId = Identifier.valueOf(peer.toString());
@@ -348,7 +348,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                         }
                     }
                 } else {
-                    if (components.get(3).equals(Orchestra.Ensembles.Entity.Peers.LABEL)) {
+                    if (components.get(3).equals(ControlSchema.Ensembles.Entity.Peers.LABEL)) {
                         if (components.size() == 4) {
                             if (event.type() == ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED) {
                                 for (Map.Entry<Identifier, Identifier> e: peerToEnsemble.get().entrySet()) {

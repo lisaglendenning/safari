@@ -26,7 +26,7 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.ServiceMonitor;
 
@@ -60,7 +60,7 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
         return new VolumeLookupService(client);
     }
     
-    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
+    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
     protected final Materializer<?,?> client;
@@ -125,7 +125,7 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
             if (volumes != null) {
                 for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
                     Identifier volumeId = Identifier.valueOf(child.getKey().toString());
-                    Materializer.MaterializedNode volumeChild = child.getValue().get(Orchestra.Volumes.Entity.Volume.LABEL);
+                    Materializer.MaterializedNode volumeChild = child.getValue().get(ControlSchema.Volumes.Entity.Volume.LABEL);
                     if (volumeChild != null) {
                         VolumeDescriptor volumeDescriptor = (VolumeDescriptor) volumeChild.get().get();
                         if (volumeDescriptor != null) {
@@ -149,13 +149,13 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
                 get().clear();
             } else {
                 ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();
-                ZNodeLabel.Component pathTail = path.tail();
+                ZNodeLabel pathTail = path.tail();
                 if (VOLUMES_PATH.equals(pathHead)) {
                     Identifier volumeId = Identifier.valueOf(pathTail.toString());
                     get().remove(volumeId);
                 } else {
                     Identifier volumeId = Identifier.valueOf(pathHead.tail().toString());
-                    if (Orchestra.Volumes.Entity.Volume.LABEL.equals(pathTail)) {
+                    if (ControlSchema.Volumes.Entity.Volume.LABEL.equals(pathTail)) {
                         get().remove(volumeId);
                     }
                 }
@@ -175,7 +175,7 @@ public class VolumeLookupService extends AbstractIdleService implements Referenc
             ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
             if (! VOLUMES_PATH.equals(pointer.get().path())) {
                 Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());
-                if (Orchestra.Volumes.Entity.Volume.LABEL.equals(pointer.label())) {
+                if (ControlSchema.Volumes.Entity.Volume.LABEL.equals(pointer.label())) {
                     VolumeDescriptor volumeDescriptor = (VolumeDescriptor) node.get().get();
                     Volume volume = Volume.of(volumeId, volumeDescriptor);
                     Volume prev = (volumeDescriptor == null) ? get().remove(volumeId) : get().put(volume);

@@ -28,7 +28,7 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.util.ServiceMonitor;
 
 @DependsOn(ControlMaterializerService.class)
@@ -61,7 +61,7 @@ public class VolumeAssignmentService extends AbstractIdleService {
         return new VolumeAssignmentService(client);
     }
     
-    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
+    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
     protected final Materializer<?,?> client;
@@ -121,7 +121,7 @@ public class VolumeAssignmentService extends AbstractIdleService {
             if (volumes != null) {
                 for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
                     Identifier volumeId = Identifier.valueOf(child.getKey().toString());
-                    Materializer.MaterializedNode assignmentChild = child.getValue().get(Orchestra.Volumes.Entity.Ensemble.LABEL);
+                    Materializer.MaterializedNode assignmentChild = child.getValue().get(ControlSchema.Volumes.Entity.Ensemble.LABEL);
                     if (assignmentChild != null) {
                         Identifier assignment = (Identifier) assignmentChild.get().get();
                         if (assignment != null) {
@@ -144,13 +144,13 @@ public class VolumeAssignmentService extends AbstractIdleService {
                 assignments.clear();
             } else {
                 ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();
-                ZNodeLabel.Component pathTail = path.tail();
+                ZNodeLabel pathTail = path.tail();
                 if (VOLUMES_PATH.equals(pathHead)) {
                     Identifier volumeId = Identifier.valueOf(pathTail.toString());
                     assignments.remove(volumeId);
                 } else {
                     Identifier volumeId = Identifier.valueOf(pathHead.tail().toString());
-                    if (Orchestra.Volumes.Entity.Ensemble.LABEL.equals(pathTail)) {
+                    if (ControlSchema.Volumes.Entity.Ensemble.LABEL.equals(pathTail)) {
                         assignments.remove(volumeId);
                     }
                 }
@@ -170,7 +170,7 @@ public class VolumeAssignmentService extends AbstractIdleService {
             ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
             if (! VOLUMES_PATH.equals(pointer.get().path())) {
                 Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());
-                if (Orchestra.Volumes.Entity.Ensemble.LABEL.equals(pointer.label())) {
+                if (ControlSchema.Volumes.Entity.Ensemble.LABEL.equals(pointer.label())) {
                     Identifier assignment = (Identifier) node.get().get();
                     Identifier prevAssignment = (assignment == null) ? assignments.remove(volumeId) : assignments.put(volumeId, assignment);
                     if (logger.isInfoEnabled()) {

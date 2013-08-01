@@ -24,7 +24,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.protocol.Message;
@@ -96,13 +96,13 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
     protected void startUp() throws Exception {
         super.startUp();
         
-        final ZNodeLabel.Path VOLUMES_PATH = Control.path(Orchestra.Volumes.class);
+        final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
         
         // Global barrier - Wait for all volumes to be assigned
         Predicate<Materializer<?,?>> allAssigned = new Predicate<Materializer<?,?>>() {
             @Override
             public boolean apply(@Nullable Materializer<?,?> input) {
-                ZNodeLabel.Component label = Orchestra.Volumes.Entity.Ensemble.LABEL;
+                ZNodeLabel.Component label = ControlSchema.Volumes.Entity.Ensemble.LABEL;
                 boolean done = true;
                 for (Materializer.MaterializedNode e: input.get(VOLUMES_PATH).values()) {
                     if (! e.containsKey(label)) {

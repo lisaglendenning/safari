@@ -32,11 +32,13 @@ import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.VolumeCache;
 import edu.uw.zookeeper.orchestra.VolumeLookupService;
+import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.ServerPeerConnections;
+import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenRequest;
@@ -48,8 +50,10 @@ import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
+import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.PingingClient;
+import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Automaton;
@@ -152,6 +156,16 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     @Override
     protected void startUp() throws Exception {
         super.startUp();
+        
+        ClientConnectionExecutor<C> client = ClientConnectionExecutor.newInstance(
+                ConnectMessage.Request.NewRequest.newInstance(), connectionTask.call());
+        Control.createPrefix(Materializer.newInstance(
+                BackendSchema.getInstance().get(), 
+                JacksonModule.getSerializer(), 
+                client, 
+                client));
+        client.submit(Records.newInstance(IDisconnectRequest.class)).get();
+        client.stop();
         
         listener.start();
     }

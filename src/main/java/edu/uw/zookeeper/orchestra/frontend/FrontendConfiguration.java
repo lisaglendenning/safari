@@ -11,7 +11,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 import edu.uw.zookeeper.util.Configuration;
 
@@ -37,8 +37,8 @@ public class FrontendConfiguration {
     }
     
     public static void advertise(Identifier peerId, ServerInetAddressView address, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
-        Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.of(peerId);
-        Orchestra.Peers.Entity.ClientAddress clientAddressNode = Orchestra.Peers.Entity.ClientAddress.create(address, entityNode, materializer).get();
+        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.of(peerId);
+        ControlSchema.Peers.Entity.ClientAddress clientAddressNode = ControlSchema.Peers.Entity.ClientAddress.create(address, entityNode, materializer).get();
         if (! address.equals(clientAddressNode.get())) {
             throw new IllegalStateException(clientAddressNode.get().toString());
         }        

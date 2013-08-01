@@ -35,8 +35,8 @@ import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
-import edu.uw.zookeeper.orchestra.control.Orchestra.Ensembles.Entity;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
+import edu.uw.zookeeper.orchestra.control.ControlSchema.Ensembles.Entity;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Automaton;
@@ -66,10 +66,10 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                 ControlMaterializerService<?> control,
                 ServiceLocator locator,
                 DependentServiceMonitor monitor) {
-            Orchestra.Ensembles.Entity myEnsemble = Orchestra.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
-            Orchestra.Ensembles.Entity.Peers.Member myMember = Orchestra.Ensembles.Entity.Peers.Member.of(
+            ControlSchema.Ensembles.Entity myEnsemble = ControlSchema.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
+            ControlSchema.Ensembles.Entity.Peers.Member myMember = ControlSchema.Ensembles.Entity.Peers.Member.of(
                     conductorConfiguration.getView().id(), 
-                    Orchestra.Ensembles.Entity.Peers.of(myEnsemble));
+                    ControlSchema.Ensembles.Entity.Peers.of(myEnsemble));
             EnsembleMemberService instance = 
                     monitor.listen(new EnsembleMemberService(myMember, myEnsemble, control, locator));
             return instance;
@@ -77,13 +77,13 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     }
     
     protected final ControlMaterializerService<?> control;
-    protected final Orchestra.Ensembles.Entity.Peers.Member myMember;
-    protected final Orchestra.Ensembles.Entity myEnsemble;
+    protected final ControlSchema.Ensembles.Entity.Peers.Member myMember;
+    protected final ControlSchema.Ensembles.Entity myEnsemble;
     protected final RoleOverseer role;
     
     public EnsembleMemberService(
-            Orchestra.Ensembles.Entity.Peers.Member myMember, 
-            Orchestra.Ensembles.Entity myEnsemble,
+            ControlSchema.Ensembles.Entity.Peers.Member myMember, 
+            ControlSchema.Ensembles.Entity myEnsemble,
             ControlMaterializerService<?> control,
             ServiceLocator locator) {
         super(locator);
@@ -121,8 +121,8 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         Predicate<Materializer<?,?>> allLeaders = new Predicate<Materializer<?,?>>() {
             @Override
             public boolean apply(@Nullable Materializer<?,?> input) {
-                ZNodeLabel.Path root = Control.path(Orchestra.Ensembles.class);
-                ZNodeLabel.Component label = Orchestra.Ensembles.Entity.Leader.LABEL;
+                ZNodeLabel.Path root = Control.path(ControlSchema.Ensembles.class);
+                ZNodeLabel.Component label = ControlSchema.Ensembles.Entity.Leader.LABEL;
                 boolean done = true;
                 for (Materializer.MaterializedNode e: input.get(root).values()) {
                     if (! e.containsKey(label)) {
@@ -133,33 +133,33 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                 return done;
             }
         };
-        Control.FetchUntil.newInstance(Control.path(Orchestra.Ensembles.class), allLeaders, materializer, MoreExecutors.sameThreadExecutor()).get();
+        Control.FetchUntil.newInstance(Control.path(ControlSchema.Ensembles.class), allLeaders, materializer, MoreExecutors.sameThreadExecutor()).get();
     
         if (EnsembleRole.LEADING == role) {
             // create root volume if there are no volumes
-            ZNodeLabel.Path path = Control.path(Orchestra.Volumes.class);
+            ZNodeLabel.Path path = Control.path(ControlSchema.Volumes.class);
             operator.getChildren(path).submit().get();
             if (materializer.get(path).isEmpty()) {
                 VolumeDescriptor rootVolume = VolumeDescriptor.all();
-                Orchestra.Volumes.Entity.create(rootVolume, materializer, MoreExecutors.sameThreadExecutor()).get();
+                ControlSchema.Volumes.Entity.create(rootVolume, materializer, MoreExecutors.sameThreadExecutor()).get();
             }
             
             // Calculate "my" volumes using distance in the identifier space
             Identifier.Space ensembles = Identifier.Space.newInstance();
-            for (ZNodeLabel.Component label: materializer.get(Control.path(Orchestra.Ensembles.class)).keySet()) {
+            for (ZNodeLabel.Component label: materializer.get(Control.path(ControlSchema.Ensembles.class)).keySet()) {
                 ensembles.add(Identifier.valueOf(label.toString()));
             }
-            List<Orchestra.Volumes.Entity> myVolumes = Lists.newLinkedList();
-            for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> e: materializer.get(Control.path(Orchestra.Volumes.class)).entrySet()) {
-                Orchestra.Volumes.Entity v = Orchestra.Volumes.Entity.valueOf(e.getKey().toString());
+            List<ControlSchema.Volumes.Entity> myVolumes = Lists.newLinkedList();
+            for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> e: materializer.get(Control.path(ControlSchema.Volumes.class)).entrySet()) {
+                ControlSchema.Volumes.Entity v = ControlSchema.Volumes.Entity.valueOf(e.getKey().toString());
                 if (ensembles.ceiling(v.get()).equals(myEnsemble.get())) {
                     myVolumes.add(v);
                 }
             }
             
             // Try to acquire my volumes
-            for (Orchestra.Volumes.Entity v: myVolumes) {
-                Orchestra.Volumes.Entity.Ensemble.create(myEnsemble.get(), v, materializer);
+            for (ControlSchema.Volumes.Entity v: myVolumes) {
+                ControlSchema.Volumes.Entity.Ensemble.create(myEnsemble.get(), v, materializer);
             }
         }        
     }
@@ -167,16 +167,16 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected class RoleOverseer implements FutureCallback<WatchEvent> {
     
         protected final ZNodeLabel.Path leaderPath;
-        protected final Orchestra.Ensembles.Entity.Leader.Proposer<?,?> proposer;
+        protected final ControlSchema.Ensembles.Entity.Leader.Proposer<?,?> proposer;
         protected final Automatons.SynchronizedEventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
-        protected final StampedReference.Updater<Orchestra.Ensembles.Entity.Leader> leader;
+        protected final StampedReference.Updater<ControlSchema.Ensembles.Entity.Leader> leader;
         
         public RoleOverseer() {
-            this.leaderPath = ZNodeLabel.Path.of(myEnsemble.path(), Orchestra.Ensembles.Entity.Leader.LABEL);
+            this.leaderPath = ZNodeLabel.Path.of(myEnsemble.path(), ControlSchema.Ensembles.Entity.Leader.LABEL);
             this.myRole = Automatons.createSynchronizedEventful(
                     control, Automatons.createSimple(EnsembleRole.LOOKING));
-            this.leader = StampedReference.Updater.newInstance(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(0L, null));
-            this.proposer = Orchestra.Ensembles.Entity.Leader.Proposer.of(
+            this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Ensembles.Entity.Leader>of(0L, null));
+            this.proposer = ControlSchema.Ensembles.Entity.Leader.Proposer.of(
                     control.materializer(), 
                             MoreExecutors.sameThreadExecutor());
             myRole.register(this);
@@ -185,7 +185,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         }
         
         public EnsembleRole elect() throws InterruptedException, ExecutionException {
-            Orchestra.Ensembles.Entity.Leader ensembleLeader = proposer.apply(Entity.Leader.of(myMember.get(), myEnsemble)).get();
+            ControlSchema.Ensembles.Entity.Leader ensembleLeader = proposer.apply(Entity.Leader.of(myMember.get(), myEnsemble)).get();
             return myRoleFor(ensembleLeader);
         }
 
@@ -220,7 +220,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
             if (leaderPath.equals(event.path())) {
                 Materializer.MaterializedNode node = control.materializer().get(leaderPath);
                 Identifier value = (node != null) ? (Identifier) node.get().get() : null;
-                setLeader(StampedReference.of(event.updated().stamp(), Orchestra.Ensembles.Entity.Leader.of(value, myEnsemble)));
+                setLeader(StampedReference.of(event.updated().stamp(), ControlSchema.Ensembles.Entity.Leader.of(value, myEnsemble)));
             }
         }
 
@@ -228,7 +228,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
             if (leaderPath.equals(event.path().get())) {
                 if (ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED == event.type()) {
-                    setLeader(StampedReference.<Orchestra.Ensembles.Entity.Leader>of(event.path().stamp(), null));
+                    setLeader(StampedReference.<ControlSchema.Ensembles.Entity.Leader>of(event.path().stamp(), null));
                 }
             }
         }
@@ -246,7 +246,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
             }
         }
         
-        protected EnsembleRole myRoleFor(Orchestra.Ensembles.Entity.Leader leader) {
+        protected EnsembleRole myRoleFor(ControlSchema.Ensembles.Entity.Leader leader) {
             if (leader == null) {
                 return EnsembleRole.LOOKING;
             } else if (myMember.get().equals(leader.get())) {
@@ -256,8 +256,8 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
             }
         }
 
-        protected void setLeader(StampedReference<Orchestra.Ensembles.Entity.Leader> newLeader) {
-            StampedReference<Orchestra.Ensembles.Entity.Leader> prevLeader = leader.setIfGreater(newLeader);
+        protected void setLeader(StampedReference<ControlSchema.Ensembles.Entity.Leader> newLeader) {
+            StampedReference<ControlSchema.Ensembles.Entity.Leader> prevLeader = leader.setIfGreater(newLeader);
             if (prevLeader.stamp() < newLeader.stamp()) {
                 myRole.apply(myRoleFor(newLeader.get()));
             }

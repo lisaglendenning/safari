@@ -14,7 +14,7 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 import edu.uw.zookeeper.util.Configuration;
@@ -40,13 +40,13 @@ public class PeerConfiguration {
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
             ServerInetAddressView conductorAddress = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
                             "Peer", "address", "peerAddress", "", 2281).get(configuration);
-            Orchestra.Peers.Entity entityNode = Orchestra.Peers.Entity.create(conductorAddress, controlClient.materializer(), MoreExecutors.sameThreadExecutor()).get();
+            ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(conductorAddress, controlClient.materializer(), MoreExecutors.sameThreadExecutor()).get();
             return new PeerConfiguration(PeerAddressView.of(entityNode.get(), conductorAddress));
         }
     }
 
     public static void advertise(Identifier peerId, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
-        Orchestra.Peers.Entity entity = Orchestra.Peers.Entity.of(peerId);
+        ControlSchema.Peers.Entity entity = ControlSchema.Peers.Entity.of(peerId);
         Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = entity.presence().create(materializer).get();
         Operations.unlessError(result.second().getRecord(), result.toString());
     }

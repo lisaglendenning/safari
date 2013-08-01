@@ -6,7 +6,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.Iterator;
-import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
@@ -17,7 +16,6 @@ import org.apache.zookeeper.KeeperException;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -36,9 +34,7 @@ import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
-import edu.uw.zookeeper.data.Schema.ZNodeSchema.Builder.ZNodeTraversal;
 import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Operation.ProtocolRequest;
 import edu.uw.zookeeper.protocol.Operation.ProtocolResponse;
@@ -55,15 +51,7 @@ import edu.uw.zookeeper.util.Reference;
 import edu.uw.zookeeper.util.SettableFuturePromise;
 
 public abstract class Control {
-    
-    public static JacksonModule.JacksonSerializer getByteCodec() {
-        return JacksonModule.getSerializer();
-    }
-    
-    public static Schema getSchema() {
-        return SchemaHolder.getInstance().get();
-    }
-    
+
     public static ZNodeLabel.Path path(Object element) {
         return ControlZNode.path(element);
     }
@@ -95,52 +83,11 @@ public abstract class Control {
             }
         }
     }
-    
-    public static enum SchemaHolder implements Reference<Schema> {
-        INSTANCE(Schema.of(Schema.ZNodeSchema.getDefault()));
-        
-        public static SchemaHolder getInstance() {
-            return INSTANCE;
-        }
-        
-        private final Schema schema;
-        private final Map<Object, Schema.SchemaNode> byElement;
-        
-        private SchemaHolder(Schema schema) {
-            this.schema = schema;
-            
-            Iterator<ZNodeTraversal.Element> itr = 
-                    Schema.ZNodeSchema.Builder.traverse(Orchestra.class);
-            ImmutableMap.Builder<Object, Schema.SchemaNode> byElement = ImmutableMap.builder();
-            while (itr.hasNext()) {
-                ZNodeTraversal.Element next = itr.next();
-                Schema.ZNodeSchema nextSchema = next.getBuilder().build();
-                ZNodeLabel.Path path = ZNodeLabel.Path.of(next.getPath(), ZNodeLabel.of(nextSchema.getLabel()));
-                Schema.SchemaNode node = schema.add(path, nextSchema);
-                byElement.put(next.getElement(), node);
-            }
-            this.byElement = byElement.build();
-        }
-    
-        @Override
-        public Schema get() {
-            return schema;
-        }
-        
-        public Schema.SchemaNode byElement(Object type) {
-            return byElement.get(type);
-        }
-        
-        @Override
-        public String toString() {
-            return get().toString();
-        }
-    }
 
     @ZNode(acl=Acls.Definition.ANYONE_ALL)
     public static abstract class ControlZNode {
         public static Schema.SchemaNode schemaNode(Object element) {
-            return SchemaHolder.getInstance().byElement(element);
+            return ControlSchema.getInstance().byElement(element);
         }
         
         public static ZNodeLabel.Path path(Object element) {
@@ -165,7 +112,7 @@ public abstract class Control {
             return parent;
         }
 
-        public ZNodeLabel.Component label() {
+        public ZNodeLabel label() {
             return path(getClass()).tail();
         }
 

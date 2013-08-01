@@ -15,7 +15,7 @@ import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.CachedFunction;
 import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
@@ -27,7 +27,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
     protected final Identifier identifier;
     protected final MessagePacket handshake;
     protected final ConnectionTask connectionTask;
-    protected final CachedFunction<Identifier, Orchestra.Peers.Entity.PeerAddress> lookup;
+    protected final CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup;
     
     public ClientPeerConnections(
             Identifier identifier,
@@ -36,7 +36,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         super(connections);
         this.identifier = identifier;
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
-        this.lookup = Orchestra.Peers.Entity.PeerAddress.lookup(control);
+        this.lookup = ControlSchema.Peers.Entity.PeerAddress.lookup(control);
         this.connectionTask = new ConnectionTask();
     }
 
@@ -54,7 +54,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         if (connection != null) {
             return Futures.immediateFuture(connection);
         } else {
-            ListenableFuture<Orchestra.Peers.Entity.PeerAddress> lookupFuture;
+            ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> lookupFuture;
             try {
                 lookupFuture = lookup.apply(identifier);
             } catch (Exception e) {
@@ -108,10 +108,10 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
                 });
     }
     
-    protected class ConnectionTask implements AsyncFunction<Orchestra.Peers.Entity.PeerAddress, C> {
+    protected class ConnectionTask implements AsyncFunction<ControlSchema.Peers.Entity.PeerAddress, C> {
         @Override
         public ListenableFuture<C> apply(
-                Orchestra.Peers.Entity.PeerAddress input) throws Exception {
+                ControlSchema.Peers.Entity.PeerAddress input) throws Exception {
             return connections().connect(input.get().get());
         }
     }

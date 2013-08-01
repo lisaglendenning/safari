@@ -13,6 +13,7 @@ import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependsOn;
+import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutorService;
@@ -60,8 +61,8 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
             ControlConnectionsService<C> connections) {
         super(connections);
         this.materializer = Materializer.newInstance(
-                        Control.getSchema(),
-                        Control.getByteCodec(),
+                        ControlSchema.getInstance().get(),
+                        JacksonModule.getSerializer(),
                         this, 
                         this);
         this.watches = WatchPromiseTrie.newInstance();

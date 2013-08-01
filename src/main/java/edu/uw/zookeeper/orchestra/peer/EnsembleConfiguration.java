@@ -14,7 +14,7 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.backend.BackendConfiguration;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
-import edu.uw.zookeeper.orchestra.control.Orchestra;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 
 public class EnsembleConfiguration {
 
@@ -36,7 +36,7 @@ public class EnsembleConfiguration {
                 ControlMaterializerService<?> controlClient) throws InterruptedException, ExecutionException, KeeperException {
             // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
-            Orchestra.Ensembles.Entity ensembleNode = Orchestra.Ensembles.Entity.create(
+            ControlSchema.Ensembles.Entity ensembleNode = ControlSchema.Ensembles.Entity.create(
                     myView, 
                     controlClient.materializer(),
                     MoreExecutors.sameThreadExecutor()).get();
