@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.BiMap;
@@ -58,6 +59,7 @@ import edu.uw.zookeeper.protocol.Ping;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.SessionOperation;
 import edu.uw.zookeeper.protocol.SessionRequest;
+import edu.uw.zookeeper.protocol.proto.IDisconnectResponse;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
@@ -141,6 +143,24 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         return task;
     }
     
+    @Override
+    public void send(RequestFuture message) {
+        // short circuit pings
+        if (message.task().getXid() == OpCodeXid.PING.getXid()) {
+            try {
+                while (message.call() != RequestState.PUBLISHED) {}
+            } catch (Exception e) {
+                throw Throwables.propagate(e);
+            }
+        } else {
+            if (logger.isTraceEnabled()) {
+                logger.trace("Submitting {}", message.task());
+            }
+            super.send(message);
+            message.addListener(this, MoreExecutors.sameThreadExecutor());
+        }
+    }
+
     public RequestFuture newRequest(Message.ClientRequest<Records.Request> request) {
         Promise<Message.ServerResponse<Records.Response>> promise = SettableFuturePromise.create();
         if (request.getXid() == OpCodeXid.PING.getXid()) {
@@ -168,21 +188,6 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     }
 
     @Override
-    public void send(RequestFuture message) {
-        // short circuit pings
-        if (message.task().getXid() == OpCodeXid.PING.getXid()) {
-            try {
-                while (message.call() != RequestState.PUBLISHED) {}
-            } catch (Exception e) {
-                throw Throwables.propagate(e);
-            }
-        } else {
-            super.send(message);
-            message.addListener(this, MoreExecutors.sameThreadExecutor());
-        }
-    }
-    
-    @Override
     protected boolean runEnter() {
         if (state.get() == State.WAITING) {
             schedule();
@@ -202,41 +207,22 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 // TODO
                 break;
             }
-            switch (task.state()) {
-                case NEW:
-                {
-                    if (task.call() != RequestState.LOOKING) {
-                        break;
-                    }
-                }
-                case LOOKING:
-                {
-                    if ((prev != null) && (prev.state().compareTo(RequestState.SUBMITTING) < 0)) {
-                        // we need to preserve ordering of requests per volume
-                        // as a proxy for this requirement, 
-                        // don't submit until the task before us has submitted
-                        // (note this is stronger than necessary)
-                        break;
-                    }
-                    if (task.call() != RequestState.SUBMITTING) {
-                        break;
-                    }
-                }
-                case SUBMITTING:
-                {
-                    if (task.call() != RequestState.COMPLETE) {
-                        break;
-                    }
-                }
-                case COMPLETE:
-                {
+            while (true) {
+                RequestState state = task.state();
+                if (RequestState.PUBLISHED == state) {
                     itr.remove();
-                    if (task.call() != RequestState.PUBLISHED) {
-                        break;
-                    }
-                }
-                default:
                     break;
+                }
+                else if ((RequestState.LOOKING == state)
+                        && ((prev != null) && (prev.state().compareTo(RequestState.SUBMITTING) < 0))) {
+                    // we need to preserve ordering of requests per volume
+                    // as a proxy for this requirement, 
+                    // don't submit until the task before us has submitted
+                    // (note this is stronger than necessary)
+                    break;
+                } else if (task.call() == state) {
+                    break;
+                }
             }
             
             prev = task;
@@ -547,7 +533,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         NEW, LOOKING, SUBMITTING, COMPLETE, PUBLISHED;
     }
     
-    protected interface RequestFuture extends ListenableFuture<Message.ServerResponse<Records.Response>>, Stateful<FrontendSessionExecutor.RequestState>, Callable<RequestState> {
+    protected interface RequestFuture extends ListenableFuture<Message.ServerResponse<Records.Response>>, Stateful<FrontendSessionExecutor.RequestState>, Runnable, Callable<RequestState> {
         Message.ClientRequest<Records.Request> task();
     }
     
@@ -579,12 +565,53 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 this.state.compareAndSet(state, RequestState.COMPLETE);
             }
             
-            return super.set(result);
+            boolean isSet = super.set(result);
+            if (logger.isTraceEnabled()) {
+                logger.trace("Set {} -> {}", this, result);
+            }
+            return isSet;
         }
         
         @Override
         public FrontendSessionExecutor.RequestState state() {
             return state.get();
+        }
+
+        @Override
+        public void run() {
+            FrontendSessionExecutor.this.run();
+        }
+
+        @Override
+        public RequestState call() throws Exception {
+            if (logger.isTraceEnabled()) {
+                logger.trace("{}", this);
+            }
+            return state();
+        }
+        
+        protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
+            if (state.get() == RequestState.SUBMITTING) {
+                Records.Response result = null;
+                switch (task().getRecord().getOpcode()) {
+                case CLOSE_SESSION:
+                {
+                    result = Records.newInstance(IDisconnectResponse.class);
+                    break;
+                }
+                case PING:
+                {
+                    result = PingProcessor.getInstance().apply((Ping.Request) task().getRecord());
+                    break;
+                }
+                default:
+                    break;
+                }
+                if (result != null) {
+                    complete(result);
+                }
+            }
+            return this;
         }
         
         protected boolean complete(Records.Response result) {
@@ -607,6 +634,15 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 return false;
             }
         }
+
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this)
+                    .add("task", task())
+                    .add("future", delegate())
+                    .add("state", state())
+                    .toString();
+        }
     }
     
     protected class PingTask extends RequestTask {
@@ -624,13 +660,13 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         
         @Override
         public RequestState call() throws Exception {
-            RequestState state = state();
+            RequestState state = super.call();
             switch (state) {
             case NEW:
             case LOOKING:
                 this.state.compareAndSet(state, RequestState.SUBMITTING);
             case SUBMITTING:
-                complete(PingProcessor.getInstance().apply((Ping.Request) task().getRecord()));
+                complete();
                 break;
             case COMPLETE:
                 publish();
@@ -638,12 +674,12 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             default:
                 break;
             }
+            
             return state();
         }
-
     }
 
-    protected class BackendRequestTask extends RequestTask implements RequestFuture, Runnable {
+    protected class BackendRequestTask extends RequestTask {
 
         protected final ImmutableSet<ZNodeLabel.Path> paths;
         protected final Map<ZNodeLabel.Path, Volume> volumes;
@@ -672,13 +708,8 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         }
 
         @Override
-        public void run() {
-            FrontendSessionExecutor.this.run();
-        }
-
-        @Override
         public RequestState call() throws Exception {
-            switch (state()) {
+            switch (super.call()) {
             case NEW:
             {
                 Optional<Map<ZNodeLabel.Path, Volume>> volumes = getVolumes(paths());
@@ -740,6 +771,9 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             if (difference.isEmpty()) {
                 return Optional.of(volumes);
             } else {
+                if (logger.isTraceEnabled()) {
+                    logger.trace("Waiting for path lookup {}", difference);
+                }
                 return Optional.<Map<ZNodeLabel.Path, Volume>>absent();
             }
         }
@@ -819,18 +853,21 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             Map<Volume, Set<BackendSession>> backends = Maps.newHashMapWithExpectedSize(volumes.size());
             for (Volume v: volumes) {
                 if (v.equals(Volume.none())) {
-                    boolean done = false;
-                    ImmutableSet.Builder<BackendSession> builder = ImmutableSet.builder();
+                    boolean done = true;
+                    Set<BackendSession> all = Sets.newHashSetWithExpectedSize(backends().get().size());
                     for (Identifier ensemble: backends().get().keySet()) {
                         Optional<BackendSession> backend = backends().apply(ensemble, this);
                         if (backend.isPresent()) {
-                            builder.add(backend.get());
+                            all.add(backend.get());
                         } else {
+                            if (logger.isTraceEnabled()) {
+                                logger.trace("Waiting for backend {}", ensemble);
+                            }
                             done = false;
                         }
                     }
                     if (done) {
-                        backends.put(v, builder.build());
+                        backends.put(v, all);
                     }
                 } else {
                     Optional<Identifier> assignment = assignments().apply(v.getId(), this);
@@ -839,12 +876,20 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                         if (backend.isPresent()) {
                             backends.put(v, ImmutableSet.of(backend.get()));
                         }
+                    } else {
+                        if (logger.isTraceEnabled()) {
+                            logger.trace("Waiting for assignment {}", v.getId());
+                        }
                     }
                 }
             }
-            if (Sets.difference(volumes, backends.keySet()).isEmpty()) {
+            Sets.SetView<Volume> difference = Sets.difference(volumes, backends.keySet());
+            if (difference.isEmpty()) {
                 return Optional.of(backends);
             } else {
+                if (logger.isTraceEnabled()) {
+                    logger.trace("Waiting for volume lookup {}", difference);
+                }
                 return Optional.absent();
             }
         }
@@ -866,9 +911,14 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return submitted;
         }
         
+        @Override
         protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
             if (state.get() != RequestState.SUBMITTING) {
                 return this;
+            }
+            
+            if (submitted.isEmpty()) {
+                return super.complete();
             }
             
             Records.Response result = null;
@@ -970,6 +1020,18 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 }
             }
             return published;
+        }
+
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this)
+                    .add("task", task())
+                    .add("future", delegate())
+                    .add("state", state())
+                    .add("volumes", volumes)
+                    .add("shards", shards)
+                    .add("submitted", submitted)
+                    .toString();
         }
 
         protected class ResponseTask extends PromiseTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> implements FutureCallback<MessagePacket> {
