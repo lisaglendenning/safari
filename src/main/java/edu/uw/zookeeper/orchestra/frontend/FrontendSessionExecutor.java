@@ -15,6 +15,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
+import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
@@ -53,6 +55,7 @@ import edu.uw.zookeeper.protocol.Ping;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.SessionOperation;
 import edu.uw.zookeeper.protocol.SessionRequest;
+import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
@@ -794,6 +797,27 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 Map<Volume, ShardedRequestMessage<?>> shards,
                 Map<Volume, Set<BackendSession>> backends) throws Exception {
             this.state.compareAndSet(RequestState.LOOKING, RequestState.SUBMITTING);
+
+            for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
+                switch (e.getValue().getRecord().getOpcode()) {
+                case CREATE:
+                case CREATE2:
+                {
+                    // special case: root of a volume can't be sequential!
+                    Records.CreateModeGetter create = (Records.CreateModeGetter) e.getValue().getRecord();
+                    if (CreateMode.fromFlag(create.getFlags()).isSequential()
+                            && e.getKey().getDescriptor().getRoot().toString().equals(create.getPath())) {
+                        // fail
+                        complete(new IErrorResponse(KeeperException.Code.BADARGUMENTS));
+                        return ImmutableMap.of();
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+            
             for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
                 for (BackendSession backend: backends.get(e.getKey())) {
                     ClientPeerConnection<?> connection = backend.getConnection();
