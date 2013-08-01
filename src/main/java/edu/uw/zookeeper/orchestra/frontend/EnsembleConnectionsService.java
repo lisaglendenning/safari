@@ -26,6 +26,7 @@ import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.CachedFunction;
 import edu.uw.zookeeper.orchestra.DependentService;
 import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
@@ -39,6 +40,7 @@ import edu.uw.zookeeper.orchestra.peer.EnsembleConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
+import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.util.Factories;
 
@@ -99,8 +101,8 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     protected final CachedFunction<Identifier, List<Orchestra.Ensembles.Entity.Peers.Member>> memberLookup;
     protected final CachedFunction<Identifier, Identifier> selectPeers;
     protected final AsyncFunction<List<Orchestra.Ensembles.Entity.Peers.Member>, Identifier> selectMemberFunction;
-    protected final CachedFunction<Identifier, ClientPeerConnection> connectFunction;
-    protected final CachedFunction<Identifier, ClientPeerConnection> ensembleConnections;
+    protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectFunction;
+    protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> ensembleConnections;
     protected final UpdatePeersFromCache updater;
     
     public EnsembleConnectionsService(
@@ -147,10 +149,10 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 });
         this.connectFunction = peerConnections.clients().connectFunction();
         this.ensembleConnections = CachedFunction.create(
-                new Function<Identifier, ClientPeerConnection>() {
+                new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
                     @Override
                     public @Nullable
-                    ClientPeerConnection apply(Identifier ensemble) {
+                    ClientPeerConnection<Connection<? super MessagePacket>> apply(Identifier ensemble) {
                         Identifier peer = selectedPeers.apply(ensemble);
                         if (peer != null) {
                             return connectFunction.first().apply(peer);
@@ -159,9 +161,9 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                         }
                     }
                 }, 
-                new AsyncFunction<Identifier, ClientPeerConnection>() {
+                new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
                     @Override
-                    public ListenableFuture<ClientPeerConnection> apply(
+                    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
                             Identifier ensemble) throws Exception {
                         return Futures.transform(
                                 selectPeers.apply(ensemble),
@@ -179,7 +181,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         return selectPeers;
     }
 
-    public CachedFunction<Identifier, ClientPeerConnection> getConnectionForEnsemble() {
+    public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> getConnectionForEnsemble() {
         return ensembleConnections;
     }
 
@@ -196,11 +198,11 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         
         Futures.transform(
                 Orchestra.Ensembles.getEnsembles(control.materializer()), 
-                new AsyncFunction<List<Orchestra.Ensembles.Entity>, List<ClientPeerConnection>>() {
+                new AsyncFunction<List<Orchestra.Ensembles.Entity>, List<ClientPeerConnection<Connection<? super MessagePacket>>>>() {
                     @Override
-                    public ListenableFuture<List<ClientPeerConnection>> apply(List<Orchestra.Ensembles.Entity> input)
+                    public ListenableFuture<List<ClientPeerConnection<Connection<? super MessagePacket>>>> apply(List<Orchestra.Ensembles.Entity> input)
                             throws Exception {
-                        List<ListenableFuture<ClientPeerConnection>> futures = Lists.newArrayListWithCapacity(input.size());
+                        List<ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>>> futures = Lists.newArrayListWithCapacity(input.size());
                         for (Orchestra.Ensembles.Entity e: input) {
                             futures.add(Futures.transform(
                                     selectPeers.second().apply(e.get()), 

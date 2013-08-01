@@ -36,6 +36,7 @@ import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
+import edu.uw.zookeeper.orchestra.peer.ServerPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenRequest;
@@ -95,7 +96,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             ServiceLocator locator,
             final VolumeCache volumes,
             BackendConnectionsService<C> connections,
-            PeerConnectionsService<?>.ServerPeerConnections peers,
+            ServerPeerConnections<?> peers,
             Executor executor) {
 
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
@@ -118,7 +119,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     }
 
     protected final BackendConnectionsService<C> connections;
-    protected final ConcurrentMap<ServerPeerConnection, ServerPeerConnectionListener> peers;
+    protected final ConcurrentMap<ServerPeerConnection<?>, ServerPeerConnectionListener> peers;
     protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendClient> clients;
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
@@ -129,7 +130,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     protected BackendRequestService(
             ServiceLocator locator,
             BackendConnectionsService<C> connections,
-            PeerConnectionsService<?>.ServerPeerConnections peers,
+            ServerPeerConnections<?> peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ShardedOperationTranslators translator,
             Executor executor) {
@@ -248,18 +249,18 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
     protected class ServerPeerConnectionListener {
         
-        protected final PeerConnectionsService<?>.ServerPeerConnections connections;
-        protected final ConcurrentMap<ServerPeerConnection, ServerPeerConnectionDispatcher> dispatchers;
+        protected final ServerPeerConnections<?> connections;
+        protected final ConcurrentMap<ServerPeerConnection<?>, ServerPeerConnectionDispatcher> dispatchers;
         
         public ServerPeerConnectionListener(
-                PeerConnectionsService<?>.ServerPeerConnections connections) {
+                ServerPeerConnections<?> connections) {
             this.connections = connections;
             this.dispatchers = new MapMaker().makeMap();
         }
         
         public void start() {
             connections.register(this);
-            for (ServerPeerConnection c: connections) {
+            for (ServerPeerConnection<?> c: connections) {
                 handleConnection(c);
             }
         }
@@ -271,7 +272,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
         
         @Subscribe
-        public void handleConnection(ServerPeerConnection connection) {
+        public void handleConnection(ServerPeerConnection<?> connection) {
             ServerPeerConnectionDispatcher d = new ServerPeerConnectionDispatcher(connection);
             if (dispatchers.putIfAbsent(connection, d) == null) {
                 connection.register(d);
@@ -279,9 +280,9 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
     }
     
-    protected class ServerPeerConnectionDispatcher extends Factories.Holder<ServerPeerConnection> {
+    protected class ServerPeerConnectionDispatcher extends Factories.Holder<ServerPeerConnection<?>> {
     
-        public ServerPeerConnectionDispatcher(ServerPeerConnection connection) {
+        public ServerPeerConnectionDispatcher(ServerPeerConnection<?> connection) {
             super(connection);
         }
 

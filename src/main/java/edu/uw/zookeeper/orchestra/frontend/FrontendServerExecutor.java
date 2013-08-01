@@ -28,6 +28,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.VolumeLookupService;
+import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
@@ -145,7 +146,7 @@ public class FrontendServerExecutor extends DependentService {
     protected FrontendServerExecutor(
             ConcurrentMap<Long, FrontendSessionExecutor> handlers,
             FrontendServerTaskExecutor executor,
-            PeerConnectionsService<?>.ClientPeerConnections connections,
+            ClientPeerConnections<?> connections,
             ServiceLocator locator) {
         this.locator = locator;
         this.handlers = handlers;
@@ -325,7 +326,7 @@ public class FrontendServerExecutor extends DependentService {
         protected final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup;
         protected final CachedFunction<Identifier, Identifier> assignmentLookup;
         protected final Function<Identifier, Identifier> ensembleForPeer;
-        protected final CachedFunction<Identifier, ClientPeerConnection> connectionLookup;
+        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
         protected final Executor executor;
         
         public ConnectProcessor(
@@ -333,7 +334,7 @@ public class FrontendServerExecutor extends DependentService {
                 CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
                 CachedFunction<Identifier, Identifier> assignmentLookup,
                 Function<Identifier, Identifier> ensembleForPeer,
-                CachedFunction<Identifier, ClientPeerConnection> connectionLookup,
+                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
                 ConnectTableProcessor connector,
                 Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor,
                 Executor executor) {
@@ -372,13 +373,13 @@ public class FrontendServerExecutor extends DependentService {
     
     protected static class ClientPeerConnectionListener {
         
-        protected final PeerConnectionsService<?>.ClientPeerConnections connections;
+        protected final ClientPeerConnections<?> connections;
         protected final ConcurrentMap<Long, FrontendSessionExecutor> executors;
-        protected final ConcurrentMap<ClientPeerConnection, ClientPeerConnectionDispatcher> dispatchers;
+        protected final ConcurrentMap<ClientPeerConnection<?>, ClientPeerConnectionDispatcher> dispatchers;
         
         public ClientPeerConnectionListener(
                 ConcurrentMap<Long, FrontendSessionExecutor> executors,
-                PeerConnectionsService<?>.ClientPeerConnections connections) {
+                ClientPeerConnections<?> connections) {
             this.executors = executors;
             this.connections = connections;
             this.dispatchers = new MapMaker().makeMap();
@@ -386,7 +387,7 @@ public class FrontendServerExecutor extends DependentService {
         
         public void start() {
             connections.register(this);
-            for (ClientPeerConnection c: connections) {
+            for (ClientPeerConnection<?> c: connections) {
                 handleConnection(c);
             }
         }
@@ -398,17 +399,17 @@ public class FrontendServerExecutor extends DependentService {
         }
         
         @Subscribe
-        public void handleConnection(ClientPeerConnection connection) {
+        public void handleConnection(ClientPeerConnection<?> connection) {
             ClientPeerConnectionDispatcher d = new ClientPeerConnectionDispatcher(connection);
             if (dispatchers.putIfAbsent(connection, d) == null) {
                 connection.register(d);
             }
         }
 
-        protected class ClientPeerConnectionDispatcher extends Factories.Holder<ClientPeerConnection> {
+        protected class ClientPeerConnectionDispatcher extends Factories.Holder<ClientPeerConnection<?>> {
 
             public ClientPeerConnectionDispatcher(
-                    ClientPeerConnection connection) {
+                    ClientPeerConnection<?> connection) {
                 super(connection);
             }
 

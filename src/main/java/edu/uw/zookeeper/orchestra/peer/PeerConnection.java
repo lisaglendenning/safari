@@ -36,23 +36,23 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
         return delegate;
     }
     
-    public static class ClientPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
+    public static class ClientPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
 
         public ClientPeerConnection(
                 Identifier localIdentifier,
                 Identifier remoteIdentifier,
-                Connection<? super MessagePacket> delegate) {
+                C delegate) {
             super(localIdentifier, remoteIdentifier, delegate);
         }
     }
 
 
-    public static class ServerPeerConnection extends PeerConnection<Connection<? super MessagePacket>> {
+    public static class ServerPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
 
         public ServerPeerConnection(
                 Identifier localIdentifier,
                 Identifier remoteIdentifier,
-                Connection<? super MessagePacket> delegate) {
+                C delegate) {
             super(localIdentifier, remoteIdentifier, delegate);
         }
     }

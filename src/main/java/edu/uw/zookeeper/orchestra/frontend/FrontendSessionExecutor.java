@@ -88,7 +88,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
             Function<Identifier, Identifier> ensembleForPeer,
-            CachedFunction<Identifier, ClientPeerConnection> connectionLookup,
+            CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
             Executor executor) {
         super(executor, FutureQueue.<RequestFuture>create(), AbstractActor.newState());
         this.logger = LoggerFactory.getLogger(getClass());
@@ -288,19 +288,19 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     protected class BackendLookups extends Lookups<Identifier, BackendSession> implements Reference<ConcurrentMap<Identifier, BackendSession>> {
     
         protected final ConcurrentMap<Identifier, BackendSession> backendSessions;
-        protected final CachedFunction<Identifier, ClientPeerConnection> connectionLookup;
+        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
         protected final Function<Identifier, Identifier> ensembleForPeer;
         
         public BackendLookups(
                 Function<Identifier, Identifier> ensembleForPeer,
-                CachedFunction<Identifier, ClientPeerConnection> connectionLookup) {
+                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup) {
             this(ensembleForPeer, connectionLookup, 
                     new MapMaker().<Identifier, BackendSession>makeMap());
         }
         
         public BackendLookups(
                 final Function<Identifier, Identifier> ensembleForPeer,
-                final CachedFunction<Identifier, ClientPeerConnection> connectionLookup,
+                final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
                 final ConcurrentMap<Identifier, BackendSession> backendSessions) {
             super(CachedFunction.create(
                     new Function<Identifier, BackendSession>() {
@@ -355,12 +355,12 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     protected class BackendSessionTask extends PromiseTask<Identifier, Session> implements Runnable, FutureCallback<MessagePacket> {
         
         protected final Optional<Session> existing;
-        protected final ListenableFuture<ClientPeerConnection> connection;
+        protected final ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection;
         
         public BackendSessionTask(
                 Optional<Session> existing,
                 Identifier ensemble,
-                ListenableFuture<ClientPeerConnection> connection,
+                ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection,
                 Promise<Session> promise) throws Exception {
             super(ensemble, promise);
             this.existing = existing;
@@ -375,7 +375,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     Futures.getUnchecked(connection()));
         }
         
-        public ListenableFuture<ClientPeerConnection> connection() {
+        public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection() {
             return connection;
         }
         
@@ -416,7 +416,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         @Override
         public void run() {
             if (connection.isDone()) {
-                ClientPeerConnection c;
+                ClientPeerConnection<?> c;
                 try {
                     c = connection.get();
                 } catch (Exception e) {
@@ -458,7 +458,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
 
         private final Identifier ensemble;
         private final Session session;
-        private final ClientPeerConnection connection;
+        private final ClientPeerConnection<?> connection;
         // not thread safe
         private final LinkedList<ListenableFuture<ShardedResponseMessage<?>>> pending;
         private volatile int finger;
@@ -466,7 +466,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         public BackendSession(
                 Identifier ensemble,
                 Session session,
-                ClientPeerConnection connection) {
+                ClientPeerConnection<?> connection) {
             this.ensemble = ensemble;
             this.session = session;
             this.connection = connection;
@@ -482,7 +482,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return session;
         }
         
-        public ClientPeerConnection getConnection() {
+        public ClientPeerConnection<?> getConnection() {
             return connection;
         }
         
@@ -796,7 +796,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             this.state.compareAndSet(RequestState.LOOKING, RequestState.SUBMITTING);
             for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
                 for (BackendSession backend: backends.get(e.getKey())) {
-                    ClientPeerConnection connection = backend.getConnection();
+                    ClientPeerConnection<?> connection = backend.getConnection();
                     Identifier k = connection.remoteAddress().getIdentifier();
                     if (! submitted.containsKey(k)) {
                         ResponseTask task = backend.submit(this, e.getValue());
