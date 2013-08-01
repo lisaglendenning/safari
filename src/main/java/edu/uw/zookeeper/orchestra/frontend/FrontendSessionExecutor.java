@@ -23,7 +23,6 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
@@ -51,6 +50,7 @@ import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Ping;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.SessionOperation;
@@ -549,6 +549,21 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             super(task, delegate);
             this.state = new AtomicReference<FrontendSessionExecutor.RequestState>(RequestState.NEW);
         }
+
+        @Override
+        public boolean set(Message.ServerResponse<Records.Response> result) {
+            if ((result.getRecord().getOpcode() != task().getRecord().getOpcode())
+                    && (! (result.getRecord() instanceof Operation.Error))) {
+                throw new IllegalArgumentException(result.toString());
+            }
+            
+            RequestState state = state();
+            if (RequestState.COMPLETE.compareTo(state) > 0) {
+                this.state.compareAndSet(state, RequestState.COMPLETE);
+            }
+            
+            return super.set(result);
+        }
         
         @Override
         public FrontendSessionExecutor.RequestState state() {
@@ -559,15 +574,11 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             if (isDone()) {
                 return false;
             }
-            if (state.compareAndSet(RequestState.SUBMITTING, RequestState.COMPLETE)) {
-                SessionOperation.Request<Records.Request> request =
-                        SessionRequest.of(session().id(), task(), task());
-                Message.ServerResponse<Records.Response> message = processor().apply(
-                        Pair.create(request, result));
-                return set(message);
-            } else {
-                return false;
-            }
+            SessionOperation.Request<Records.Request> request =
+                    SessionRequest.of(session().id(), task(), task());
+            Message.ServerResponse<Records.Response> message = processor().apply(
+                    Pair.create(request, result));
+            return set(message);
         }
 
         protected boolean publish() {
@@ -672,7 +683,15 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 if (! backends.isPresent()) {
                     break;
                 }
-                submit(getShards(volumes.get()), backends.get());
+                Map<Volume, ShardedRequestMessage<?>> shards;
+                try {
+                    shards = getShards(volumes.get());
+                } catch (KeeperException e) {
+                    // fail
+                    complete(new IErrorResponse(e.code()));
+                    break;
+                }
+                submit(shards, backends.get());
                 break;
             }
             case SUBMITTING:
@@ -714,7 +733,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                         : ImmutableSet.copyOf(volumes);
         }
         
-        protected Map<Volume, ShardedRequestMessage<?>> getShards(Map<ZNodeLabel.Path, Volume> volumes) throws Exception {
+        protected Map<Volume, ShardedRequestMessage<?>> getShards(Map<ZNodeLabel.Path, Volume> volumes) throws KeeperException {
             this.state.compareAndSet(RequestState.NEW, RequestState.LOOKING);
             ImmutableSet<Volume> uniqueVolumes = getUniqueVolumes(volumes.values());
             Sets.SetView<Volume> difference = Sets.difference(uniqueVolumes, shards.keySet());
@@ -737,7 +756,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                                 ops = Lists.newLinkedList();
                                 byShardOps.put(v, ops);
                             }
-                            ops.add(op);
+                            ops.add(validate(v, op));
                         }
                     }
                     for (Map.Entry<Volume, List<Records.MultiOpRequest>> e: byShardOps.entrySet()) {
@@ -750,12 +769,32 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     }
                 } else {
                     for (Volume v: difference) {
+                        validate(v, task().getRecord());
                         shards.put(v, ShardedRequestMessage.of(v.getId(), task()));
                     }
                 }
             }
             assert (difference.isEmpty());
             return shards;
+        }
+        
+        protected <T extends Records.Request> T validate(Volume volume, T request) throws KeeperException {
+            switch (request.getOpcode()) {
+            case CREATE:
+            case CREATE2:
+            {
+                // special case: root of a volume can't be sequential!
+                Records.CreateModeGetter create = (Records.CreateModeGetter) request;
+                if (CreateMode.fromFlag(create.getFlags()).isSequential()
+                        && volume.getDescriptor().getRoot().toString().equals(create.getPath())) {
+                    // fail
+                    throw new KeeperException.BadArgumentsException(create.getPath());
+                }
+            }
+            default:
+                break;
+            }
+            return request;
         }
 
         protected Optional<Map<Volume, Set<BackendSession>>> getConnections(Set<Volume> volumes) throws Exception {
@@ -797,27 +836,6 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 Map<Volume, ShardedRequestMessage<?>> shards,
                 Map<Volume, Set<BackendSession>> backends) throws Exception {
             this.state.compareAndSet(RequestState.LOOKING, RequestState.SUBMITTING);
-
-            for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
-                switch (e.getValue().getRecord().getOpcode()) {
-                case CREATE:
-                case CREATE2:
-                {
-                    // special case: root of a volume can't be sequential!
-                    Records.CreateModeGetter create = (Records.CreateModeGetter) e.getValue().getRecord();
-                    if (CreateMode.fromFlag(create.getFlags()).isSequential()
-                            && e.getKey().getDescriptor().getRoot().toString().equals(create.getPath())) {
-                        // fail
-                        complete(new IErrorResponse(KeeperException.Code.BADARGUMENTS));
-                        return ImmutableMap.of();
-                    }
-                    break;
-                }
-                default:
-                    break;
-                }
-            }
-            
             for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
                 for (BackendSession backend: backends.get(e.getKey())) {
                     ClientPeerConnection<?> connection = backend.getConnection();
