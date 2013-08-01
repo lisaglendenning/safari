@@ -37,7 +37,7 @@ public class SimpleControlConnections extends AbstractModule {
     @Provides @Singleton
     public ControlConnectionsService<?> getControlClientConnectionFactory(
             ControlConfiguration configuration) {
-        ClientConnectionFactory<Operation.Request, ProtocolCodecConnection<Operation.Request,AssignXidCodec,IntraVmConnection<InetSocketAddress>>> clientConnections = 
+        ClientConnectionFactory<ProtocolCodecConnection<Operation.Request,AssignXidCodec,IntraVmConnection<InetSocketAddress>>> clientConnections = 
                 server.clients(SimpleClientConnections.<IntraVmConnection<InetSocketAddress>>codecFactory());
         return ControlConnectionsService.newInstance(clientConnections, configuration);
     }

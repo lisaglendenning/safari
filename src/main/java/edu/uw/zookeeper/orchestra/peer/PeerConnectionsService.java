@@ -109,13 +109,13 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
                 NettyModule netModule,
                 ServiceMonitor monitor,
                 Factory<Publisher> publishers) throws InterruptedException, ExecutionException, KeeperException {
-            ServerConnectionFactory<MessagePacket, Connection<MessagePacket>> serverConnections = 
+            ServerConnectionFactory<Connection<MessagePacket>> serverConnections = 
                     netModule.servers().get(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory())
                     .get(configuration.getView().address().get());
             monitor.addOnStart(serverConnections);
-            ClientConnectionFactory<MessagePacket, Connection<MessagePacket>> clientConnections =  
+            ClientConnectionFactory<Connection<MessagePacket>> clientConnections =  
                     netModule.clients().get(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
@@ -140,8 +140,8 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
     
     public static <C extends Connection<? super MessagePacket>> PeerConnectionsService<C> newInstance(
             Identifier identifier,
-            ServerConnectionFactory<? super MessagePacket, C> serverConnectionFactory,
-            ClientConnectionFactory<? super MessagePacket, C> clientConnectionFactory,
+            ServerConnectionFactory<C> serverConnectionFactory,
+            ClientConnectionFactory<C> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
             Materializer<?,?> control,
             ServiceLocator locator) {
@@ -161,8 +161,8 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
     
     protected PeerConnectionsService(
             Identifier identifier,
-            ServerConnectionFactory<? super MessagePacket, C> serverConnectionFactory,
-            ClientConnectionFactory<? super MessagePacket, C> clientConnectionFactory,
+            ServerConnectionFactory<C> serverConnectionFactory,
+            ClientConnectionFactory<C> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
             Materializer<?,?> control) {
         this.identifier = identifier;
@@ -235,18 +235,18 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
 
-    public class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements ConnectionFactory<MessagePacket, V> {
+    public class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements ConnectionFactory<V> {
         
-        protected final ConnectionFactory<? super MessagePacket, C> connections;
+        protected final ConnectionFactory<C> connections;
         protected final ConcurrentMap<Identifier, V> peers;
         
         public PeerConnections(
-                ConnectionFactory<? super MessagePacket, C> connections) {
+                ConnectionFactory<C> connections) {
             this.connections = connections;
             this.peers = new MapMaker().makeMap();
         }
         
-        public ConnectionFactory<? super MessagePacket, C> connections() {
+        public ConnectionFactory<C> connections() {
             return connections;
         }
 
@@ -332,7 +332,7 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
     
-    public class ClientPeerConnections extends PeerConnections<ClientPeerConnection> implements ClientConnectionFactory<MessagePacket, ClientPeerConnection> {
+    public class ClientPeerConnections extends PeerConnections<ClientPeerConnection> implements ClientConnectionFactory<ClientPeerConnection> {
 
         protected final MessagePacket handshake = MessagePacket.of(MessageHandshake.of(identifier));
         protected final ConnectionTask connectionTask = new ConnectionTask();
@@ -340,14 +340,14 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         
         public ClientPeerConnections(
                 Materializer<?,?> control,
-                ClientConnectionFactory<? super MessagePacket, C> connections) {
+                ClientConnectionFactory<C> connections) {
             super(connections);
             this.lookup = Orchestra.Peers.Entity.PeerAddress.lookup(control);
         }
 
         @Override
-        public ClientConnectionFactory<? super MessagePacket, C> connections() {
-            return (ClientConnectionFactory<? super MessagePacket, C>) connections;
+        public ClientConnectionFactory<C> connections() {
+            return (ClientConnectionFactory<C>) connections;
         }
 
         public ListenableFuture<ClientPeerConnection> connect(Identifier identifier) {
@@ -455,16 +455,16 @@ public class PeerConnectionsService<C extends Connection<? super MessagePacket>>
         }
     }
 
-    public class ServerPeerConnections extends PeerConnections<ServerPeerConnection> implements ServerConnectionFactory<MessagePacket, ServerPeerConnection> {
+    public class ServerPeerConnections extends PeerConnections<ServerPeerConnection> implements ServerConnectionFactory<ServerPeerConnection> {
 
         public ServerPeerConnections(
-                ServerConnectionFactory<? super MessagePacket, C> connections) {
+                ServerConnectionFactory<C> connections) {
             super(connections);
         }
 
         @Override
-        public ServerConnectionFactory<? super MessagePacket, C> connections() {
-            return (ServerConnectionFactory<? super MessagePacket, C>) connections;
+        public ServerConnectionFactory<C> connections() {
+            return (ServerConnectionFactory<C>) connections;
         }
 
         @Subscribe

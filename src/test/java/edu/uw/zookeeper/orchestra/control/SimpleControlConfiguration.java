@@ -16,13 +16,13 @@ import edu.uw.zookeeper.util.TimeValue;
 public class SimpleControlConfiguration extends AbstractModule {
 
     public static SimpleControlConfiguration create(
-            ServerConnectionFactory<?,?> server) {
+            ServerConnectionFactory<?> server) {
         return new SimpleControlConfiguration(server);
     }
     
-    protected final ServerConnectionFactory<?,?> server;
+    protected final ServerConnectionFactory<?> server;
     
-    public SimpleControlConfiguration(ServerConnectionFactory<?,?> server) {
+    public SimpleControlConfiguration(ServerConnectionFactory<?> server) {
         this.server = server;
     }
 

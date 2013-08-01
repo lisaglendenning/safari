@@ -53,7 +53,7 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
             ParameterizedFactory<Publisher, Pair<Class<Operation.Request>, AssignXidCodec>> codecFactory = ClientApplicationModule.codecFactory();
             ParameterizedFactory<Pair<Pair<Class<Operation.Request>, AssignXidCodec>, Connection<Operation.Request>>, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> pingingFactory = 
                     PingingClient.factory(configuration.getTimeOut(), scheduled);
-            ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
+            ClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
                     clientModule.get(codecFactory, pingingFactory).get();
             serviceMonitor.addOnStart(clientConnections);
             ControlConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
@@ -68,7 +68,7 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
     }
     
     public static <C extends Connection<? super Operation.Request>> ControlConnectionsService<C> newInstance(
-            ClientConnectionFactory<?, C> clientConnections,
+            ClientConnectionFactory<C> clientConnections,
             ControlConfiguration configuration) {
         EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory = 
                 EnsembleViewFactory.newInstance(
@@ -79,17 +79,17 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
         return new ControlConnectionsService<C>(clientConnections, factory);
     }
 
-    protected final ClientConnectionFactory<?,C> clientConnections;
+    protected final ClientConnectionFactory<C> clientConnections;
     protected final EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory;
     
     protected ControlConnectionsService(
-            ClientConnectionFactory<?, C> clientConnections,
+            ClientConnectionFactory<C> clientConnections,
             EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory) {
         this.clientConnections = clientConnections;
         this.factory = factory;
     }
     
-    public ClientConnectionFactory<?,C> clientConnections() {
+    public ClientConnectionFactory<C> clientConnections() {
         return clientConnections;
     }
     

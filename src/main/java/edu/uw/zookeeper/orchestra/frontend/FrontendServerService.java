@@ -58,7 +58,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                 ServiceLocator locator,
                 NettyModule netModule,
                 DependentServiceMonitor monitor) throws Exception {
-            ServerConnectionFactory<Message.Server, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
+            ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
                     netModule.servers().get(
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());

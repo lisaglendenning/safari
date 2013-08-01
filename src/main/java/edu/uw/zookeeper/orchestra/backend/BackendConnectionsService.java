@@ -50,7 +50,7 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
             ParameterizedFactory<Publisher, Pair<Class<Operation.Request>, AssignXidCodec>> codecFactory = ClientApplicationModule.codecFactory();
             ParameterizedFactory<Pair<Pair<Class<Operation.Request>, AssignXidCodec>, Connection<Operation.Request>>, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> pingingFactory = 
                     PingingClient.factory(configuration.getTimeOut(), executor);
-            ClientConnectionFactory<Operation.Request, PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
+            ClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
                    clientModule.get(codecFactory, pingingFactory).get();
             monitor.addOnStart(connections);
             ServerViewFactory.FixedClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
