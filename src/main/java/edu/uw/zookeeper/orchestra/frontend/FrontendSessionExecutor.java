@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -23,6 +24,8 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
@@ -57,6 +60,7 @@ import edu.uw.zookeeper.protocol.SessionOperation;
 import edu.uw.zookeeper.protocol.SessionRequest;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
+import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -505,11 +509,24 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             if (OpCodeXid.NOTIFICATION.getXid() == response.getXid()) {
                 ListenableFuture<? extends ShardedResponseMessage<?>> f = Futures.immediateFuture(response);
                 pending.add(finger, (ListenableFuture<ShardedResponseMessage<?>>) f);
+                finger += 1;
             } else {
-                BackendRequestTask.ResponseTask task = (BackendRequestTask.ResponseTask) pending.get(finger);
-                task.set(response);
+                while (finger < pending.size()) {
+                    BackendRequestTask.ResponseTask task = (BackendRequestTask.ResponseTask) pending.get(finger);
+                    if (response.getXid() == task.task().getXid()) {
+                        finger += 1;
+                        if (! task.set(response)) {
+                            logger.debug("Ignoring response {}", response);
+                        }
+                        break;
+                    } else if (task.isDone()) {
+                        finger += 1;
+                    } else {
+                        logger.debug("No match for response {}", response);
+                        break;
+                    }
+                }
             }
-            finger += 1;
         }
         
         public synchronized ListenableFuture<ShardedResponseMessage<?>> peek() {
@@ -630,7 +647,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
 
         protected final ImmutableSet<ZNodeLabel.Path> paths;
         protected final Map<ZNodeLabel.Path, Volume> volumes;
-        protected final Map<Volume, ShardedRequestMessage<?>> shards;
+        protected final BiMap<Volume, ShardedRequestMessage<?>> shards;
         protected final Map<Identifier, ResponseTask> submitted;
         protected final Set<ListenableFuturePending<?>> pending;
 
@@ -645,7 +662,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             super(task, delegate);
             this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.getRecord()));
             this.volumes = Collections.synchronizedMap(Maps.<ZNodeLabel.Path, Volume>newHashMap());
-            this.shards = Collections.synchronizedMap(Maps.<Volume, ShardedRequestMessage<?>>newHashMap());
+            this.shards = Maps.synchronizedBiMap(HashBiMap.<Volume, ShardedRequestMessage<?>>create());
             this.submitted = Collections.synchronizedMap(Maps.<Identifier, ResponseTask>newHashMap());
             this.pending = Collections.synchronizedSet(Sets.<ListenableFuturePending<?>>newHashSet());
         }
@@ -683,7 +700,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 if (! backends.isPresent()) {
                     break;
                 }
-                Map<Volume, ShardedRequestMessage<?>> shards;
+                BiMap<Volume, ShardedRequestMessage<?>> shards;
                 try {
                     shards = getShards(volumes.get());
                 } catch (KeeperException e) {
@@ -733,7 +750,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                         : ImmutableSet.copyOf(volumes);
         }
         
-        protected Map<Volume, ShardedRequestMessage<?>> getShards(Map<ZNodeLabel.Path, Volume> volumes) throws KeeperException {
+        protected BiMap<Volume, ShardedRequestMessage<?>> getShards(Map<ZNodeLabel.Path, Volume> volumes) throws KeeperException {
             this.state.compareAndSet(RequestState.NEW, RequestState.LOOKING);
             ImmutableSet<Volume> uniqueVolumes = getUniqueVolumes(volumes.values());
             Sets.SetView<Volume> difference = Sets.difference(uniqueVolumes, shards.keySet());
@@ -849,19 +866,83 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return submitted;
         }
         
-        @SuppressWarnings("unchecked")
         protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
             if (state.get() != RequestState.SUBMITTING) {
                 return this;
             }
-            // FIXME
+            
             Records.Response result = null;
-            for (ResponseTask response: submitted.values()) {
-                if (! response.isDone()) {
-                    result = null;
-                    break;
-                } else {
-                    result = ((Message.ServerResponse<Records.Response>) response.get()).getRecord();
+            if (OpCode.MULTI == task().getRecord().getOpcode()) {
+                Map<Volume, ListIterator<Records.MultiOpResponse>> responses = Maps.newHashMapWithExpectedSize(shards.size());
+                for (ResponseTask task: submitted.values()) {
+                    if (! task.isDone()) {
+                        break;
+                    } else {
+                        responses.put(
+                                shards.inverse().get(task.task()), 
+                                ((IMultiResponse) task.get().getRecord()).listIterator());
+                    }
+                }
+                if (Sets.difference(shards.keySet(), responses.keySet()).isEmpty()) {
+                    Map<Volume, ListIterator<Records.MultiOpRequest>> requests = Maps.newHashMapWithExpectedSize(shards.size());
+                    for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
+                        requests.put(
+                                e.getKey(), 
+                                ((IMultiRequest) e.getValue().getRecord()).listIterator());
+                    }
+                    IMultiRequest multi = (IMultiRequest) task().getRecord();
+                    List<Records.MultiOpResponse> ops = Lists.newArrayListWithCapacity(multi.size());
+                    for (Records.MultiOpRequest op: multi) {
+                        Volume v = null;
+                        Records.MultiOpResponse response = null;
+                        for (Map.Entry<Volume, ListIterator<Records.MultiOpRequest>> e: requests.entrySet()) {
+                            if (! e.getValue().hasNext()) {
+                                continue;
+                            }
+                            if (! op.equals(e.getValue().next())) {
+                                e.getValue().previous();
+                                continue;
+                            }
+                            if ((response == null) 
+                                    || (v.getDescriptor().getRoot().prefixOf(
+                                            e.getKey().getDescriptor().getRoot()))) {
+                                v = e.getKey();
+                                response = responses.get(v).next();
+                            }
+                        }
+                        assert (response != null);
+                        ops.add(response);
+                    }
+                    result = new IMultiResponse(ops);
+                }
+            } else {
+                ResponseTask selected = null;
+                for (ResponseTask task: submitted.values()) {
+                    if (! task.isDone()) {
+                        selected = null;
+                        break;
+                    } else {
+                         if (selected == null) {
+                            selected = task;
+                        } else {
+                            if ((selected.get().getRecord() instanceof Operation.Error) || (task.get().getRecord() instanceof Operation.Error)) {
+                                if (task().getRecord().getOpcode() != OpCode.CLOSE_SESSION) {
+                                    throw new UnsupportedOperationException();
+                                }
+                            } else {
+                                // we should only get here for create, create2, and delete
+                                // and only if the path is for a volume root
+                                // in that case, pick the response that came from the volume root
+                                if (shards.inverse().get(selected.task()).getDescriptor().getRoot().prefixOf(
+                                        shards.inverse().get(task.task()).getDescriptor().getRoot())) {
+                                    selected = task;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (selected != null) {
+                    result = selected.get().getRecord();
                 }
             }
             if (result != null) {
