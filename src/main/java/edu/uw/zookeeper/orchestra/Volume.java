@@ -2,6 +2,7 @@ package edu.uw.zookeeper.orchestra;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.base.Objects;
 
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Reference;
@@ -44,5 +45,10 @@ public class Volume extends AbstractPair<Identifier, VolumeDescriptor> {
     
     public VolumeDescriptor getDescriptor() {
         return second;
+    }
+    
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).addValue(getId()).addValue(getDescriptor()).toString();
     }
 }

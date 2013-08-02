@@ -102,7 +102,7 @@ public class AssignmentCacheService extends AbstractIdleService {
         updater.initialize();
         
         if (logger.isInfoEnabled()) {
-            logger.info("{}", assignments);
+            logger.info("Volume assignments: {}", assignments);
         }
     }
 
@@ -175,7 +175,7 @@ public class AssignmentCacheService extends AbstractIdleService {
                     Identifier prevAssignment = (assignment == null) ? assignments.remove(volumeId) : assignments.put(volumeId, assignment);
                     if (logger.isInfoEnabled()) {
                         if (! Objects.equal(prevAssignment, assignment)) {
-                            logger.info("Assignment ({}) {} -> {}", volumeId, prevAssignment, assignment);
+                            logger.info("Volume {} assigned to {} (previously {})", volumeId, assignment, prevAssignment);
                         }
                     }
                 }

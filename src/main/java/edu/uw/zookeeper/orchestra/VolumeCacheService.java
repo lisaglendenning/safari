@@ -181,7 +181,7 @@ public class VolumeCacheService extends AbstractIdleService implements Reference
                     Volume prev = (volumeDescriptor == null) ? get().remove(volumeId) : get().put(volume);
                     if (logger.isInfoEnabled()) {
                         if (! Objects.equal(volume, prev)) {
-                            logger.info("{} -> {}", prev, volume);
+                            logger.info("Volume updated to {} (previously {})", volume, prev);
                         }
                     }
                 }

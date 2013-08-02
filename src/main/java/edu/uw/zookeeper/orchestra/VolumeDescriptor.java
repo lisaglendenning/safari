@@ -1,17 +1,15 @@
 package edu.uw.zookeeper.orchestra;
 
 import java.util.Collection;
-import java.util.SortedSet;
-
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableSortedSet;
 
+import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.ZNodeLabel;
 
-public class VolumeDescriptor {
+public class VolumeDescriptor extends AbstractPair<ZNodeLabel.Path, ImmutableSortedSet<ZNodeLabel>> {
     
     public static VolumeDescriptor all() {
         return Holder.ALL.get();
@@ -46,24 +44,20 @@ public class VolumeDescriptor {
             return instance;
         }
     }
-    
-    protected final ZNodeLabel.Path root;
-    protected final ImmutableSortedSet<ZNodeLabel> leaves;
 
     @JsonCreator
     public VolumeDescriptor(
             @JsonProperty("root") ZNodeLabel.Path root, 
             @JsonProperty("leaves") Collection<ZNodeLabel> leaves) {
-        this.root = root;
-        this.leaves = ImmutableSortedSet.copyOf(leaves);
+        super(root, ImmutableSortedSet.copyOf(leaves));
     }
     
     public ZNodeLabel.Path getRoot() {
-        return root;
+        return first;
     }
     
-    public SortedSet<ZNodeLabel> getLeaves() {
-        return leaves;
+    public ImmutableSortedSet<ZNodeLabel> getLeaves() {
+        return second;
     }
     
     public ZNodeLabel.Path append(ZNodeLabel label) {
@@ -80,29 +74,5 @@ public class VolumeDescriptor {
             }
         }
         return true;
-    }
-    
-    @Override
-    public String toString() {
-        return Objects.toStringHelper(this).add("root", getRoot())
-                .add("leaves", getLeaves()).toString();
-    }
-    
-    @Override
-    public int hashCode() {
-        return Objects.hashCode(getRoot(), getLeaves());
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj == null || getClass() != obj.getClass()) {
-            return false;
-        }
-        VolumeDescriptor other = (VolumeDescriptor) obj;
-        return Objects.equal(getRoot(), other.getRoot()) 
-                && Objects.equal(getLeaves(), other.getLeaves());
     }
 }
