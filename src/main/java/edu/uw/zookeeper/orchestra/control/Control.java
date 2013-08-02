@@ -25,6 +25,11 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.TreeFetcher;
+import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.Reference;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Schema;
@@ -44,11 +49,6 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.proto.Records.Request;
 import edu.uw.zookeeper.protocol.proto.Records.Response;
-import edu.uw.zookeeper.util.Pair;
-import edu.uw.zookeeper.util.Promise;
-import edu.uw.zookeeper.util.PromiseTask;
-import edu.uw.zookeeper.util.Reference;
-import edu.uw.zookeeper.util.SettableFuturePromise;
 
 public abstract class Control {
 

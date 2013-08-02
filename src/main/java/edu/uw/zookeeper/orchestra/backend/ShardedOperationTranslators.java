@@ -5,9 +5,9 @@ import java.util.concurrent.ConcurrentMap;
 import com.google.common.base.Function;
 import com.google.common.collect.Maps;
 
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.util.Pair;
 
 public class ShardedOperationTranslators {
 

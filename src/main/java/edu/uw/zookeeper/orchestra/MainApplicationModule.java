@@ -9,6 +9,9 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
+import edu.uw.zookeeper.common.Application;
+import edu.uw.zookeeper.common.ParameterizedFactory;
+import edu.uw.zookeeper.common.ServiceApplication;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
 import edu.uw.zookeeper.netty.server.NettyServerModule;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
@@ -16,9 +19,6 @@ import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerService;
-import edu.uw.zookeeper.util.Application;
-import edu.uw.zookeeper.util.ParameterizedFactory;
-import edu.uw.zookeeper.util.ServiceApplication;
 
 public class MainApplicationModule extends AbstractModule {
 

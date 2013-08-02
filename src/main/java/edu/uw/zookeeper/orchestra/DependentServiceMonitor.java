@@ -7,8 +7,8 @@ import com.google.common.util.concurrent.Service;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.util.Reference;
-import edu.uw.zookeeper.util.ServiceMonitor;
+import edu.uw.zookeeper.common.Reference;
+import edu.uw.zookeeper.common.ServiceMonitor;
 
 @Singleton
 public class DependentServiceMonitor implements Reference<ServiceMonitor> {

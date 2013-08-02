@@ -8,8 +8,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableSortedSet;
 
+import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.util.Reference;
 
 public class VolumeDescriptor {
     

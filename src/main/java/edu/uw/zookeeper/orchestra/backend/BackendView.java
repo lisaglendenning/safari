@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.util.AbstractPair;
+import edu.uw.zookeeper.common.AbstractPair;
 
 public class BackendView extends AbstractPair<ServerInetAddressView, EnsembleView<ServerInetAddressView>> {
 

@@ -3,7 +3,7 @@ package edu.uw.zookeeper.orchestra;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 
-import edu.uw.zookeeper.util.Reference;
+import edu.uw.zookeeper.common.Reference;
 
 public class InjectorServiceLocator implements ServiceLocator, Reference<Injector> {
 

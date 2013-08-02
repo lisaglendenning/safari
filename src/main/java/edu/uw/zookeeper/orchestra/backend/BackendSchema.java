@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.backend;
 
+import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.Label;
 import edu.uw.zookeeper.data.ZNode;
@@ -7,7 +8,6 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.SchemaInstance;
-import edu.uw.zookeeper.util.Reference;
 
 @ZNode(acl=Acls.Definition.ANYONE_ALL, label="/")
 public abstract class BackendSchema {

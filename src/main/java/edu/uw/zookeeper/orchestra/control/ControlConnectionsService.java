@@ -14,6 +14,11 @@ import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
+import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.ParameterizedFactory;
+import edu.uw.zookeeper.common.Publisher;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
@@ -21,11 +26,6 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.protocol.client.PingingClient;
-import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.Pair;
-import edu.uw.zookeeper.util.ParameterizedFactory;
-import edu.uw.zookeeper.util.Publisher;
-import edu.uw.zookeeper.util.ServiceMonitor;
 
 class ControlConnectionsService<C extends Connection<? super Operation.Request>> extends AbstractIdleService implements Factory<ClientConnectionExecutor<C>> {
 

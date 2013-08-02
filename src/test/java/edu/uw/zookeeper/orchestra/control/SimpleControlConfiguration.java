@@ -10,8 +10,8 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
-import edu.uw.zookeeper.util.TimeValue;
 
 public class SimpleControlConfiguration extends AbstractModule {
 

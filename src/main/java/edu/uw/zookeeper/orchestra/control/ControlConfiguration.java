@@ -6,8 +6,8 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientApplicationModule;
-import edu.uw.zookeeper.util.Configuration;
-import edu.uw.zookeeper.util.TimeValue;
+import edu.uw.zookeeper.common.Configuration;
+import edu.uw.zookeeper.common.TimeValue;
 
 public class ControlConfiguration {
  

@@ -22,6 +22,13 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.Factories;
+import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependentService;
@@ -56,13 +63,6 @@ import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.Automaton;
-import edu.uw.zookeeper.util.Factories;
-import edu.uw.zookeeper.util.Pair;
-import edu.uw.zookeeper.util.Promise;
-import edu.uw.zookeeper.util.PromiseTask;
-import edu.uw.zookeeper.util.SettableFuturePromise;
-import edu.uw.zookeeper.util.TimeValue;
 
 @DependsOn({ControlMaterializerService.class, BackendConnectionsService.class})
 public class BackendRequestService<C extends Connection<? super Operation.Request>> extends DependentService.SimpleDependentService {

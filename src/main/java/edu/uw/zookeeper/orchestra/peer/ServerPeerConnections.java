@@ -4,6 +4,7 @@ import java.net.SocketAddress;
 
 import com.google.common.eventbus.Subscribe;
 
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.Identifier;
@@ -11,7 +12,6 @@ import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageType;
-import edu.uw.zookeeper.util.Automaton;
 
 public class ServerPeerConnections<C extends Connection<? super MessagePacket>> extends PeerConnections<C, ServerPeerConnection<Connection<? super MessagePacket>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket>>> {
 

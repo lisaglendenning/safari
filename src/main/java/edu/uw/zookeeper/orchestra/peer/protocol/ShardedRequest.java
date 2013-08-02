@@ -1,8 +1,8 @@
 package edu.uw.zookeeper.orchestra.peer.protocol;
 
+import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.util.AbstractPair;
 
 public class ShardedRequest<V extends Operation.Request> extends AbstractPair<Identifier, V> implements ShardedOperation.Request<V> {
 

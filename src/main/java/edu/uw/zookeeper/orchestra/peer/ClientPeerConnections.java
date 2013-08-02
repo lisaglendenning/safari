@@ -11,6 +11,8 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.CachedFunction;
@@ -19,8 +21,6 @@ import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.util.Promise;
-import edu.uw.zookeeper.util.PromiseTask;
 
 public class ClientPeerConnections<C extends Connection<? super MessagePacket>> extends PeerConnections<C, ClientPeerConnection<Connection<? super MessagePacket>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket>>> {
 

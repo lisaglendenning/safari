@@ -3,8 +3,8 @@ package edu.uw.zookeeper.orchestra;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import edu.uw.zookeeper.util.AbstractPair;
-import edu.uw.zookeeper.util.Reference;
+import edu.uw.zookeeper.common.AbstractPair;
+import edu.uw.zookeeper.common.Reference;
 
 public class Volume extends AbstractPair<Identifier, VolumeDescriptor> {
 

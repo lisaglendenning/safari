@@ -14,10 +14,10 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.AbstractMain.ListeningExecutorServiceFactory;
-import edu.uw.zookeeper.util.Configuration;
-import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.Publisher;
-import edu.uw.zookeeper.util.ServiceMonitor;
+import edu.uw.zookeeper.common.Configuration;
+import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.common.Publisher;
+import edu.uw.zookeeper.common.ServiceMonitor;
 
 public class RuntimeModuleProvider extends AbstractModule implements Provider<RuntimeModule> {
 

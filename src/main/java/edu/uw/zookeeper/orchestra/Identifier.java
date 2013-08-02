@@ -11,8 +11,8 @@ import com.google.common.collect.ForwardingNavigableSet;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.UnsignedInteger;
 
+import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.Serializes;
-import edu.uw.zookeeper.util.Reference;
 
 public class Identifier implements Comparable<Identifier> {
 
@@ -41,7 +41,7 @@ public class Identifier implements Comparable<Identifier> {
         for (int toPrepend=CHARACTERS-str.length(); toPrepend>0; toPrepend--) {
             sb.append('0');
         }
-        sb.append(value);
+        sb.append(str);
         return sb.toString();
     }
 

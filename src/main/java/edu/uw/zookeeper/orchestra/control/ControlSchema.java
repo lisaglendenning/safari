@@ -21,6 +21,11 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.Reference;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.Label;
 import edu.uw.zookeeper.data.Operations;
@@ -33,11 +38,6 @@ import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.backend.BackendView;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.Pair;
-import edu.uw.zookeeper.util.Promise;
-import edu.uw.zookeeper.util.PromiseTask;
-import edu.uw.zookeeper.util.Reference;
-import edu.uw.zookeeper.util.SettableFuturePromise;
 
 public abstract class ControlSchema extends Control.ControlZNode {
     

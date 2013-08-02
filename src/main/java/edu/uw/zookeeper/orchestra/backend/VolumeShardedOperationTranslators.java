@@ -1,11 +1,12 @@
 package edu.uw.zookeeper.orchestra.backend;
 
 import com.google.common.base.Function;
+
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.Pair;
 
 // TODO: what about volume changes?
 public class VolumeShardedOperationTranslators extends ShardedOperationTranslators {

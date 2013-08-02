@@ -10,10 +10,10 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.server.ServerApplicationModule;
-import edu.uw.zookeeper.util.Configuration;
 
 public class FrontendConfiguration {
 

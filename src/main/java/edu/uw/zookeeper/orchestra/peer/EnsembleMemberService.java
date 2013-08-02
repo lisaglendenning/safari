@@ -23,6 +23,9 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.Automatons;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
@@ -39,9 +42,6 @@ import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.control.ControlSchema.Ensembles.Entity;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.Automaton;
-import edu.uw.zookeeper.util.Automatons;
-import edu.uw.zookeeper.util.Pair;
 
 @DependsOn({ControlMaterializerService.class})
 public class EnsembleMemberService extends DependentService.SimpleDependentService {

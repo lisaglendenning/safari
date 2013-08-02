@@ -18,6 +18,11 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.ParameterizedFactory;
+import edu.uw.zookeeper.common.Publisher;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -33,11 +38,6 @@ import edu.uw.zookeeper.orchestra.peer.protocol.FramedMessagePacketCodec;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
-import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.Pair;
-import edu.uw.zookeeper.util.ParameterizedFactory;
-import edu.uw.zookeeper.util.Publisher;
-import edu.uw.zookeeper.util.ServiceMonitor;
 
 public class PeerConnectionsService<T> extends AbstractIdleService {
 

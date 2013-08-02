@@ -16,6 +16,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.GetEvent;
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.intravm.EndpointFactory;
@@ -31,7 +32,6 @@ import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.Pair;
 
 @RunWith(JUnit4.class)
 public class ShardedClientConnectionExecutorTest {

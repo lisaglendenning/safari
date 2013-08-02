@@ -9,6 +9,10 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.EventLoopGroup;
 
 import edu.uw.zookeeper.RuntimeModule;
+import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.common.ParameterizedFactory;
+import edu.uw.zookeeper.common.Publisher;
+import edu.uw.zookeeper.common.Singleton;
 import edu.uw.zookeeper.netty.DaemonThreadFactory;
 import edu.uw.zookeeper.netty.EventLoopGroupService;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
@@ -16,10 +20,6 @@ import edu.uw.zookeeper.netty.client.NioClientBootstrapFactory;
 import edu.uw.zookeeper.netty.nio.NioEventLoopGroupFactory;
 import edu.uw.zookeeper.netty.server.NioServerBootstrapFactory;
 import edu.uw.zookeeper.netty.server.NettyServerModule;
-import edu.uw.zookeeper.util.Factory;
-import edu.uw.zookeeper.util.ParameterizedFactory;
-import edu.uw.zookeeper.util.Publisher;
-import edu.uw.zookeeper.util.Singleton;
 
 public class NettyModule {
 

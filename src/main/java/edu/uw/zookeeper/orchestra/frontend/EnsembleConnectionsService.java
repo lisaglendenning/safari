@@ -25,6 +25,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.CachedFunction;
@@ -42,7 +43,6 @@ import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.Factories;
 
 @DependsOn({PeerConnectionsService.class})
 public class EnsembleConnectionsService extends DependentService.SimpleDependentService implements Iterable<Identifier> {

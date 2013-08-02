@@ -9,11 +9,11 @@ import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.util.Automaton;
 
 public class PeerConnections<C extends Connection<? super MessagePacket>, V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements ConnectionFactory<V> {
     

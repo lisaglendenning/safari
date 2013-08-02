@@ -14,6 +14,7 @@ import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependentService;
 import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependsOn;
@@ -21,7 +22,6 @@ import edu.uw.zookeeper.orchestra.InjectorServiceLocator;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.server.SimpleServerConnections;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
-import edu.uw.zookeeper.util.ServiceMonitor;
 
 @RunWith(JUnit4.class)
 public class ControlTest {

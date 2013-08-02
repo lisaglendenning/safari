@@ -31,14 +31,14 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
 import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Arguments;
+import edu.uw.zookeeper.common.Configuration;
+import edu.uw.zookeeper.common.DefaultsFactory;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
 import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.util.Arguments;
-import edu.uw.zookeeper.util.Configuration;
-import edu.uw.zookeeper.util.DefaultsFactory;
-import edu.uw.zookeeper.util.TimeValue;
 
 public class BackendConfiguration {
 

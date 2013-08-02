@@ -9,9 +9,9 @@ import com.google.common.base.Optional;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.MapMaker;
 
+import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
-import edu.uw.zookeeper.util.Reference;
 
 public class VolumeCache {
 

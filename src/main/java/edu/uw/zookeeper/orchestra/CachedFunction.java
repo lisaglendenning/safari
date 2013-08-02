@@ -5,7 +5,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.util.Pair;
+import edu.uw.zookeeper.common.Pair;
 
 public class CachedFunction<I,O> extends Pair<Function<I,O>, AsyncFunction<I,O>> implements AsyncFunction<I,O> {
 

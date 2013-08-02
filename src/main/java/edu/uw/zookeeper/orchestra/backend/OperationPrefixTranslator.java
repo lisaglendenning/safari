@@ -4,11 +4,11 @@ import java.util.List;
 
 import com.google.common.collect.Lists;
 
+import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.AbstractPair;
 
 public class OperationPrefixTranslator extends AbstractPair<RecordPrefixTranslator<Records.Request>, RecordPrefixTranslator<Records.Response>> {
 

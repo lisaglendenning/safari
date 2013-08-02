@@ -1,7 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import static com.google.common.base.Preconditions.checkNotNull;
-import edu.uw.zookeeper.util.Pair;
+import edu.uw.zookeeper.common.Pair;
 
 public class MessagePacket extends Pair<MessageHeader, MessageBody> {
 

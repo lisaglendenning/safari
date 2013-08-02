@@ -5,10 +5,10 @@ import java.util.Map;
 
 import com.google.common.collect.ImmutableMap;
 
+import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.Schema;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.ZNodeSchema.Builder.ZNodeTraversal;
-import edu.uw.zookeeper.util.Reference;
 
 public class SchemaInstance implements Reference<Schema> {
         

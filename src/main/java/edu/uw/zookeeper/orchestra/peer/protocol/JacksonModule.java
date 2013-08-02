@@ -24,12 +24,12 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerAddressView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerView;
+import edu.uw.zookeeper.common.Reference;
+import edu.uw.zookeeper.common.Singleton;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.Serializes;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.util.Reference;
-import edu.uw.zookeeper.util.Singleton;
 
 public class JacksonModule extends SimpleModule {
 

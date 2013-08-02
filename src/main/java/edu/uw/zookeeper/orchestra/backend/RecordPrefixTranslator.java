@@ -2,10 +2,10 @@ package edu.uw.zookeeper.orchestra.backend;
 
 import com.google.common.base.Function;
 
+import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.util.AbstractPair;
 
 public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPair<ZNodeLabel.Path, ZNodeLabel.Path> implements Function<T,T> {
 

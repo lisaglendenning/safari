@@ -22,13 +22,13 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.common.Reference;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.util.Reference;
-import edu.uw.zookeeper.util.ServiceMonitor;
 
 @DependsOn(ControlMaterializerService.class)
 public class VolumeCacheService extends AbstractIdleService implements Reference<VolumeCache> {
