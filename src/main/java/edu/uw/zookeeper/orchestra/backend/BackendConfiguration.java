@@ -13,8 +13,8 @@ import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
 
 import org.apache.zookeeper.KeeperException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
@@ -96,7 +96,7 @@ public class BackendConfiguration {
             return instance.call();
         }
         
-        protected final Logger logger = LoggerFactory.getLogger(BackendAddressDiscovery.class);
+        protected final Logger logger = LogManager.getLogger();
         protected final Configuration configuration;
         
         public BackendAddressDiscovery(Configuration configuration) {

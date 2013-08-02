@@ -16,10 +16,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
-import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
@@ -40,6 +39,8 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.data.CreateFlag;
+import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.CachedFunction;
@@ -101,7 +102,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
             Executor executor) {
         super(executor, FutureQueue.<RequestFuture>create(), AbstractActor.newState());
-        this.logger = LoggerFactory.getLogger(getClass());
+        this.logger = LogManager.getLogger(getClass());
         this.session = session;
         this.publisher = publisher;
         this.processor = processor;
@@ -833,7 +834,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             {
                 // special case: root of a volume can't be sequential!
                 Records.CreateModeGetter create = (Records.CreateModeGetter) request;
-                if (CreateMode.fromFlag(create.getFlags()).isSequential()
+                if (CreateMode.valueOf(create.getFlags()).contains(CreateFlag.SEQUENTIAL)
                         && volume.getDescriptor().getRoot().toString().equals(create.getPath())) {
                     // fail
                     throw new KeeperException.BadArgumentsException(create.getPath());

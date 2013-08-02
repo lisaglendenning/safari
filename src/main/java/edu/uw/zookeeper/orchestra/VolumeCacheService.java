@@ -6,8 +6,8 @@ import java.util.concurrent.ExecutionException;
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
@@ -70,7 +70,7 @@ public class VolumeCacheService extends AbstractIdleService implements Reference
     
     public VolumeCacheService(
             Materializer<?,?> client) {
-        this.logger = LoggerFactory.getLogger(getClass());
+        this.logger = LogManager.getLogger(getClass());
         this.client = client;
         this.volumes = VolumeCache.newInstance();
         this.lookup = CachedFunction.create(

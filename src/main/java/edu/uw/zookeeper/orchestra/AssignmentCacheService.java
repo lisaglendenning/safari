@@ -6,9 +6,9 @@ import java.util.concurrent.ExecutionException;
 
 import javax.annotation.Nullable;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
@@ -71,7 +71,7 @@ public class AssignmentCacheService extends AbstractIdleService {
     
     public AssignmentCacheService(
             Materializer<?,?> client) {
-        this.logger = LoggerFactory.getLogger(getClass());
+        this.logger = LogManager.getLogger(getClass());
         this.client = client;
         this.assignments = new MapMaker().makeMap();
         this.lookup = CachedFunction.create(

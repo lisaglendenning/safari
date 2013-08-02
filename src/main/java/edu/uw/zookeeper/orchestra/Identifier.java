@@ -14,7 +14,7 @@ import com.google.common.primitives.UnsignedInteger;
 import edu.uw.zookeeper.data.Serializes;
 import edu.uw.zookeeper.util.Reference;
 
-public class Identifier implements Reference<UnsignedInteger>, Comparable<Identifier> {
+public class Identifier implements Comparable<Identifier> {
 
     public static Identifier zero() {
         return Holder.ZERO.get();
@@ -32,6 +32,17 @@ public class Identifier implements Reference<UnsignedInteger>, Comparable<Identi
 
     public static Identifier valueOf(int bits) {
         return new Identifier(UnsignedInteger.fromIntBits(bits));
+    }
+    
+    public static String toString(UnsignedInteger value) {
+        // String.format won't left pad zeros for a string
+        String str = value.toString(RADIX);
+        StringBuilder sb = new StringBuilder();
+        for (int toPrepend=CHARACTERS-str.length(); toPrepend>0; toPrepend--) {
+            sb.append('0');
+        }
+        sb.append(value);
+        return sb.toString();
     }
 
     public static final int BYTES = Ints.BYTES;
@@ -56,19 +67,20 @@ public class Identifier implements Reference<UnsignedInteger>, Comparable<Identi
     }
     
     protected final UnsignedInteger value;
+    protected final String asString;
     
     public Identifier(UnsignedInteger value) {
         this.value = checkNotNull(value);
+        this.asString = toString(value);
     }
     
-    @Override
-    public UnsignedInteger get() {
+    public UnsignedInteger intValue() {
         return value;
     }
 
     @Override
     public int compareTo(Identifier o) {
-        return get().compareTo(o.get());
+        return intValue().compareTo(o.intValue());
     }
     
     @Override
@@ -80,25 +92,18 @@ public class Identifier implements Reference<UnsignedInteger>, Comparable<Identi
             return false;
         }
         Identifier other = (Identifier) obj;
-        return Objects.equal(get(), other.get());
+        return Objects.equal(intValue(), other.intValue());
     }
     
     @Override
     public int hashCode() {
-        return Objects.hashCode(get());
+        return Objects.hashCode(intValue());
     }
     
     @Serializes(from=Identifier.class, to=String.class)
     @Override
     public String toString() {
-        // String.format won't left pad zeros for a string
-        String value = get().toString(RADIX);
-        StringBuilder sb = new StringBuilder();
-        for (int toPrepend=CHARACTERS-value.length(); toPrepend>0; toPrepend--) {
-            sb.append('0');
-        }
-        sb.append(value);
-        return sb.toString();
+        return asString;
     }
     
     public static class Space extends ForwardingNavigableSet<Identifier> {

@@ -7,7 +7,6 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
-import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
@@ -22,6 +21,7 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.Label;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNode;
