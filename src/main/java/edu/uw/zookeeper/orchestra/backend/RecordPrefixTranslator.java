@@ -34,7 +34,7 @@ public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPai
     public T apply(T input) {
         T output = input;
         if (input instanceof Records.PathGetter) {
-            Operations.PathBuilder<?> builder = (Operations.PathBuilder<?>) Operations.fromRecord(input);
+            Operations.PathBuilder<?,?> builder = (Operations.PathBuilder<?,?>) Operations.fromRecord(input);
             ZNodeLabel.Path path = builder.getPath();
             if (getFromPrefix().prefixOf(path)) {
                 int prefixLen = getFromPrefix().length();
