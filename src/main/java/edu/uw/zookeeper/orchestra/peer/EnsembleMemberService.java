@@ -25,7 +25,6 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
-import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
@@ -105,22 +104,22 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected void startUp() throws Exception {      
         super.startUp();
         
-        Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> materializer = control.materializer();
-        Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>.Operator operator = materializer.operator();
+        Materializer<Message.ServerResponse<Records.Response>> materializer = control.materializer();
+        Materializer<Message.ServerResponse<Records.Response>>.Operator operator = materializer.operator();
 
         // Register my identifier
-        Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> result = operator.create(Control.path(myMember.parent())).submit().get();
-        Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
+        Message.ServerResponse<Records.Response> result = operator.create(Control.path(myMember.parent())).submit().get();
+        Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
         result = operator.create(myMember.path()).submit().get();
-        Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
+        Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
 
         // Propose myself as leader
         EnsembleRole role = this.role.elect();
         
         // Global barrier - Wait for every ensemble to elect a leader
-        Predicate<Materializer<?,?>> allLeaders = new Predicate<Materializer<?,?>>() {
+        Predicate<Materializer<?>> allLeaders = new Predicate<Materializer<?>>() {
             @Override
-            public boolean apply(@Nullable Materializer<?,?> input) {
+            public boolean apply(@Nullable Materializer<?> input) {
                 ZNodeLabel.Path root = Control.path(ControlSchema.Ensembles.class);
                 ZNodeLabel.Component label = ControlSchema.Ensembles.Entity.Leader.LABEL;
                 boolean done = true;
@@ -133,7 +132,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                 return done;
             }
         };
-        Control.FetchUntil.newInstance(Control.path(ControlSchema.Ensembles.class), allLeaders, materializer, MoreExecutors.sameThreadExecutor()).get();
+        Control.FetchUntil.newInstance(Control.path(ControlSchema.Ensembles.class), allLeaders, materializer).get();
     
         if (EnsembleRole.LEADING == role) {
             // create root volume if there are no volumes
@@ -167,7 +166,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected class RoleOverseer implements FutureCallback<WatchEvent> {
     
         protected final ZNodeLabel.Path leaderPath;
-        protected final ControlSchema.Ensembles.Entity.Leader.Proposer<?,?> proposer;
+        protected final ControlSchema.Ensembles.Entity.Leader.Proposer<?> proposer;
         protected final Automatons.SynchronizedEventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
         protected final StampedReference.Updater<ControlSchema.Ensembles.Entity.Leader> leader;
         

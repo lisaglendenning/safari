@@ -12,7 +12,6 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Configuration;
-import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
@@ -45,10 +44,10 @@ public class PeerConfiguration {
         }
     }
 
-    public static void advertise(Identifier peerId, Materializer<?,?> materializer) throws KeeperException, InterruptedException, ExecutionException {
+    public static void advertise(Identifier peerId, Materializer<?> materializer) throws KeeperException, InterruptedException, ExecutionException {
         ControlSchema.Peers.Entity entity = ControlSchema.Peers.Entity.of(peerId);
-        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> result = entity.presence().create(materializer).get();
-        Operations.unlessError(result.second().getRecord(), result.toString());
+        Operation.ProtocolResponse<?> result = entity.presence().create(materializer).get();
+        Operations.unlessError(result.getRecord());
     }
     
     private final PeerAddressView address;

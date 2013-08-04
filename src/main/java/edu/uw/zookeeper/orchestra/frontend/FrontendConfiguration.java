@@ -36,7 +36,7 @@ public class FrontendConfiguration {
         }
     }
     
-    public static void advertise(Identifier peerId, ServerInetAddressView address, Materializer<?,?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+    public static void advertise(Identifier peerId, ServerInetAddressView address, Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
         ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.of(peerId);
         ControlSchema.Peers.Entity.ClientAddress clientAddressNode = ControlSchema.Peers.Entity.ClientAddress.create(address, entityNode, materializer).get();
         if (! address.equals(clientAddressNode.get())) {

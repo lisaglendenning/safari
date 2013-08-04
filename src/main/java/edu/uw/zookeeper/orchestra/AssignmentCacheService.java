@@ -57,20 +57,20 @@ public class AssignmentCacheService extends AbstractIdleService {
     }
     
     public AssignmentCacheService newInstance(
-            Materializer<?,?> client) {
+            Materializer<?> client) {
         return new AssignmentCacheService(client);
     }
     
     protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
-    protected final Materializer<?,?> client;
+    protected final Materializer<?> client;
     protected final ConcurrentMap<Identifier, Identifier> assignments;
     protected final CachedFunction<Identifier, Identifier> lookup;
     protected final UpdateFromCache updater;
     
     public AssignmentCacheService(
-            Materializer<?,?> client) {
+            Materializer<?> client) {
         this.logger = LogManager.getLogger(getClass());
         this.client = client;
         this.assignments = new MapMaker().makeMap();

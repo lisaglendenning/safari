@@ -63,7 +63,7 @@ public class BackendConfiguration {
         }
     }
 
-    public static void advertise(Identifier myEntity, BackendView view, Materializer<?, ?> materializer) throws InterruptedException, ExecutionException, KeeperException {
+    public static void advertise(Identifier myEntity, BackendView view, Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
         ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.of(myEntity);
         ControlSchema.Peers.Entity.Backend backendNode = ControlSchema.Peers.Entity.Backend.create(view, entityNode, materializer).get();
         if (! view.equals(backendNode.get())) {

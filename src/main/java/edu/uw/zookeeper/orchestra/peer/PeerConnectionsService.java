@@ -31,6 +31,7 @@ import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
+import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
@@ -122,7 +123,7 @@ public class PeerConnectionsService<T> extends AbstractIdleService {
             ServerConnectionFactory<C> serverConnectionFactory,
             ClientConnectionFactory<C> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
-            Materializer<?,?> control,
+            Materializer<?> control,
             ServiceLocator locator) {
         PeerConnectionsService<C> instance = new PeerConnectionsService<C>(
                 identifier, 
@@ -144,10 +145,10 @@ public class PeerConnectionsService<T> extends AbstractIdleService {
             ServerConnectionFactory<?> serverConnectionFactory,
             ClientConnectionFactory<?> clientConnectionFactory,
             Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
-            Materializer<?,?> control) {
+            Materializer<?> control) {
         this.identifier = identifier;
         this.servers = new ServerPeerConnections(identifier, serverConnectionFactory);
-        this.clients = new ClientPeerConnections(identifier, control, clientConnectionFactory);
+        this.clients = new ClientPeerConnections(identifier, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
         
         servers.put(new ServerPeerConnection(identifier, identifier, loopback.first()));
         clients.put(new ClientPeerConnection(identifier, identifier, loopback.second()));
@@ -194,7 +195,7 @@ public class PeerConnectionsService<T> extends AbstractIdleService {
     
         @Override
         public void running() {
-            Materializer<?,?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
+            Materializer<?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
             try {
                 PeerConfiguration.advertise(identifier(), materializer);
             } catch (Exception e) {

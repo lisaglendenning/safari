@@ -2,8 +2,6 @@ package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.concurrent.Executor;
 
-import javax.annotation.Nullable;
-
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -99,9 +97,9 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
         
         // Global barrier - Wait for all volumes to be assigned
-        Predicate<Materializer<?,?>> allAssigned = new Predicate<Materializer<?,?>>() {
+        Predicate<Materializer<?>> allAssigned = new Predicate<Materializer<?>>() {
             @Override
-            public boolean apply(@Nullable Materializer<?,?> input) {
+            public boolean apply(Materializer<?> input) {
                 ZNodeLabel.Component label = ControlSchema.Volumes.Entity.Ensemble.LABEL;
                 boolean done = true;
                 for (Materializer.MaterializedNode e: input.get(VOLUMES_PATH).values()) {
@@ -113,7 +111,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                 return done;
             }
         };
-        Control.FetchUntil.newInstance(VOLUMES_PATH, allAssigned, locator().getInstance(ControlMaterializerService.class).materializer(), MoreExecutors.sameThreadExecutor()).get();
+        Control.FetchUntil.newInstance(VOLUMES_PATH, allAssigned, locator().getInstance(ControlMaterializerService.class).materializer()).get();
 
         connections().start().get();
     }
@@ -137,7 +135,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
 
         @Override
         public void running() {
-            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
+            Materializer<?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
             Identifier peerId = locator().getInstance(PeerConfiguration.class).getView().id();
             ServerInetAddressView address = locator().getInstance(FrontendConfiguration.class).getAddress();
             try {

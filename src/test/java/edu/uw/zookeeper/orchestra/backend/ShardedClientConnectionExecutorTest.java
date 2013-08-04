@@ -26,7 +26,6 @@ import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.VolumeCache;
 import edu.uw.zookeeper.orchestra.control.Hash;
-import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
@@ -73,7 +72,7 @@ public class ShardedClientConnectionExecutorTest {
                 connections.first());
         
         GetEvent<Message.ClientRequest<?>> requestEvent = GetEvent.newInstance(connections.second());
-        ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> clientFuture = client.submit(Operations.Requests.getChildren().setPath(volume.getDescriptor().getRoot()).build());
+        ListenableFuture<Message.ServerResponse<Records.Response>> clientFuture = client.submit(Operations.Requests.getChildren().setPath(volume.getDescriptor().getRoot()).build());
         connections.second().read();
         assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().getRecord()).getPath());
 
@@ -82,8 +81,7 @@ public class ShardedClientConnectionExecutorTest {
         ListenableFuture<Message.ServerResponse<Records.Response>> serverFuture = connections.second().write(response);
         connections.first().read();
         serverFuture.get();
-        assertEquals(volume.getId(), ((ShardedRequestMessage<?>) clientFuture.get().first()).getIdentifier());
-        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get().second()).getIdentifier());
+        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get()).getIdentifier());
         
         volume = volumes.get(ZNodeLabel.Path.of("/v1"));
         requestEvent = GetEvent.newInstance(connections.second());
@@ -96,8 +94,7 @@ public class ShardedClientConnectionExecutorTest {
         serverFuture = connections.second().write(response);
         connections.first().read();
         serverFuture.get();
-        assertEquals(volume.getId(), ((ShardedRequestMessage<?>) clientFuture.get().first()).getIdentifier());
-        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get().second()).getIdentifier());
+        assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get()).getIdentifier());
 
     }
 }

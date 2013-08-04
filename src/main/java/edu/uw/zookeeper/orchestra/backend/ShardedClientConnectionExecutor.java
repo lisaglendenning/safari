@@ -6,7 +6,7 @@ import com.google.common.base.Function;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -59,22 +59,23 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     }
     
     @Override
-    public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> submit(Operation.Request request) {
-        return submit(request, SettableFuturePromise.<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>>create());
+    public ListenableFuture<Message.ServerResponse<Records.Response>> submit(Operation.Request request) {
+        return submit(request, SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
     }
 
     @Override
-    public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> submit(Operation.Request request, Promise<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> promise) {
-        ShardedRequestTask task = new ShardedRequestTask(request, promise, shard(request));
+    public ListenableFuture<Message.ServerResponse<Records.Response>> submit(Operation.Request request, Promise<Message.ServerResponse<Records.Response>> promise) {
+        ShardedRequestTask task = new ShardedRequestTask(shard(request), 
+                LoggingPromise.create(logger, promise));
         send(task);
         return task;
     }
     
-    @SuppressWarnings("unchecked")
     public ShardedOperation.Request<?> shard(Operation.Request request) {
-        Records.Request record = (request instanceof Records.Request) ?
-                (Records.Request) request :
-                ((Operation.RecordHolder<Records.Request>) request).getRecord();
+        Records.Request record = 
+                (Records.Request) ((request instanceof Records.Request) ?
+                 request :
+                ((Operation.RecordHolder<?>) request).getRecord());
         Identifier shard = Identifier.zero();
         if (request instanceof ShardedOperation) {
             shard = ((ShardedOperation) request).getIdentifier();
@@ -105,94 +106,65 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
 
     @Override
     @Subscribe
-    public void handleResponse(Message.ServerResponse<Records.Response> message) throws InterruptedException {
-        if ((state.get() != State.TERMINATED) && ! (message instanceof ShardedResponseMessage)) {
-            receive(message);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    protected void applyReceived(PendingTask task, Message.ServerResponse<Records.Response> response) {
-        ShardedResponseMessage<Records.Response> unshardedResponse;
-
-        if ((task != null) && (task.task().getXid() == response.getXid())) {
-            ShardedRequestTask shardedTask = (ShardedRequestTask) task.delegate();
-            Identifier id = shardedTask.sharded().getIdentifier();
-            Operation.Request input = shardedTask.input();
-            ShardedRequestMessage<Records.Request> unshardedRequest;
-            if (input instanceof ShardedRequestMessage) {
-                unshardedRequest = (ShardedRequestMessage<Records.Request>) input;
-            } else {
-                Message.ClientRequest<Records.Request> request;
-                if (input instanceof Message.ClientRequest) {
-                    request = (Message.ClientRequest<Records.Request>) input;
-                } else {
-                    request = ProtocolRequestMessage.of(
-                                task.task().getXid(),
-                                (Records.Request) input);
-                }
-                unshardedRequest = ShardedRequestMessage.of(id, request);
-            }
-
-            Records.Response record = response.getRecord();
-            Records.Response translated = translator.get(id).apply(record);
-            if (translated == record) {
-                unshardedResponse = ShardedResponseMessage.of(id, response);
-            } else {
-                unshardedResponse = ShardedResponseMessage.of(
-                        id,
-                        ProtocolResponseMessage.of(
-                                response.getXid(), response.getZxid(), translated));
-            }
+    public void handleResponse(Message.ServerResponse<Records.Response> message) {
+        if ((state() != State.TERMINATED) && !(message instanceof ShardedResponseMessage)) {
+            ShardedResponseMessage<Records.Response> unshardedResponse;
             
-            Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> result = 
-                    Pair.<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>create(unshardedRequest, unshardedResponse);
-            task.set(result);
-        } else {
-            Identifier id = null;
-            Records.Response record = response.getRecord();
-            if (record instanceof Records.PathGetter) {
-                id = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) record).getPath()));
-            }
-            if (id != null) {
+            PendingMessageTask next = pending.peek();
+            if ((next != null) && (next.task().getXid() == message.getXid())) {
+                pending.remove(next);
+                Identifier id = ((ShardedRequestTask) next.delegate()).getIdentifier();
+                Records.Response record = message.getRecord();
                 Records.Response translated = translator.get(id).apply(record);
                 if (translated == record) {
-                    unshardedResponse = ShardedResponseMessage.of(id, response);
+                    unshardedResponse = ShardedResponseMessage.of(id, message);
                 } else {
                     unshardedResponse = ShardedResponseMessage.of(
                             id,
                             ProtocolResponseMessage.of(
-                                    response.getXid(), response.getZxid(), translated));
+                                    message.getXid(), message.getZxid(), translated));
                 }
+                
+                next.set(unshardedResponse);
             } else {
-                unshardedResponse = ShardedResponseMessage.of(id, response);
+                Identifier id = Identifier.zero();
+                Records.Response record = message.getRecord();
+                if (record instanceof Records.PathGetter) {
+                    id = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) record).getPath()));
+                }
+                if (! Identifier.zero().equals(id)) {
+                    Records.Response translated = translator.get(id).apply(record);
+                    if (translated == record) {
+                        unshardedResponse = ShardedResponseMessage.of(id, message);
+                    } else {
+                        unshardedResponse = ShardedResponseMessage.of(
+                                id,
+                                ProtocolResponseMessage.of(
+                                        message.getXid(), message.getZxid(), translated));
+                    }
+                } else {
+                    unshardedResponse = ShardedResponseMessage.of(id, message);
+                }
             }
-        }
 
-        post(unshardedResponse);
+            post(unshardedResponse);
+        }
     }
 
-    protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> {
+    protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> implements ShardedOperation {
 
-        protected final Operation.Request input;
         protected final ShardedOperation.Request<?> sharded;
         
         public ShardedRequestTask(
-                Operation.Request input,
-                Promise<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> delegate,
-                ShardedOperation.Request<?> sharded) {
+                ShardedOperation.Request<?> sharded,
+                Promise<Message.ServerResponse<Records.Response>> delegate) {
             super(sharded.getRequest(), delegate);
-            this.input = input;
             this.sharded = sharded;
         }
-        
-        public Operation.Request input() {
-            return input;
-        }
-        
-        public ShardedOperation.Request<?> sharded() {
-            return sharded;
+
+        @Override
+        public Identifier getIdentifier() {
+            return sharded.getIdentifier();
         }
     }
 }

@@ -56,20 +56,20 @@ public class VolumeCacheService extends AbstractIdleService implements Reference
     }
     
     public VolumeCacheService newInstance(
-            Materializer<?,?> client) {
+            Materializer<?> client) {
         return new VolumeCacheService(client);
     }
     
     protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
-    protected final Materializer<?,?> client;
+    protected final Materializer<?> client;
     protected final VolumeCache volumes;
     protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
     protected final UpdateFromCache updater;
     
     public VolumeCacheService(
-            Materializer<?,?> client) {
+            Materializer<?> client) {
         this.logger = LogManager.getLogger(getClass());
         this.client = client;
         this.volumes = VolumeCache.newInstance();

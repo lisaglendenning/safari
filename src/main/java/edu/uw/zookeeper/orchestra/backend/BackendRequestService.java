@@ -24,7 +24,6 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
-import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -238,7 +237,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
         @Override
         public void running() {
-            Materializer<?,?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
+            Materializer<?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
             Identifier myEntity = locator().getInstance(PeerConfiguration.class).getView().id();
             BackendView view = locator().getInstance(BackendConfiguration.class).getView();
             try {
@@ -348,7 +347,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public void handleMessageSessionRequest(MessageSessionRequest message) {
             BackendClient client = clients.get(message.getSessionId());
             if (client != null) {
-                ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> future;
+                ListenableFuture<Message.ServerResponse<Records.Response>> future;
                 try {
                     future = client.submit(message.getRequest());
                 } catch (Exception e) {
@@ -385,9 +384,8 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 return client;
             }
 
-            public ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> submit(Operation.Request request) throws InterruptedException, ExecutionException {
-                ListenableFuture<Pair<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>> future = client.get().submit(request);
-                return future;
+            public ListenableFuture<Message.ServerResponse<Records.Response>> submit(Operation.Request request) throws InterruptedException, ExecutionException {
+                return client.get().submit(request);
             }
     
             @Subscribe

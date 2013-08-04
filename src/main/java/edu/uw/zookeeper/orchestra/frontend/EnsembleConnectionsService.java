@@ -240,17 +240,17 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     public static class SelectMemberTask implements AsyncFunction<List<ControlSchema.Ensembles.Entity.Peers.Member>, Identifier> {
 
         public static SelectMemberTask of(
-                ClientExecutor<? super Records.Request, ?, ?> client) {
+                ClientExecutor<? super Records.Request, ?> client) {
             return new SelectMemberTask(
                     client,
                     new SelectRandom<ControlSchema.Ensembles.Entity.Peers.Member>());
         }
         
-        protected final ClientExecutor<? super Records.Request, ?, ?> client;
+        protected final ClientExecutor<? super Records.Request, ?> client;
         protected final Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector;
         
         public SelectMemberTask(
-                ClientExecutor<? super Records.Request, ?, ?> client,
+                ClientExecutor<? super Records.Request, ?> client,
                 Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector) {
             this.client = client;
             this.selector = selector;

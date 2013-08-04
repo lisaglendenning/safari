@@ -22,10 +22,10 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.TreeFetcher;
-import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Reference;
@@ -41,13 +41,10 @@ import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.Operation.ProtocolRequest;
-import edu.uw.zookeeper.protocol.Operation.ProtocolResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.protocol.proto.Records.Request;
 import edu.uw.zookeeper.protocol.proto.Records.Response;
 
 public abstract class Control {
@@ -56,7 +53,7 @@ public abstract class Control {
         return ControlZNode.path(element);
     }
     
-    public static <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> void createPrefix(Materializer<T,V> materializer) throws InterruptedException, ExecutionException, KeeperException {
+    public static void createPrefix(Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
         // The prefix is small enough that there's no need to get fancy here
         final Predicate<Schema.SchemaNode> isPrefix = new Predicate<Schema.SchemaNode>() {
             @Override
@@ -72,14 +69,13 @@ public abstract class Control {
             }
         };
         
-        Materializer<T,V>.Operator operator = materializer.operator();
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
-            Pair<T,V> result = operator.exists(node.path()).submit().get();
-            Optional<Operation.Error> error = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
+            Operation.ProtocolResponse<Records.Response> result = materializer.operator().exists(node.path()).submit().get();
+            Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
             if (error.isPresent()) {
-                result = operator.create(node.path()).submit().get();
-                error = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
+                result = materializer.operator().create(node.path()).submit().get();
+                error = Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
             }
         }
     }
@@ -178,15 +174,15 @@ public abstract class Control {
         public static <T, C extends TypedValueZNode<T>> ListenableFuture<C> get(
                 final Class<C> cls, 
                 final Object parent, 
-                final Materializer<?, ?> materializer) {
+                final Materializer<?> materializer) {
             final ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
             return Futures.transform(
                     materializer.operator().getData(path).submit(),
-                    new AsyncFunction<Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>>, C>() {
+                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, C>() {
                         @Override
                         public @Nullable
-                        ListenableFuture<C> apply(Pair<? extends ProtocolRequest<Request>, ? extends ProtocolResponse<Response>> input) throws KeeperException {
-                            Operations.unlessError(input.second().getRecord());
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<Response> input) throws KeeperException {
+                            Operations.unlessError(input.getRecord());
                             T value = (T) materializer.get(path).get().get();
                             return Futures.immediateFuture(newInstance(cls, value, parent));
                         }
@@ -197,15 +193,15 @@ public abstract class Control {
                 final Class<C> cls, 
                 final T value, 
                 final Object parent, 
-                final Materializer<?, ?> materializer) {
+                final Materializer<?> materializer) {
             final C instance = newInstance(cls, value, parent);
             return Futures.transform(
                     materializer.operator().create(instance.path(), instance.get()).submit(),
-                    new AsyncFunction<Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>>, C>() {
+                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, C>() {
                         @Override
                         public @Nullable
-                        ListenableFuture<C> apply(Pair<? extends ProtocolRequest<Request>, ? extends ProtocolResponse<Response>> input) throws KeeperException {
-                            Optional<Operation.Error> error = Operations.maybeError(input.second().getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<Response> input) throws KeeperException {
+                            Optional<Operation.Error> error = Operations.maybeError(input.getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
                             if (error.isPresent()) {
                                 return get(cls, parent, materializer);
                             } else {
@@ -237,20 +233,20 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<T extends Operation.ProtocolRequest<Records.Request>, U extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Materializer<T,U>, Void> implements FutureCallback<Void> {
+    public static class FetchUntil<U extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Materializer<U>, Void> implements FutureCallback<Void> {
 
-        public static <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> FetchUntil<T,V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?,?>> predicate, Materializer<T,V> materializer, Executor executor) throws InterruptedException, ExecutionException {
+        public static <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> FetchUntil<V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?>> predicate, Materializer<V> materializer) throws InterruptedException, ExecutionException {
             Promise<Void> delegate = newPromise();
-            return new FetchUntil<T,V>(root, predicate, materializer, delegate, executor);
+            return new FetchUntil<V>(root, predicate, materializer, delegate);
         }
         
         protected class Updater implements Runnable {
             protected final ListenableFuture<Void> future;
             
             public Updater(ZNodeLabel.Path root) {
-                this.future = TreeFetcher.Builder.<T,U,Void>create().setExecutor(executor).setClient(task()).setData(true).setWatch(true).build().apply(root);
-                Futures.addCallback(future, FetchUntil.this, executor);
-                FetchUntil.this.addListener(this, executor);
+                this.future = TreeFetcher.<U,Void>builder().setClient(task()).setData(true).setWatch(true).build().apply(root);
+                Futures.addCallback(future, FetchUntil.this, MoreExecutors.sameThreadExecutor());
+                FetchUntil.this.addListener(this, MoreExecutors.sameThreadExecutor());
             }
 
             @Override
@@ -260,17 +256,14 @@ public abstract class Control {
         }
         
         protected final ZNodeLabel.Path root;
-        protected final Executor executor;
-        protected final Predicate<Materializer<?,?>> predicate;
+        protected final Predicate<Materializer<?>> predicate;
         
         protected FetchUntil(
                 ZNodeLabel.Path root, 
-                Predicate<Materializer<?,?>> predicate, 
-                Materializer<T,U> task, 
-                Promise<Void> delegate, 
-                Executor executor) throws InterruptedException, ExecutionException {
+                Predicate<Materializer<?>> predicate, 
+                Materializer<U> task, 
+                Promise<Void> delegate) throws InterruptedException, ExecutionException {
             super(task, delegate);
-            this.executor = executor;
             this.root = root;
             this.predicate = predicate;
             
@@ -345,28 +338,28 @@ public abstract class Control {
         }
     }
     
-    public static class RegisterHashedTask<I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode> extends PromiseTask<T,V> implements Runnable {
+    public static class RegisterHashedTask<O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode> extends PromiseTask<T,V> implements Runnable {
 
-        public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode>
-        RegisterHashedTask<I,O,T,V> of(
+        public static <O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode>
+        RegisterHashedTask<O,T,V> of(
                 T task,
                 Hash.Hashed hashed,
                 Function<Identifier, V> entityOf,
                 Function<V, ZNodeLabel.Path> pathOfValue,
                 AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf,
-                Materializer<I,O> materializer,
+                Materializer<O> materializer,
                 Executor executor) {
             Promise<V> promise = SettableFuturePromise.create();
-            return new RegisterHashedTask<I,O,T,V>(task, hashed, entityOf, pathOfValue, valueOf, materializer, executor, promise);
+            return new RegisterHashedTask<O,T,V>(task, hashed, entityOf, pathOfValue, valueOf, materializer, executor, promise);
         }
         
         protected final Executor executor;
-        protected final Materializer<I,O> materializer;
+        protected final Materializer<O> materializer;
         protected final Function<Identifier, V> entityOf;
         protected final Function<V, ZNodeLabel.Path> pathOfValue;
         protected final AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf;
         protected volatile Hash.Hashed hashed;
-        protected volatile ListenableFuture<Pair<I,O>> createFuture;
+        protected volatile ListenableFuture<O> createFuture;
         protected volatile ListenableFuture<? extends TypedValueZNode<T>> valueFuture;
         
         public RegisterHashedTask(
@@ -375,7 +368,7 @@ public abstract class Control {
                 Function<Identifier, V> entityOf,
                 Function<V, ZNodeLabel.Path> pathOfValue,
                 AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf,
-                Materializer<I,O> materializer,
+                Materializer<O> materializer,
                 Executor executor,
                 Promise<V> delegate) {
             super(task, delegate);
@@ -422,7 +415,7 @@ public abstract class Control {
             } else if (! createFuture.isDone()) {
                 return;
             } else {
-                IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().second().getRecord());
+                IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().getRecord());
                 Operation.Error error = null;
                 for (Records.MultiOpResponse e: response) {
                     if (e instanceof Operation.Error) {

@@ -21,7 +21,6 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Reference;
@@ -56,11 +55,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Peers.Entity> create(
+            public static <O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Peers.Entity> create(
                     final ServerInetAddressView value, 
-                    final Materializer<I,O> materializer,
+                    final Materializer<O> materializer,
                     final Executor executor) {
-                Control.RegisterHashedTask<I, O, ServerInetAddressView, ControlSchema.Peers.Entity> task = 
+                Control.RegisterHashedTask<O, ServerInetAddressView, ControlSchema.Peers.Entity> task = 
                         Control.RegisterHashedTask.of(
                                 value,
                                 ControlSchema.Peers.Entity.hashOf(value),
@@ -94,7 +93,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             public static CachedFunction<Peers.Entity, Boolean> isPresent(
-                    final Materializer<?,?> materializer) {
+                    final Materializer<?> materializer) {
                 Function<Peers.Entity, Boolean> cached = new Function<Peers.Entity, Boolean>() {
                     @Override
                     public Boolean apply(Peers.Entity input) {
@@ -138,13 +137,12 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @ZNode(createMode=CreateMode.EPHEMERAL)
             public static class Presence extends Control.ControlZNode {
 
-                protected static enum Exists implements Function<Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>>, Boolean> {
+                protected static enum Exists implements Function<Operation.ProtocolResponse<?>, Boolean> {
                     EXISTS;
 
                     @Override
-                    public Boolean apply(
-                            Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> input) {
-                        return ! (input.second().getRecord() instanceof Operation.Error);
+                    public Boolean apply(Operation.ProtocolResponse<?> input) {
+                        return ! (input.getRecord() instanceof Operation.Error);
                     }
                 }
                 
@@ -159,12 +157,12 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     super(parent);
                 }
 
-                public <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> 
-                ListenableFuture<Pair<T,V>> create(Materializer<T,V> materializer) {
+                public <V extends Operation.ProtocolResponse<Records.Response>> 
+                ListenableFuture<V> create(Materializer<V> materializer) {
                     return materializer.operator().create(path()).submit();
                 }
                 
-                public ListenableFuture<Boolean> exists(ClientExecutor<? super Records.Request, ?, ?> client) {
+                public ListenableFuture<Boolean> exists(ClientExecutor<? super Records.Request, ?> client) {
                     return Futures.transform(
                             client.submit(Operations.Requests.exists().setPath(path()).build()), 
                             Exists.EXISTS);
@@ -177,11 +175,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("clientAddress");
                 
-                public static ListenableFuture<ClientAddress> get(Peers.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<ClientAddress> get(Peers.Entity entity, Materializer<?> materializer) {
                     return get(ClientAddress.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<ClientAddress> create(ServerInetAddressView value, Peers.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<ClientAddress> create(ServerInetAddressView value, Peers.Entity entity, Materializer<?> materializer) {
                     return create(ClientAddress.class, value, entity, materializer);
                 }
                 
@@ -209,7 +207,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
                 
                 public static CachedFunction<Identifier, PeerAddress> lookup(
-                        final Materializer<?,?> materializer) {
+                        final Materializer<?> materializer) {
                     Function<Identifier, PeerAddress> cached = new Function<Identifier, PeerAddress>() {
                         @Override
                         public @Nullable PeerAddress apply(Identifier peer) {
@@ -232,38 +230,37 @@ public abstract class ControlSchema extends Control.ControlZNode {
                         public ListenableFuture<PeerAddress> apply(final Identifier peer) {
                             final Entity entity = Entity.of(peer);
                             final ZNodeLabel.Path path = pathOf(entity);
-                            Function<Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>>, PeerAddress> transformer = new Function<Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>>, PeerAddress>() {
-                                @Override
-                                public @Nullable PeerAddress apply(
-                                        Pair<? extends Operation.ProtocolRequest<?>, ? extends Operation.ProtocolResponse<?>> input) {
-                                    try {
-                                        Operations.maybeError(input.second().getRecord(), KeeperException.Code.NONODE);
-                                    } catch (KeeperException e) {
-                                        return null;
-                                    }
-                                    ServerInetAddressView address = null;
-                                    Materializer.MaterializedNode node = materializer.get(path);
-                                    if (node != null) {
-                                        address = (ServerInetAddressView) node.get().get();
-                                    }
-                                    if (address == null) {
-                                        return null;
-                                    } else {
-                                        return of(address, entity);
-                                    }
-                                }
-                            };
-                            return Futures.transform(materializer.operator().getData(path).submit(), transformer);
+                            return Futures.transform(materializer.operator().getData(path).submit(),
+                                    new Function<Operation.ProtocolResponse<?>, PeerAddress>() {
+                                        @Override
+                                        public @Nullable PeerAddress apply(Operation.ProtocolResponse<?> input) {
+                                            try {
+                                                Operations.maybeError(input.getRecord(), KeeperException.Code.NONODE);
+                                            } catch (KeeperException e) {
+                                                return null;
+                                            }
+                                            ServerInetAddressView address = null;
+                                            Materializer.MaterializedNode node = materializer.get(path);
+                                            if (node != null) {
+                                                address = (ServerInetAddressView) node.get().get();
+                                            }
+                                            if (address == null) {
+                                                return null;
+                                            } else {
+                                                return of(address, entity);
+                                            }
+                                        }
+                                    });
                         }
                     };
                     return CachedFunction.create(cached, lookup);
                 }
                 
-                public static ListenableFuture<PeerAddress> get(Peers.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<PeerAddress> get(Peers.Entity entity, Materializer<?> materializer) {
                     return get(PeerAddress.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<PeerAddress> create(ServerInetAddressView value, Peers.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<PeerAddress> create(ServerInetAddressView value, Peers.Entity entity, Materializer<?> materializer) {
                     return create(PeerAddress.class, value, entity, materializer);
                 }
                 
@@ -283,11 +280,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @ZNode(label="backend", type=BackendView.class)
             public static class Backend extends Control.TypedValueZNode<BackendView> {
                 
-                public static ListenableFuture<Entity.Backend> get(Peers.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Backend> get(Peers.Entity entity, Materializer<?> materializer) {
                     return get(Entity.Backend.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Backend> create(BackendView value, Peers.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Backend> create(BackendView value, Peers.Entity entity, Materializer<?> materializer) {
                     return create(Entity.Backend.class, value, entity, materializer);
                 }
                 
@@ -305,13 +302,13 @@ public abstract class ControlSchema extends Control.ControlZNode {
     @ZNode(label="ensembles")
     public static abstract class Ensembles extends Control.ControlZNode {
         
-        public static ListenableFuture<List<Ensembles.Entity>> getEnsembles(ClientExecutor<? super Records.Request, ?, ?> client) {
+        public static ListenableFuture<List<Ensembles.Entity>> getEnsembles(ClientExecutor<? super Records.Request, ?> client) {
             return Futures.transform(
                     client.submit(Operations.Requests.getChildren().setPath(path(Ensembles.class)).build()), 
-                    new AsyncFunction<Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>>, List<Ensembles.Entity>>() {
+                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, List<Ensembles.Entity>>() {
                         @Override
-                        public ListenableFuture<List<Ensembles.Entity>> apply(Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>> input) throws KeeperException {
-                            Records.ChildrenGetter response = (Records.ChildrenGetter) Operations.unlessError(input.second().getRecord());
+                        public ListenableFuture<List<Ensembles.Entity>> apply(Operation.ProtocolResponse<Records.Response> input) throws KeeperException {
+                            Records.ChildrenGetter response = (Records.ChildrenGetter) Operations.unlessError(input.getRecord());
                             List<Ensembles.Entity> result = Lists.newArrayListWithCapacity(response.getChildren().size());
                             for (String child: response.getChildren()) {
                                 result.add(Ensembles.Entity.of(Identifier.valueOf(child)));
@@ -327,11 +324,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Ensembles.Entity> create(
+            public static <O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Ensembles.Entity> create(
                     final EnsembleView<ServerInetAddressView> value, 
-                    final Materializer<I,O> materializer,
+                    final Materializer<O> materializer,
                     final Executor executor) {
-                Control.RegisterHashedTask<I, O, EnsembleView<ServerInetAddressView>, ControlSchema.Ensembles.Entity> task = 
+                Control.RegisterHashedTask<O, EnsembleView<ServerInetAddressView>, ControlSchema.Ensembles.Entity> task = 
                         Control.RegisterHashedTask.of(
                                 value,
                                 ControlSchema.Ensembles.Entity.hashOf(value),
@@ -395,11 +392,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return ZNodeLabel.Path.of(entity.path(), LABEL);
                 }
                 
-                public static ListenableFuture<Entity.Backend> get(Ensembles.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Backend> get(Ensembles.Entity entity, Materializer<?> materializer) {
                     return get(Entity.Backend.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Backend> create(EnsembleView<ServerInetAddressView> value, Ensembles.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Backend> create(EnsembleView<ServerInetAddressView> value, Ensembles.Entity entity, Materializer<?> materializer) {
                     return create(Ensembles.Entity.Backend.class, value, entity, materializer);
                 }
                 
@@ -423,7 +420,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
 
                 public static CachedFunction<Identifier, List<Member>> getMembers(
-                        final Materializer<?,?> materializer) {
+                        final Materializer<?> materializer) {
                     Function<Identifier, List<Member>> cached = new Function<Identifier, List<Peers.Member>>() {
                         @Override
                         @Nullable
@@ -439,11 +436,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                             final Peers peers = Peers.of(Entity.of(ensemble));
                             return Futures.transform(
                                     materializer.operator().getChildren(peers.path()).submit(),
-                                    new AsyncFunction<Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>>, List<Member>>() {
+                                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, List<Member>>() {
                                         @Override
                                         @Nullable
-                                        public ListenableFuture<List<Member>> apply(Pair<? extends Operation.ProtocolRequest<Records.Request>, ? extends Operation.ProtocolResponse<Records.Response>> input) throws KeeperException {
-                                            Operations.unlessError(input.second().getRecord());
+                                        public ListenableFuture<List<Member>> apply(Operation.ProtocolResponse<Records.Response> input) throws KeeperException {
+                                            Operations.unlessError(input.getRecord());
                                             return Futures.immediateFuture(peers.get(materializer));
                                         }
                                     });
@@ -456,7 +453,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     super(parent);
                 }
 
-                public List<Member> get(Materializer<?,?> materializer) {
+                public List<Member> get(Materializer<?> materializer) {
                     ImmutableList.Builder<Member> members = ImmutableList.builder();
                     Materializer.MaterializedNode parent = materializer.get(path());
                     if (parent != null) {
@@ -498,34 +495,34 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("leader");
                 
-                public static ListenableFuture<Entity.Leader> get(Ensembles.Entity parent, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Leader> get(Ensembles.Entity parent, Materializer<?> materializer) {
                     return get(Entity.Leader.class, parent, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Leader> create(Identifier value, Ensembles.Entity parent, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Leader> create(Identifier value, Ensembles.Entity parent, Materializer<?> materializer) {
                     return create(Entity.Leader.class, value, parent, materializer);
                 }
                 
-                public static class Proposal<I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Entity.Leader, Entity.Leader> implements Runnable {
+                public static class Proposal<O extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Entity.Leader, Entity.Leader> implements Runnable {
 
-                    public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>>
-                    Proposal<I,O> of(
+                    public static <O extends Operation.ProtocolResponse<Records.Response>>
+                    Proposal<O> of(
                             Entity.Leader task, 
-                            Materializer<I,O> materializer,
+                            Materializer<O> materializer,
                             Executor executor) {
                         Promise<Entity.Leader> promise = SettableFuturePromise.create();
-                        Proposal<I,O> proposal = new Proposal<I,O>(task, materializer, executor, promise);
+                        Proposal<O> proposal = new Proposal<O>(task, materializer, executor, promise);
                         executor.execute(proposal);
                         return proposal;
                     }
                     
-                    protected final Materializer<I,O> materializer;
+                    protected final Materializer<O> materializer;
                     protected final Executor executor;
-                    protected volatile ListenableFuture<Pair<I,O>> future;
+                    protected volatile ListenableFuture<O> future;
                     
                     public Proposal(
                             Entity.Leader task, 
-                            Materializer<I,O> materializer,
+                            Materializer<O> materializer,
                             Executor executor,
                             Promise<Entity.Leader> delegate) {
                         super(task, delegate);
@@ -541,15 +538,15 @@ public abstract class ControlSchema extends Control.ControlZNode {
                         }
                         
                         if (future == null) {
-                            Materializer<I,O>.Operator operator = materializer.operator();
+                            Materializer<O>.Operator operator = materializer.operator();
                             operator.create(task.path(), task.get()).submit();
                             operator.sync(task.path()).submit();
                             future = operator.getData(task().path(), true).submit();
                             future.addListener(this, executor);
                         } else if (future.isDone()) {
                             try {
-                                Pair<I,O> result = future.get();
-                                Optional<Operation.Error> error = Operations.maybeError(result.second().getRecord(), KeeperException.Code.NONODE, result.toString());
+                                O result = future.get();
+                                Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
                                 if (! error.isPresent()) {
                                     Materializer.MaterializedNode node = materializer.get(task.path());
                                     set(Entity.Leader.of((Identifier) node.get().get(), task().parent()));
@@ -561,19 +558,19 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     }
                 }
                 
-                public static class Proposer<I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>> implements AsyncFunction<Entity.Leader, Entity.Leader> {
+                public static class Proposer<O extends Operation.ProtocolResponse<Records.Response>> implements AsyncFunction<Entity.Leader, Entity.Leader> {
 
-                    public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>> Proposer<I,O> of(
-                            Materializer<I,O> materializer,
+                    public static <O extends Operation.ProtocolResponse<Records.Response>> Proposer<O> of(
+                            Materializer<O> materializer,
                             Executor executor) {
-                        return new Proposer<I,O>(materializer, executor);
+                        return new Proposer<O>(materializer, executor);
                     }
                     
-                    protected final Materializer<I,O> materializer;
+                    protected final Materializer<O> materializer;
                     protected final Executor executor;
                     
                     public Proposer(
-                            Materializer<I,O> materializer,
+                            Materializer<O> materializer,
                             Executor executor) {
                         this.materializer = materializer;
                         this.executor = executor;
@@ -609,11 +606,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <I extends Operation.ProtocolRequest<Records.Request>, O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Volumes.Entity> create(
+            public static <O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Volumes.Entity> create(
                     final VolumeDescriptor value, 
-                    final Materializer<I,O> materializer,
+                    final Materializer<O> materializer,
                     final Executor executor) {
-                Control.RegisterHashedTask<I, O, VolumeDescriptor, ControlSchema.Volumes.Entity> task = 
+                Control.RegisterHashedTask<O, VolumeDescriptor, ControlSchema.Volumes.Entity> task = 
                         Control.RegisterHashedTask.of(
                                 value,
                                 ControlSchema.Volumes.Entity.hashOf(value),
@@ -677,11 +674,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return ZNodeLabel.Path.of(entity.path(), LABEL);
                 }
                 
-                public static ListenableFuture<Entity.Volume> get(Volumes.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Volume> get(Volumes.Entity entity, Materializer<?> materializer) {
                     return get(Entity.Volume.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Volume> create(VolumeDescriptor value, Volumes.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Volume> create(VolumeDescriptor value, Volumes.Entity entity, Materializer<?> materializer) {
                     return create(Entity.Volume.class, value, entity, materializer);
                 }
                 
@@ -700,11 +697,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("ensemble");
                 
-                public static ListenableFuture<Entity.Ensemble> get(Volumes.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Ensemble> get(Volumes.Entity entity, Materializer<?> materializer) {
                     return get(Entity.Ensemble.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Ensemble> create(Identifier value, Volumes.Entity entity, Materializer<?,?> materializer) {
+                public static ListenableFuture<Entity.Ensemble> create(Identifier value, Volumes.Entity entity, Materializer<?> materializer) {
                     return create(Entity.Ensemble.class, value, entity, materializer);
                 }
                 

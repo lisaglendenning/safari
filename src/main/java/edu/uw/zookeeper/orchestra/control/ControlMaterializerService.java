@@ -54,7 +54,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         return new ControlMaterializerService<C>(connections);
     }
 
-    protected final Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> materializer;
+    protected final Materializer<Message.ServerResponse<Records.Response>> materializer;
     protected final WatchPromiseTrie watches;
 
     protected ControlMaterializerService(
@@ -68,7 +68,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         this.watches = WatchPromiseTrie.newInstance();
     }
     
-    public Materializer<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> materializer() {
+    public Materializer<Message.ServerResponse<Records.Response>> materializer() {
         return materializer;
     }
     

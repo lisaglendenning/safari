@@ -10,7 +10,6 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
@@ -31,12 +30,12 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
     
     public ClientPeerConnections(
             Identifier identifier,
-            Materializer<?,?> control,
+            CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
             ClientConnectionFactory<C> connections) {
         super(connections);
         this.identifier = identifier;
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
-        this.lookup = ControlSchema.Peers.Entity.PeerAddress.lookup(control);
+        this.lookup = lookup;
         this.connectionTask = new ConnectionTask();
     }
 
