@@ -6,10 +6,8 @@ import com.google.common.base.Function;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.Identifier;
@@ -57,20 +55,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
         this.lookup = lookup;
         this.translator = translator;
     }
-    
-    @Override
-    public ListenableFuture<Message.ServerResponse<Records.Response>> submit(Operation.Request request) {
-        return submit(request, SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
-    }
 
-    @Override
-    public ListenableFuture<Message.ServerResponse<Records.Response>> submit(Operation.Request request, Promise<Message.ServerResponse<Records.Response>> promise) {
-        ShardedRequestTask task = new ShardedRequestTask(shard(request), 
-                LoggingPromise.create(logger, promise));
-        send(task);
-        return task;
-    }
-    
     public ShardedOperation.Request<?> shard(Operation.Request request) {
         Records.Request record = 
                 (Records.Request) ((request instanceof Records.Request) ?
@@ -107,10 +92,10 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     @Override
     @Subscribe
     public void handleResponse(Message.ServerResponse<Records.Response> message) {
-        if ((state() != State.TERMINATED) && !(message instanceof ShardedResponseMessage)) {
+        if ((state() != State.TERMINATED) && !(message instanceof ShardedOperation)) {
             ShardedResponseMessage<Records.Response> unshardedResponse;
             
-            PendingMessageTask next = pending.peek();
+            PendingResponseTask next = pending.peek();
             if ((next != null) && (next.task().getXid() == message.getXid())) {
                 pending.remove(next);
                 Identifier id = ((ShardedRequestTask) next.delegate()).getIdentifier();
@@ -127,6 +112,8 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                 
                 next.set(unshardedResponse);
             } else {
+                logger.debug("{} != {} ({})", next, message, this);
+
                 Identifier id = Identifier.zero();
                 Records.Response record = message.getRecord();
                 if (record instanceof Records.PathGetter) {
@@ -150,7 +137,12 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
             post(unshardedResponse);
         }
     }
-
+    
+    @Override
+    protected boolean apply(PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> input) throws Exception {
+        return super.apply(new ShardedRequestTask(shard(input.task()), input));
+    }
+    
     protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> implements ShardedOperation {
 
         protected final ShardedOperation.Request<?> sharded;
