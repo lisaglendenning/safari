@@ -12,7 +12,7 @@ public class MessageHandshake extends IdentifierMessage<Identifier> {
     }
 
     @JsonCreator
-    public MessageHandshake(@JsonProperty("id") Identifier id) {
+    public MessageHandshake(@JsonProperty("identifier") Identifier id) {
         super(id);
     }
 }
