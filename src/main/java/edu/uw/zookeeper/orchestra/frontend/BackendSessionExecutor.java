@@ -40,6 +40,9 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
 
     public static interface BackendRequestFuture extends OperationFuture<ShardedResponseMessage<?>> {
         BackendSessionExecutor executor();
+
+        @Override
+        State call() throws ExecutionException;
     }
     
     public static BackendSessionExecutor create(
@@ -112,6 +115,9 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
 
     @Override
     public synchronized void send(BackendRequestFuture request) {
+        if (state() == State.TERMINATED) {
+            throw new RejectedExecutionException(State.TERMINATED.toString());
+        } 
         // we won't get the response before putting the request in the queue
         // because we are synchronized
         if (request.state() == OperationFuture.State.WAITING) {
@@ -193,15 +199,12 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
 
     @Override
     protected Executor executor() {
-        // TODO Auto-generated method stub
-        return null;
+        return executor;
     }
 
     @Override
-    protected synchronized void doRun() throws Exception {
-        if (! finger.hasNext()) {
-            finger = mailbox.iterator();
-        }
+    protected synchronized void doRun() throws ExecutionException {
+        finger = mailbox.iterator();
         BackendRequestFuture next;
         while ((next = finger.peekNext()) != null) {
             if (! apply(next)) {
@@ -211,32 +214,22 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
     }
     
     @Override
-    protected synchronized boolean apply(BackendRequestFuture input) throws Exception {
+    protected synchronized boolean apply(BackendRequestFuture input) throws ExecutionException {
         if (state() != State.TERMINATED) {
-            OperationFuture.State state;
-            do {
-                state = input.state();
-                switch (state) {
-                    case COMPLETE:
-                    {
-                        if (!finger.hasPrevious() || (finger.peekPrevious().state().compareTo(OperationFuture.State.PUBLISHED) >= 0)) {
-                            input.call();
-                        }
-                        break;
-                    }
-                    case PUBLISHED:
-                    {
-                        finger.next();
-                        finger.remove();
-                        break;
-                    }
-                    default:
-                    {
-                        input.call();
-                        break;
-                    }
+            for (;;) {
+                OperationFuture.State state = input.state();
+                if (OperationFuture.State.PUBLISHED == state) {
+                    finger.next();
+                    finger.remove();
+                    break;
+                } else if ((OperationFuture.State.COMPLETE == state)
+                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(OperationFuture.State.PUBLISHED) < 0))) {
+                    // tasks can only publish when predecessors have published
+                    break;
+                } else if (input.call() == state) {
+                    break;
                 }
-            } while (state != input.state());
+            }
             
             if (finger.peekNext() == input) {
                 return false;

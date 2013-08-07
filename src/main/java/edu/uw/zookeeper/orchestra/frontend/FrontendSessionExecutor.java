@@ -2,6 +2,7 @@ package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
@@ -20,6 +21,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -110,7 +112,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 this,
                 MoreExecutors.sameThreadExecutor());
         this.backends = new BackendLookups(ensembleForPeer, connectionLookup);
-        this.finger = null;
+        this.finger = mailbox.iterator();
     }
     
     @Override
@@ -200,6 +202,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
     @Override
     protected void doRun() throws Exception {
+        finger = mailbox.iterator();
         FrontendRequestFuture next;
         while ((next = finger.peekNext()) != null) {
             if (! apply(next)) {
@@ -209,23 +212,24 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     }
     
     @Override
-    protected boolean apply(FrontendRequestFuture task) throws Exception {
+    protected boolean apply(FrontendRequestFuture input) throws Exception {
         if (state() != State.TERMINATED) {
-            while (true) {
-                OperationFuture.State state = task.state();
+            for (;;) {
+                OperationFuture.State state = input.state();
                 if (OperationFuture.State.PUBLISHED == state) {
                     finger.next();
                     finger.remove();
                     break;
-                }
-                else if ((OperationFuture.State.WAITING == state)
-                        && ((finger.peekPrevious() != null) && (finger.peekPrevious().state().compareTo(OperationFuture.State.SUBMITTING) < 0))) {
+                } else if (((OperationFuture.State.WAITING == state) || (OperationFuture.State.COMPLETE == state))
+                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(state) < 0))) {
                     // we need to preserve ordering of requests per volume
                     // as a proxy for this requirement, 
                     // don't submit until the task before us has submitted
                     // (note this is stronger than necessary)
-                    break;
-                } else if (task.call() == state) {
+                    // this also means that no tasks after this one can run!
+                    // we also don't want to publish before our predecessor!
+                    return false;
+                } else if (input.call() == state) {
                     break;
                 }
             }
@@ -240,16 +244,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
     }
 
-    protected static class ListenableFuturePending<V> extends Pair<ListenableFuture<V>, Set<BackendRequestTask>> {
-    
-        public ListenableFuturePending(
-                ListenableFuture<V> first) {
-            super(first, Collections.synchronizedSet(Sets.<BackendRequestTask>newHashSet()));
-        }
-        
-    }
-
-    protected static class Lookups<I,O> extends Pair<CachedFunction<I,O>, ConcurrentMap<I, ListenableFuturePending<O>>> {
+    protected static class Lookups<I,O> extends Pair<CachedFunction<I,O>, ConcurrentMap<I, ListenableFuture<O>>> {
     
         protected final Runnable runnable;
         protected final Executor executor;
@@ -258,32 +253,29 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 CachedFunction<I, O> first,
                 Runnable runnable,
                 Executor executor) {
-            super(first, new MapMaker().<I, ListenableFuturePending<O>>makeMap());
+            super(first, new MapMaker().<I, ListenableFuture<O>>makeMap());
             this.runnable = runnable;
             this.executor = executor;
         }
         
-        public Optional<O> apply(I input, BackendRequestTask listener) throws Exception {
+        public ListenableFuture<O> apply(I input) throws Exception {
             O output = first().first().apply(input);
             if (output != null) {
-                return Optional.of(output);
+                return Futures.immediateFuture(output);
             } else {
-                ListenableFuturePending<O> pending = second().get(input);
-                if (pending == null) {
-                    ListenableFuture<O> future = first().apply(input);
-                    pending = new ListenableFuturePending<O>(future);
-                    ListenableFuturePending<O> prev = second().putIfAbsent(input, pending);
+                ListenableFuture<O> future = second().get(input);
+                if (future == null) {
+                    future = first().apply(input);
+                    ListenableFuture<O> prev = second().putIfAbsent(input, future);
                     if (prev != null) {
                         future.cancel(true);
-                        pending = prev;
+                        future = prev;
                     } else {
-                        pending.first().addListener(runnable, executor);
+                        future.addListener(runnable, executor);
                     }
                 }
-                listener.pending.add(pending);
-                pending.second().add(listener);
-                // TODO: if pending was processed...
-                return Optional.absent();
+                // TODO: if future was processed...?
+                return future;
             }
         }
     }
@@ -364,7 +356,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
     }
 
-    protected abstract class RequestTask extends PromiseTask<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> implements FrontendRequestFuture, Runnable {
+    protected abstract class RequestTask extends PromiseTask<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> implements FrontendRequestFuture {
 
         protected final AtomicReference<State> state;
 
@@ -402,11 +394,6 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         @Override
-        public void run() {
-            FrontendSessionExecutor.this.run();
-        }
-
-        @Override
         public State call() throws Exception {
             if (logger.isTraceEnabled()) {
                 logger.trace("{}", this);
@@ -424,7 +411,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
-            if (state.get() == OperationFuture.State.SUBMITTING) {
+            if (state() == OperationFuture.State.SUBMITTING) {
                 Records.Response result = null;
                 switch (task().getRecord().getOpcode()) {
                 case CLOSE_SESSION:
@@ -499,13 +486,16 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
     }
 
+    protected static final ImmutableMap<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> EMPTY_RESPONSES = 
+            ImmutableMap.of(Volume.none(), (Set<BackendSessionExecutor.BackendRequestFuture>) ImmutableSet.<BackendSessionExecutor.BackendRequestFuture>of());
+    
     protected class BackendRequestTask extends RequestTask {
 
         protected final ImmutableSet<ZNodeLabel.Path> paths;
         protected final Map<ZNodeLabel.Path, Volume> volumes;
         protected final Map<Volume, ShardedRequestMessage<?>> shards;
         protected final Map<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> submitted;
-        protected final Set<ListenableFuturePending<?>> pending;
+        protected final Set<ListenableFuture<?>> pending;
 
         public BackendRequestTask(
                 State state,
@@ -516,7 +506,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             this.volumes = Collections.synchronizedMap(Maps.<ZNodeLabel.Path, Volume>newHashMap());
             this.shards = Collections.synchronizedMap(Maps.<Volume, ShardedRequestMessage<?>>newHashMap());
             this.submitted = Collections.synchronizedMap(Maps.<Volume, Set<BackendSessionExecutor.BackendRequestFuture>>newHashMap());
-            this.pending = Collections.synchronizedSet(Sets.<ListenableFuturePending<?>>newHashSet());
+            this.pending = Collections.synchronizedSet(Sets.<ListenableFuture<?>>newHashSet());
         }
         
         @Override
@@ -539,6 +529,16 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
         @Override
         public State call() throws Exception {
+            Iterator<ListenableFuture<?>> p = pending.iterator();
+            while (p.hasNext()) {
+                ListenableFuture<?> next = p.next();
+                if (next.isDone()) {
+                    p.remove();
+                }
+            }
+            if (! pending.isEmpty()) {
+                return state();
+            }
             switch (super.call()) {
             case WAITING:
             {
@@ -565,9 +565,11 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         protected Optional<Map<ZNodeLabel.Path, Volume>> getVolumes(Set<ZNodeLabel.Path> paths) throws Exception {
             Sets.SetView<ZNodeLabel.Path> difference = Sets.difference(paths, volumes.keySet());
             for (ZNodeLabel.Path path: difference) {
-                Optional<Volume> v = volumes().apply(path, this);
-                if (v.isPresent()) {
+                ListenableFuture<Volume> v = volumes().apply(path);
+                if (v.isDone()) {
                     volumes.put(path, v.get());
+                } else {
+                    pending.add(v);
                 }
             }
             if (difference.isEmpty()) {
@@ -656,13 +658,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     boolean done = true;
                     Set<BackendSessionExecutor> all = Sets.newHashSetWithExpectedSize(backends().get().size());
                     for (Identifier ensemble: backends().get().keySet()) {
-                        Optional<BackendSessionExecutor> backend = backends().apply(ensemble, this);
-                        if (backend.isPresent()) {
+                        ListenableFuture<BackendSessionExecutor> backend = backends().apply(ensemble);
+                        if (backend.isDone()) {
                             all.add(backend.get());
                         } else {
                             if (logger.isTraceEnabled()) {
                                 logger.trace("Waiting for backend {}", ensemble);
                             }
+                            pending.add(backend);
                             done = false;
                         }
                     }
@@ -670,16 +673,23 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                         backends.put(v, all);
                     }
                 } else {
-                    Optional<Identifier> assignment = assignments().apply(v.getId(), this);
-                    if (assignment.isPresent()) {
-                        Optional<BackendSessionExecutor> backend = backends().apply(assignment.get(), this);
-                        if (backend.isPresent()) {
+                    ListenableFuture<Identifier> assignment = assignments().apply(v.getId());
+                    if (assignment.isDone()) {
+                        Identifier ensemble = assignment.get();
+                        ListenableFuture<BackendSessionExecutor> backend = backends().apply(ensemble);
+                        if (backend.isDone()) {
                             backends.put(v, ImmutableSet.of(backend.get()));
+                        } else {
+                            if (logger.isTraceEnabled()) {
+                                logger.trace("Waiting for backend {}", ensemble);
+                            }
+                            pending.add(backend);
                         }
                     } else {
                         if (logger.isTraceEnabled()) {
                             logger.trace("Waiting for assignment {}", v.getId());
                         }
+                        pending.add(assignment);
                     }
                 }
             }
@@ -717,7 +727,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         
         protected Map<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> submit(
                 Map<Volume, ShardedRequestMessage<?>> shards,
-                Map<Volume, Set<BackendSessionExecutor>> backends) throws Exception {
+                Map<Volume, Set<BackendSessionExecutor>> backends) {
             this.state.compareAndSet(OperationFuture.State.WAITING, OperationFuture.State.SUBMITTING);
             for (Map.Entry<Volume, ShardedRequestMessage<?>> shard: shards.entrySet()) {
                 Volume k = shard.getKey();
@@ -752,14 +762,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 return this;
             }
             
-            if (submitted.isEmpty()) {
-                return super.complete();
-            }
-
             if (! Sets.difference(shards.keySet(), submitted.keySet()).isEmpty()) {
                 return this;
             }
-            
+
+            if (submitted.equals(EMPTY_RESPONSES)) {
+                return super.complete();
+            }
+
             Records.Response result = null;
             if (OpCode.MULTI == task().getRecord().getOpcode()) {
                 Map<Volume, ListIterator<Records.MultiOpResponse>> responses = Maps.newHashMapWithExpectedSize(shards.size());
@@ -874,6 +884,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     .add("volumes", volumes)
                     .add("shards", shards)
                     .add("submitted", submitted)
+                    .add("pending", pending)
                     .toString();
         }
     }
