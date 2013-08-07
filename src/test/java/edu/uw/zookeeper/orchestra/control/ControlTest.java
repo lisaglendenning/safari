@@ -15,11 +15,11 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.orchestra.DependentService;
-import edu.uw.zookeeper.orchestra.DependentServiceMonitor;
-import edu.uw.zookeeper.orchestra.DependsOn;
-import edu.uw.zookeeper.orchestra.InjectorServiceLocator;
-import edu.uw.zookeeper.orchestra.ServiceLocator;
+import edu.uw.zookeeper.orchestra.common.DependentService;
+import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
+import edu.uw.zookeeper.orchestra.common.DependsOn;
+import edu.uw.zookeeper.orchestra.common.InjectorServiceLocator;
+import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.server.SimpleServerConnections;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 

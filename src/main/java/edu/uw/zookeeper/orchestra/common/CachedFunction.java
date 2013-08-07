@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 
 import com.google.common.base.Function;
 import com.google.common.util.concurrent.AsyncFunction;

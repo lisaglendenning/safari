@@ -9,7 +9,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
-import edu.uw.zookeeper.orchestra.ServiceLocator;
+import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.frontend.EnsembleConnectionsService;
 
 public class PeerService extends AbstractIdleService {

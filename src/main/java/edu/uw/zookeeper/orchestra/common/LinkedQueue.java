@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.frontend;
+package edu.uw.zookeeper.orchestra.common;
 
 import static com.google.common.base.Preconditions.*;
 

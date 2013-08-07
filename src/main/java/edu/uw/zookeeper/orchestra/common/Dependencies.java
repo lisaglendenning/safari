@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 
 import java.lang.reflect.AnnotatedElement;
 import java.util.Iterator;
@@ -7,6 +7,7 @@ import java.util.concurrent.ExecutionException;
 import com.google.common.base.Function;
 import com.google.common.collect.Iterators;
 import com.google.common.util.concurrent.Service;
+
 
 public abstract class Dependencies {
 

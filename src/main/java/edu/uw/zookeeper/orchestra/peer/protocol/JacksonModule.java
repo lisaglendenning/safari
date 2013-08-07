@@ -29,7 +29,7 @@ import edu.uw.zookeeper.common.Singleton;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.Serializes;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 
 public class JacksonModule extends SimpleModule {
 

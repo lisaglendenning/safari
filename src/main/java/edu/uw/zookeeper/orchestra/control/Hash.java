@@ -8,7 +8,7 @@ import com.google.common.primitives.Ints;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Reference;
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 
 public enum Hash implements Function<String, Hash.Hashed>, Reference<HashFunction> {
     MURMUR3_32(Hashing.murmur3_32());

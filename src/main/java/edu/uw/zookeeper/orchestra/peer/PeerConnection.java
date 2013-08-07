@@ -2,7 +2,7 @@ package edu.uw.zookeeper.orchestra.peer;
 
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ForwardingConnection;
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 
 public class PeerConnection<C extends Connection<? super MessagePacket>> extends ForwardingConnection<MessagePacket> {

@@ -1,6 +1,7 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 
 import com.google.common.util.concurrent.AbstractIdleService;
+
 
 public abstract class DependentService extends AbstractIdleService {
 

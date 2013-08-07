@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 

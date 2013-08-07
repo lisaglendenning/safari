@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 import java.lang.annotation.*;
 
 import com.google.common.util.concurrent.Service;

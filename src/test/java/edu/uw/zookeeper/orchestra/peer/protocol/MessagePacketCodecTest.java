@@ -12,7 +12,7 @@ import org.junit.runners.JUnit4;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;

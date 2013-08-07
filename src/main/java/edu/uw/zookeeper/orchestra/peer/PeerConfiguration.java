@@ -13,7 +13,7 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.protocol.Operation;

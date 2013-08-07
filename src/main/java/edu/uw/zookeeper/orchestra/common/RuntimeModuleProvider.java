@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;

@@ -37,7 +37,7 @@ import edu.uw.zookeeper.common.DefaultsFactory;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
 import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 
 public class BackendConfiguration {

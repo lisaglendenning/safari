@@ -31,10 +31,10 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.LabelType;
-import edu.uw.zookeeper.orchestra.CachedFunction;
-import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.orchestra.VolumeDescriptor;
 import edu.uw.zookeeper.orchestra.backend.BackendView;
+import edu.uw.zookeeper.orchestra.common.CachedFunction;
+import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.data.VolumeDescriptor;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 

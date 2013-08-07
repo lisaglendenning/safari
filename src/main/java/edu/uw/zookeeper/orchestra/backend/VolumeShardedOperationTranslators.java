@@ -4,8 +4,8 @@ import com.google.common.base.Function;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.Identifier;
-import edu.uw.zookeeper.orchestra.Volume;
+import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 // TODO: what about volume changes?

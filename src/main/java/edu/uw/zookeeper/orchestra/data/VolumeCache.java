@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.data;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -12,6 +12,7 @@ import com.google.common.collect.MapMaker;
 import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 
 public class VolumeCache {
 

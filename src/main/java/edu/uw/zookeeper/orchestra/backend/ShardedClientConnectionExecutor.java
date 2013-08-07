@@ -8,7 +8,7 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
-import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedOperation;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
