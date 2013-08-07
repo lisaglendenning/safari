@@ -6,6 +6,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -60,6 +61,7 @@ import edu.uw.zookeeper.protocol.server.FourLetterRequestProcessor;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.protocol.proto.OpCode;
+import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
 import edu.uw.zookeeper.server.ExpiringSessionService;
@@ -179,7 +181,7 @@ public class FrontendServerExecutor extends DependentService {
         connections.stop();
     }
     
-    protected static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> {
+    protected static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> {
 
         public static ResponseProcessor create(
                 ConcurrentMap<Long, FrontendSessionExecutor> handlers,
@@ -210,25 +212,28 @@ public class FrontendServerExecutor extends DependentService {
         }
         
         @Override
-        public Message.ServerResponse<Records.Response> apply(Pair<SessionOperation.Request<Records.Request>, Records.Response> input) {
+        public Message.ServerResponse<Records.Response> apply(Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>> input) {
+            Optional<Operation.ProtocolRequest<Records.Request>> request = input.second().first();
+            Records.Response response = input.second().second();
             int xid;
-            if (input.second() instanceof Operation.RequestId) {
-                xid = ((Operation.RequestId) input.second()).getXid();
+            if (response instanceof Operation.RequestId) {
+                xid = ((Operation.RequestId) response).getXid();
             } else {
-                xid = input.first().getXid();
+                xid = request.get().getXid();
             }
-            long zxid = zxids.apply(input.first().getRecord().getOpcode());
-            switch (input.second().getOpcode()) {
-            case CLOSE_SESSION:
-            {
-                sessions.remove(input.first().getSessionId());
-                handlers.remove(input.first().getSessionId());
-                break;
+            OpCode opcode;
+            if (OpCodeXid.has(xid)) {
+                opcode = OpCodeXid.of(xid).getOpcode();
+            } else {
+                opcode = request.get().getRecord().getOpcode();
             }
-            default:
-                break;
+            long zxid = zxids.apply(opcode);
+            if ((opcode == OpCode.CLOSE_SESSION) && !(response instanceof Operation.Error)) {
+                Long sessionId = input.first();
+                sessions.remove(sessionId);
+                handlers.remove(sessionId);
             }
-            return ProtocolResponseMessage.of(xid, zxid, input.second());
+            return ProtocolResponseMessage.of(xid, zxid, response);
         }
         
     }
@@ -322,7 +327,7 @@ public class FrontendServerExecutor extends DependentService {
     protected static class ConnectProcessor implements Processor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> {
 
         protected final ConnectTableProcessor connector;
-        protected final Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor;
+        protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor;
         protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
         protected final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup;
         protected final CachedFunction<Identifier, Identifier> assignmentLookup;
@@ -337,7 +342,7 @@ public class FrontendServerExecutor extends DependentService {
                 Function<Identifier, Identifier> ensembleForPeer,
                 CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
                 ConnectTableProcessor connector,
-                Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor,
+                Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor,
                 Executor executor) {
             this.connector = connector;
             this.processor = processor;
@@ -356,7 +361,7 @@ public class FrontendServerExecutor extends DependentService {
                 Session session = output.toSession();
                 handlers.putIfAbsent(
                         session.id(), 
-                        new FrontendSessionExecutor(
+                        FrontendSessionExecutor.newInstance(
                                 session, 
                                 input.second(),
                                 processor,

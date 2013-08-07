@@ -60,8 +60,6 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Ping;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
-import edu.uw.zookeeper.protocol.SessionOperation;
-import edu.uw.zookeeper.protocol.SessionRequest;
 import edu.uw.zookeeper.protocol.proto.IDisconnectResponse;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
@@ -71,7 +69,19 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.server.PingProcessor;
 
-public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> {
+public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>, Publisher {
+    
+    public static FrontendSessionExecutor newInstance(
+            Session session,
+            Publisher publisher,
+            Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor,
+            CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
+            CachedFunction<Identifier, Identifier> assignmentLookup,
+            Function<Identifier, Identifier> ensembleForPeer,
+            CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
+            Executor executor) {
+        return new FrontendSessionExecutor(session, publisher, processor, volumeLookup, assignmentLookup, ensembleForPeer, connectionLookup, executor);
+    }
     
     public static interface FrontendRequestFuture extends OperationFuture<Message.ServerResponse<Records.Response>> {}
     
@@ -83,14 +93,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     protected final Lookups<ZNodeLabel.Path, Volume> volumes;
     protected final Lookups<Identifier, Identifier> assignments;
     protected final BackendLookups backends;
-    protected final Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor;
+    protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor;
     // not thread safe
     protected LinkedIterator<FrontendRequestFuture> finger;
 
     public FrontendSessionExecutor(
             Session session,
             Publisher publisher,
-            Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor,
+            Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor,
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
             Function<Identifier, Identifier> ensembleForPeer,
@@ -125,6 +135,27 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         return mailbox;
     }
 
+    @Override
+    public void register(Object handler) {
+        publisher.register(handler);
+    }
+
+    @Override
+    public void unregister(Object handler) {
+        publisher.unregister(handler);
+    }
+
+    @Override
+    public void post(Object event) {
+        if (event instanceof ShardedResponseMessage<?>) {
+            Records.Response response = ((ShardedResponseMessage<?>) event).getRecord();
+            event = processor().apply(
+                    Pair.create(session().id(),
+                            Pair.create(Optional.<Operation.ProtocolRequest<Records.Request>>absent(), response)));
+        }
+        publisher.post(event);
+    }
+    
     public Session session() {
         return session;
     }
@@ -141,7 +172,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         return backends;
     }
     
-    protected Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor() {
+    protected Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor() {
         return processor;
     }
 
@@ -337,7 +368,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                                                     task.task(),
                                                     Futures.getUnchecked(task),
                                                     Futures.getUnchecked(task.connection()),
-                                                    self.publisher,
+                                                    self,
                                                     MoreExecutors.sameThreadExecutor());
                                             BackendSessionExecutor prev = backendSessions.putIfAbsent(backend.getEnsemble(), backend);
                                             if (prev != null) {
@@ -441,17 +472,16 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             if (isDone()) {
                 return false;
             }
-            SessionOperation.Request<Records.Request> request =
-                    SessionRequest.of(session().id(), task(), task());
             Message.ServerResponse<Records.Response> message = processor().apply(
-                    Pair.create(request, result));
+                    Pair.create(session().id(),
+                            Pair.create(Optional.<Operation.ProtocolRequest<Records.Request>>of(task()), result)));
             return set(message);
         }
 
         protected boolean publish() {
             if (this.state.compareAndSet(OperationFuture.State.COMPLETE, OperationFuture.State.PUBLISHED)) {
                 // TODO: exception?
-                publisher.post(Futures.getUnchecked(this));
+                post(Futures.getUnchecked(this));
                 return true;
             } else {
                 return false;

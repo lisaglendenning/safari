@@ -119,16 +119,15 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         if (state() == State.TERMINATED) {
             throw new RejectedExecutionException(State.TERMINATED.toString());
         } 
-        // we won't get the response before putting the request in the queue
-        // because we are synchronized
+        super.send(request);
         if (request.state() == OperationFuture.State.WAITING) {
             try {
                 request.call();
             } catch (Exception e) {
+                mailbox.remove(request);
                 throw new RejectedExecutionException(e);
             }
         }
-        super.send(request);
         if (! pending.hasNext()) {
             pending = mailbox.iterator();
         }
@@ -311,6 +310,8 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
 
         @Override
         public State call() { 
+            logger.entry(this);
+            
             State state = state();
             switch (state) {
             case WAITING:
@@ -329,7 +330,7 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
             default:
                 break;
             }
-            return state();
+            return logger.exit(state());
         }
 
         @Override
@@ -382,6 +383,8 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         
         @Override
         public State call() throws ExecutionException {
+            logger.entry(this);
+            
             switch (state()) {
             case WAITING:
             {
@@ -405,7 +408,8 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
             default:
                 break;
             }
-            return state();
+            
+            return logger.exit(state());
         }
         
         @Override
