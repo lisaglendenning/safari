@@ -1,7 +1,6 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
@@ -214,7 +213,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     }
     
     @Override
-    protected boolean apply(FrontendRequestFuture input) throws Exception {
+    protected synchronized boolean apply(FrontendRequestFuture input) throws Exception {
         if (state() != State.TERMINATED) {
             for (;;) {
                 OperationFuture.State state = input.state();
@@ -249,7 +248,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
     }
 
-    protected void doStop() {
+    protected synchronized void doStop() {
         FrontendRequestFuture next;
         while ((next = mailbox.poll()) != null) {
             next.cancel(true);
@@ -507,10 +506,10 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 Promise<Message.ServerResponse<Records.Response>> delegate) {
             super(state, task, delegate);
             this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.getRecord()));
-            this.volumes = Collections.synchronizedMap(Maps.<ZNodeLabel.Path, Volume>newHashMap());
-            this.shards = Collections.synchronizedMap(Maps.<Volume, ShardedRequestMessage<?>>newHashMap());
-            this.submitted = Collections.synchronizedMap(Maps.<Volume, Set<BackendSessionExecutor.BackendRequestFuture>>newHashMap());
-            this.pending = Collections.synchronizedSet(Sets.<ListenableFuture<?>>newHashSet());
+            this.volumes = Maps.<ZNodeLabel.Path, Volume>newHashMap();
+            this.shards = Maps.<Volume, ShardedRequestMessage<?>>newHashMap();
+            this.submitted = Maps.<Volume, Set<BackendSessionExecutor.BackendRequestFuture>>newHashMap();
+            this.pending = Sets.<ListenableFuture<?>>newHashSet();
         }
         
         @Override
@@ -519,7 +518,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         @Override
-        public boolean cancel(boolean mayInterruptIfRunning) {
+        public synchronized boolean cancel(boolean mayInterruptIfRunning) {
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
                 for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
@@ -532,7 +531,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         @Override
-        public State call() throws Exception {
+        public synchronized State call() throws Exception {
             logger.entry(this);
             
             Iterator<ListenableFuture<?>> p = pending.iterator();
@@ -882,7 +881,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         @Override
-        public String toString() {
+        public synchronized String toString() {
             return Objects.toStringHelper(this)
                     .add("state", state())
                     .add("task", task())
