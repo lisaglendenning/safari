@@ -9,6 +9,7 @@ import java.util.NoSuchElementException;
 import java.util.Queue;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import com.google.common.base.Objects;
 import com.google.common.collect.Iterators;
 
 public class LinkedQueue<E> extends AbstractQueue<E> implements Queue<E> {
@@ -25,18 +26,6 @@ public class LinkedQueue<E> extends AbstractQueue<E> implements Queue<E> {
         return create(elements.iterator());
     }
     
-    public static interface LinkedIterator<E> extends Iterator<E> {
-        E peekNext();
-
-        E peekPrevious();
-
-        boolean hasPrevious();
-
-        E previous();
-        
-        void add(E value);
-    }
-
     /**
      * Not thread-safe
      */
@@ -46,7 +35,7 @@ public class LinkedQueue<E> extends AbstractQueue<E> implements Queue<E> {
         protected Entry<E> next;
         protected Entry<E> last;
         
-        Itr(Entry<E> next) {
+        protected Itr(Entry<E> next) {
             this.next = next;
             this.previous = null;
             this.last = null;
@@ -193,6 +182,11 @@ public class LinkedQueue<E> extends AbstractQueue<E> implements Queue<E> {
             }
             previous = last = null;
         }
+        
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this).add("next", next).add("previous", previous).add("last", last).toString();
+        }
     }
 
     protected static class Entry<E> {
@@ -224,6 +218,16 @@ public class LinkedQueue<E> extends AbstractQueue<E> implements Queue<E> {
             this.value = value;
             this.next = next;
             this.previous = previous;
+        }
+        
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this)
+                    .addValue(hashCode())
+                    .add("value", value)
+                    .add("next", (next == null) ? "null" : next.hashCode())
+                    .add("previous", (previous == null) ? "null" : previous.hashCode())
+                    .toString();
         }
     }
     

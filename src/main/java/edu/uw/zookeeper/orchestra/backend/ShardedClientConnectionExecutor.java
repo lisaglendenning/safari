@@ -1,7 +1,5 @@
 package edu.uw.zookeeper.orchestra.backend;
 
-import java.util.concurrent.Executor;
-
 import com.google.common.base.Function;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -36,7 +34,6 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                 lookup,
                 translator,
                 session, 
-                connection,
                 AssignXidProcessor.newInstance(),
                 connection);
     }
@@ -48,10 +45,9 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
             Function<ZNodeLabel.Path, Identifier> lookup,
             ShardedOperationTranslators translator,
             ListenableFuture<ConnectMessage.Response> session,
-            C connection,
             AssignXidProcessor xids,
-            Executor executor) {
-        super(session, connection, xids, executor);
+            C connection) {
+        super(session, xids, connection);
         this.lookup = lookup;
         this.translator = translator;
     }
@@ -139,7 +135,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     }
     
     @Override
-    protected boolean apply(PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> input) throws Exception {
+    protected boolean apply(PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> input) {
         return super.apply(new ShardedRequestTask(shard(input.task()), input));
     }
     

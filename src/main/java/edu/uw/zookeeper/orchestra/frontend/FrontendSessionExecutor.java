@@ -1,14 +1,11 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
-import java.nio.channels.ClosedChannelException;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -30,16 +27,14 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.Session;
-import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.ExecutorActor;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processors;
@@ -48,7 +43,6 @@ import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.Stateful;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
@@ -59,12 +53,8 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.Volume;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenRequest;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenResponse;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
-import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Ping;
@@ -80,15 +70,18 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.server.PingProcessor;
 
-public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecutor.RequestFuture> implements TaskExecutor<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> {
+public class FrontendSessionExecutor extends ExecutorActor<OperationFuture<?>> implements TaskExecutor<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> {
     
     protected final Logger logger;
-    protected final Session session;
+    protected final Executor executor;
+    protected final LinkedQueue<OperationFuture<?>> mailbox;
     protected final Publisher publisher;
+    protected final Session session;
     protected final Lookups<ZNodeLabel.Path, Volume> volumes;
     protected final Lookups<Identifier, Identifier> assignments;
     protected final BackendLookups backends;
     protected final Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor;
+    protected volatile LinkedIterator<OperationFuture<?>> finger;
 
     protected FrontendSessionExecutor(
             Session session,
@@ -99,10 +92,12 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             Function<Identifier, Identifier> ensembleForPeer,
             CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
             Executor executor) {
-        super(executor, LinkedQueue.<RequestFuture>create(), AbstractActor.newState());
+        super();
         this.logger = LogManager.getLogger(getClass());
-        this.session = session;
+        this.executor = executor;
+        this.mailbox = LinkedQueue.create();
         this.publisher = publisher;
+        this.session = session;
         this.processor = processor;
         this.volumes = new Lookups<ZNodeLabel.Path, Volume>(
                 volumeLookup, 
@@ -113,8 +108,19 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 this,
                 MoreExecutors.sameThreadExecutor());
         this.backends = new BackendLookups(ensembleForPeer, connectionLookup);
+        this.finger = null;
     }
     
+    @Override
+    protected Executor executor() {
+        return executor;
+    }
+
+    @Override
+    protected LinkedQueue<OperationFuture<?>> mailbox() {
+        return mailbox;
+    }
+
     public Session session() {
         return session;
     }
@@ -138,35 +144,36 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     @Override
     public ListenableFuture<Message.ServerResponse<Records.Response>> submit(
             Message.ClientRequest<Records.Request> request) {
-        RequestFuture task = newRequest(request);
+        OperationFuture<Message.ServerResponse<Records.Response>> task = newRequest(request,SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
         send(task);
         return task;
     }
     
     @Override
-    public void send(RequestFuture message) {
+    public void send(OperationFuture<?> message) {
         // short circuit pings
-        if (message.task().getXid() == OpCodeXid.PING.getXid()) {
+        if ((message instanceof RequestTask) && (((RequestTask) message).task().getXid() == OpCodeXid.PING.getXid())) {
             try {
-                while (message.call() != RequestState.PUBLISHED) {}
+                while (message.call() != OperationFuture.State.PUBLISHED) {}
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             }
         } else {
             if (logger.isTraceEnabled()) {
-                logger.trace("Submitting {}", message.task());
+                logger.trace("Submitting {}", message);
             }
             super.send(message);
             message.addListener(this, MoreExecutors.sameThreadExecutor());
         }
     }
 
-    public RequestFuture newRequest(Message.ClientRequest<Records.Request> request) {
-        Promise<Message.ServerResponse<Records.Response>> promise = SettableFuturePromise.create();
+    public OperationFuture<Message.ServerResponse<Records.Response>> newRequest(
+            Message.ClientRequest<Records.Request> request, Promise<Message.ServerResponse<Records.Response>> promise) {
+        promise = LoggingPromise.create(logger, promise);
         if (request.getXid() == OpCodeXid.PING.getXid()) {
-            return new LocalRequestTask(request, promise);
+            return new LocalRequestTask(OperationFuture.State.SUBMITTING, request, promise);
         } else {
-            return new BackendRequestTask(request, promise);
+            return new BackendRequestTask(OperationFuture.State.WAITING, request, promise);
         }
     }
     
@@ -188,33 +195,27 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     }
 
     @Override
-    protected boolean runEnter() {
-        if (state.get() == State.WAITING) {
-            schedule();
-            return false;
-        } else {
-            return super.runEnter();
-        }
-    }
-
-    @Override
     protected void doRun() throws Exception {
-        RequestFuture prev = null;
-        Iterator<RequestFuture> itr = mailbox.iterator();
-        while (itr.hasNext()) {
-            RequestFuture task = itr.next();
-            if (! apply(task)) {
-                // TODO
+        OperationFuture<?> next;
+        while ((next = finger.peekNext()) != null) {
+            if (! apply(next)) {
                 break;
             }
+        }
+    }
+    
+    @Override
+    protected boolean apply(OperationFuture<?> task) throws Exception {
+        if (state() != State.TERMINATED) {
             while (true) {
-                RequestState state = task.state();
-                if (RequestState.PUBLISHED == state) {
-                    itr.remove();
+                OperationFuture.State state = task.state();
+                if (OperationFuture.State.PUBLISHED == state) {
+                    finger.next();
+                    finger.remove();
                     break;
                 }
-                else if ((RequestState.WAITING == state)
-                        && ((prev != null) && (prev.state().compareTo(RequestState.SUBMITTING) < 0))) {
+                else if ((OperationFuture.State.WAITING == state)
+                        && ((finger.peekPrevious() != null) && (finger.peekPrevious().state().compareTo(OperationFuture.State.SUBMITTING) < 0))) {
                     // we need to preserve ordering of requests per volume
                     // as a proxy for this requirement, 
                     // don't submit until the task before us has submitted
@@ -224,9 +225,8 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     break;
                 }
             }
-            
-            prev = task;
         }
+        return (state() != State.TERMINATED);
     }
 
     protected static class ListenableFuturePending<V> extends Pair<ListenableFuture<V>, Set<BackendRequestTask>> {
@@ -278,9 +278,9 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     }
 
     // TODO handle disconnects and reconnects
-    protected class BackendLookups extends Lookups<Identifier, BackendSession> implements Reference<ConcurrentMap<Identifier, BackendSession>> {
+    protected class BackendLookups extends Lookups<Identifier, BackendSessionExecutor> implements Reference<ConcurrentMap<Identifier, BackendSessionExecutor>> {
     
-        protected final ConcurrentMap<Identifier, BackendSession> backendSessions;
+        protected final ConcurrentMap<Identifier, BackendSessionExecutor> backendSessions;
         protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
         protected final Function<Identifier, Identifier> ensembleForPeer;
         
@@ -288,36 +288,44 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 Function<Identifier, Identifier> ensembleForPeer,
                 CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup) {
             this(ensembleForPeer, connectionLookup, 
-                    new MapMaker().<Identifier, BackendSession>makeMap());
+                    new MapMaker().<Identifier, BackendSessionExecutor>makeMap());
         }
         
         public BackendLookups(
                 final Function<Identifier, Identifier> ensembleForPeer,
                 final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
-                final ConcurrentMap<Identifier, BackendSession> backendSessions) {
+                final ConcurrentMap<Identifier, BackendSessionExecutor> backendSessions) {
             super(CachedFunction.create(
-                    new Function<Identifier, BackendSession>() {
+                    new Function<Identifier, BackendSessionExecutor>() {
                         @Override
-                        public BackendSession apply(Identifier ensemble) {
+                        public BackendSessionExecutor apply(Identifier ensemble) {
                             return backendSessions.get(ensemble);
                         }
                     }, 
-                    new AsyncFunction<Identifier, BackendSession>() {
+                    new AsyncFunction<Identifier, BackendSessionExecutor>() {
                         @Override
-                        public ListenableFuture<BackendSession> apply(Identifier ensemble) throws Exception {
-                            final BackendSessionTask task = new BackendSessionTask(
+                        public ListenableFuture<BackendSessionExecutor> apply(Identifier ensemble) throws Exception {
+                            final EstablishBackendSessionTask task = new EstablishBackendSessionTask(
+                                    session(),
                                     Optional.<Session>absent(),
                                     ensemble, 
                                     connectionLookup.apply(ensemble),
                                     SettableFuturePromise.<Session>create());
+                            final FrontendSessionExecutor self = FrontendSessionExecutor.this;
                             return Futures.transform(
                                     task, 
-                                    new Function<Session, BackendSession>() {
+                                    new Function<Session, BackendSessionExecutor>() {
                                         @Override
                                         @Nullable
-                                        public BackendSession apply(Session input) {
-                                            BackendSession backend = task.toBackendSession();
-                                            BackendSession prev = backendSessions.putIfAbsent(backend.getEnsemble(), backend);
+                                        public BackendSessionExecutor apply(Session input) {
+                                            BackendSessionExecutor backend = BackendSessionExecutor.create(
+                                                    self.session().id(), 
+                                                    task.task(),
+                                                    Futures.getUnchecked(task),
+                                                    Futures.getUnchecked(task.connection()),
+                                                    self.publisher,
+                                                    MoreExecutors.sameThreadExecutor());
+                                            BackendSessionExecutor prev = backendSessions.putIfAbsent(backend.getEnsemble(), backend);
                                             if (prev != null) {
                                                 // TODO
                                                 throw new AssertionError();
@@ -340,288 +348,28 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         }
         
         @Override
-        public ConcurrentMap<Identifier, BackendSession> get() {
+        public ConcurrentMap<Identifier, BackendSessionExecutor> get() {
             return backendSessions;
         }
     }
 
-    protected class BackendSessionTask extends PromiseTask<Identifier, Session> implements Runnable, FutureCallback<MessagePacket> {
-        
-        protected final Optional<Session> existing;
-        protected final ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection;
-        
-        public BackendSessionTask(
-                Optional<Session> existing,
-                Identifier ensemble,
-                ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection,
-                Promise<Session> promise) throws Exception {
-            super(ensemble, promise);
-            this.existing = existing;
-            this.connection = connection;
-            this.connection.addListener(this, MoreExecutors.sameThreadExecutor());
-        }
-        
-        public BackendSession toBackendSession() {
-            return new BackendSession(
-                    task(),
-                    Futures.getUnchecked(this),
-                    Futures.getUnchecked(connection()));
-        }
-        
-        public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection() {
-            return connection;
-        }
-        
-        @Subscribe
-        public void handleTransition(Automaton.Transition<?> event) {
-            if (event.to() == Connection.State.CONNECTION_CLOSED) {
-                Futures.getUnchecked(this.connection).unregister(this);
-                if (! isDone()) {
-                    setException(new ClosedChannelException());
-                }
-            }
-        }
-        
-        @Subscribe
-        public void handleMessage(MessagePacket message) {
-            switch (message.first().type()) {
-            case MESSAGE_TYPE_SESSION_OPEN_RESPONSE:
-            {
-                MessageSessionOpenResponse response = message.getBody(MessageSessionOpenResponse.class);
-                if (response.getSessionId() != session().id()) {
-                    break;
-                }
-                Futures.getUnchecked(this.connection).unregister(this);
-                if (! isDone()) {
-                    if (response.delegate() instanceof ConnectMessage.Response.Valid) {
-                        set(response.delegate().toSession());
-                    } else {
-                        setException(new KeeperException.SessionExpiredException());
-                    }
-                }
-                break;
-            }
-            default:
-                break;
-            }
-        }
-        
-        @Override
-        public void run() {
-            if (connection.isDone()) {
-                ClientPeerConnection<?> c;
-                try {
-                    c = connection.get();
-                } catch (Exception e) {
-                    if (! isDone()) {
-                        setException(e);
-                    }
-                    return;
-                }
-                
-                ConnectMessage.Request request;
-                if (existing.isPresent()) {
-                    request = ConnectMessage.Request.RenewRequest.newInstance(
-                                existing.get(), 0L);
-                } else {
-                    request = ConnectMessage.Request.NewRequest.newInstance(
-                            session().parameters().timeOut(), 0L);
-                }
-                
-                c.register(this);
-                Futures.addCallback(
-                        c.write(MessagePacket.of(
-                                    MessageSessionOpenRequest.of(
-                                        session().id(), request))),
-                        this);
-            }
-        }
+    protected abstract class RequestTask extends PromiseTask<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> implements OperationFuture<Message.ServerResponse<Records.Response>>, Runnable {
 
-        @Override
-        public void onSuccess(MessagePacket result) {
-        }
-
-        @Override
-        public void onFailure(Throwable t) {
-            setException(t);
-        }
-    }
-    
-    protected class BackendSession {
-
-        private final Identifier ensemble;
-        private final Session session;
-        private final ClientPeerConnection<?> connection;
-        private final LinkedQueue<ListenableFuture<ShardedResponseMessage<?>>> pending;
-        // not thread safe
-        private LinkedQueue.LinkedIterator<ListenableFuture<ShardedResponseMessage<?>>> finger;
-
-        public BackendSession(
-                Identifier ensemble,
-                Session session,
-                ClientPeerConnection<?> connection) {
-            this.ensemble = ensemble;
-            this.session = session;
-            this.connection = connection;
-            this.pending = LinkedQueue.create();
-            this.finger = null;
-        }
-        
-        public Identifier getEnsemble() {
-            return ensemble;
-        }
-        
-        public Session getSession() {
-            return session;
-        }
-        
-        public ClientPeerConnection<?> getConnection() {
-            return connection;
-        }
-        
-        public synchronized ResponseTask submit(
-                BackendRequestTask request, ShardedRequestMessage<?> message) {
-            ResponseTask task = new ResponseTask(request, message);
-            pending.add(task);
-            task.call();
-            return task;
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Subscribe
-        public synchronized void handleResponse(ShardedResponseMessage<?> message) {
-            if (finger == null) {
-                finger = pending.iterator();
-            }
-            if (OpCodeXid.NOTIFICATION.getXid() == message.getXid()) {
-                ListenableFuture<? extends ShardedResponseMessage<?>> f = Futures.immediateFuture(message);
-                finger.add((ListenableFuture<ShardedResponseMessage<?>>) f);
-            } else {
-                ResponseTask task = null;
-                while (finger.hasNext()) {
-                    task = (ResponseTask) finger.peekNext();
-                    if (task.task().getXid() == message.getXid()) {
-                        break;
-                    } else if (task.isDone()) {
-                        task = null;
-                        finger.next();
-                    } else {
-                        // TODO: should this happen??
-                        task = null;
-                        break;
-                    }
-                }
-                if (task == null) {
-                    logger.debug("No match for response {}", message);
-                } else {
-                    if (! task.set(message)) {
-                        logger.debug("Ignoring response {}", message);
-                    }
-                    finger.next();
-                }
-            }
-        }
-        
-        public synchronized ListenableFuture<ShardedResponseMessage<?>> peek() {
-            return pending.peek();
-        }
-        
-        public synchronized ListenableFuture<ShardedResponseMessage<?>> poll() {
-            ListenableFuture<ShardedResponseMessage<?>> next = pending.poll();
-            // TODO
-            return next;
-        }
-        
-        protected class ResponseTask 
-                extends PromiseTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> 
-                implements FutureCallback<MessagePacket>, Callable<ListenableFuture<MessagePacket>> {
-
-            protected final BackendRequestTask request;
-            protected volatile ListenableFuture<MessagePacket> writeFuture;
-
-            public ResponseTask(
-                    BackendRequestTask request,
-                    ShardedRequestMessage<?> message) {
-                this(request, message, 
-                        SettableFuturePromise.<ShardedResponseMessage<?>>create());
-            }
-            
-            public ResponseTask(
-                    BackendRequestTask request,
-                    ShardedRequestMessage<?> message,
-                    Promise<ShardedResponseMessage<?>> delegate) {
-                super(message, LoggingPromise.create(logger, delegate));
-                this.request = request;
-                this.writeFuture = null;
-            }
-            
-            @Override
-            public ListenableFuture<MessagePacket> call() {
-                MessagePacket message = MessagePacket.of(
-                        MessageSessionRequest.of(session().id(), task()));
-                writeFuture = getConnection().write(message);
-                Futures.addCallback(writeFuture, this);
-                return writeFuture;
-            }
-            
-            public BackendRequestTask getRequest() {
-                return request;
-            }
-            
-            @Override
-            public boolean set(ShardedResponseMessage<?> result) {
-                if (result.getXid() != task().getXid()) {
-                    throw new IllegalArgumentException(result.toString());
-                }
-                return super.set(result);
-            }
-            
-            @Override
-            public boolean cancel(boolean mayInterruptIfRunning) {
-                boolean doCancel = super.cancel(mayInterruptIfRunning);
-                if (doCancel) {
-                    if (writeFuture != null) {
-                        writeFuture.cancel(mayInterruptIfRunning);
-                    }
-                }
-                return doCancel;
-            }
-
-            @Override
-            public void onSuccess(MessagePacket result) {
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                setException(t);
-            }
-        }
-    }
-    
-    protected static enum RequestState {
-        WAITING, SUBMITTING, COMPLETE, PUBLISHED;
-    }
-    
-    protected interface RequestFuture extends ListenableFuture<Message.ServerResponse<Records.Response>>, Stateful<FrontendSessionExecutor.RequestState>, Runnable, Callable<RequestState> {
-        Message.ClientRequest<Records.Request> task();
-    }
-    
-    protected abstract class RequestTask extends PromiseTask<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> implements RequestFuture {
-
-        protected final AtomicReference<FrontendSessionExecutor.RequestState> state;
+        protected final AtomicReference<State> state;
 
         public RequestTask(
-                Message.ClientRequest<Records.Request> task) {
-            this(task, SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
-        }
-        
-        public RequestTask(
+                State state,
                 Message.ClientRequest<Records.Request> task,
                 Promise<Message.ServerResponse<Records.Response>> delegate) {
-            super(task, LoggingPromise.create(logger, delegate));
-            this.state = new AtomicReference<FrontendSessionExecutor.RequestState>(RequestState.WAITING);
+            super(task, delegate);
+            this.state = new AtomicReference<State>(state);
         }
-
+        
+        @Override
+        public int getXid() {
+            return task().getXid();
+        }
+        
         @Override
         public boolean set(Message.ServerResponse<Records.Response> result) {
             if ((result.getRecord().getOpcode() != task().getRecord().getOpcode())
@@ -629,16 +377,16 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 throw new IllegalArgumentException(result.toString());
             }
             
-            RequestState state = state();
-            if (RequestState.COMPLETE.compareTo(state) > 0) {
-                this.state.compareAndSet(state, RequestState.COMPLETE);
+            OperationFuture.State state = state();
+            if (OperationFuture.State.COMPLETE.compareTo(state) > 0) {
+                this.state.compareAndSet(state, OperationFuture.State.COMPLETE);
             }
 
             return super.set(result);
         }
         
         @Override
-        public FrontendSessionExecutor.RequestState state() {
+        public OperationFuture.State state() {
             return state.get();
         }
 
@@ -648,7 +396,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         }
 
         @Override
-        public RequestState call() throws Exception {
+        public State call() throws Exception {
             if (logger.isTraceEnabled()) {
                 logger.trace("{}", this);
             }
@@ -665,7 +413,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         }
 
         protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
-            if (state.get() == RequestState.SUBMITTING) {
+            if (state.get() == OperationFuture.State.SUBMITTING) {
                 Records.Response result = null;
                 switch (task().getRecord().getOpcode()) {
                 case CLOSE_SESSION:
@@ -700,7 +448,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         }
 
         protected boolean publish() {
-            if (this.state.compareAndSet(RequestState.COMPLETE, RequestState.PUBLISHED)) {
+            if (this.state.compareAndSet(OperationFuture.State.COMPLETE, OperationFuture.State.PUBLISHED)) {
                 // TODO: exception?
                 publisher.post(Futures.getUnchecked(this));
                 return true;
@@ -713,22 +461,18 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
     protected class LocalRequestTask extends RequestTask {
 
         public LocalRequestTask(
-                Message.ClientRequest<Records.Request> task) {
-            this(task, SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
-        }
-
-        public LocalRequestTask(
+                State state,
                 Message.ClientRequest<Records.Request> task,
                 Promise<Message.ServerResponse<Records.Response>> delegate) {
-            super(task, delegate);
+            super(state, task, delegate);
         }
         
         @Override
-        public RequestState call() throws Exception {
-            RequestState state = super.call();
+        public State call() throws Exception {
+            State state = super.call();
             switch (state) {
             case WAITING:
-                this.state.compareAndSet(state, RequestState.SUBMITTING);
+                this.state.compareAndSet(state, OperationFuture.State.SUBMITTING);
                 break;
             case SUBMITTING:
                 complete();
@@ -749,31 +493,32 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         protected final ImmutableSet<ZNodeLabel.Path> paths;
         protected final Map<ZNodeLabel.Path, Volume> volumes;
         protected final BiMap<Volume, ShardedRequestMessage<?>> shards;
-        protected final Map<Identifier, BackendSession.ResponseTask> submitted;
+        protected final Map<Identifier, BackendSessionExecutor.BackendResponseTask> submitted;
         protected final Set<ListenableFuturePending<?>> pending;
 
         public BackendRequestTask(
-                Message.ClientRequest<Records.Request> task) {
-            this(task, SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
-        }
-        
-        public BackendRequestTask(
+                State state,
                 Message.ClientRequest<Records.Request> task,
                 Promise<Message.ServerResponse<Records.Response>> delegate) {
-            super(task, delegate);
+            super(state, task, delegate);
             this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.getRecord()));
             this.volumes = Collections.synchronizedMap(Maps.<ZNodeLabel.Path, Volume>newHashMap());
             this.shards = Maps.synchronizedBiMap(HashBiMap.<Volume, ShardedRequestMessage<?>>create());
-            this.submitted = Collections.synchronizedMap(Maps.<Identifier, BackendSession.ResponseTask>newHashMap());
+            this.submitted = Collections.synchronizedMap(Maps.<Identifier, BackendSessionExecutor.BackendResponseTask>newHashMap());
             this.pending = Collections.synchronizedSet(Sets.<ListenableFuturePending<?>>newHashSet());
         }
         
+        @Override
+        public int getXid() {
+            return task().getXid();
+        }
+
         public ImmutableSet<ZNodeLabel.Path> paths() {
             return paths;
         }
 
         @Override
-        public RequestState call() throws Exception {
+        public State call() throws Exception {
             switch (super.call()) {
             case WAITING:
             {
@@ -782,7 +527,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     break;
                 }
                 Set<Volume> uniqueVolumes = getUniqueVolumes(volumes.get().values());
-                Optional<Map<Volume, Set<BackendSession>>> backends = getConnections(uniqueVolumes);
+                Optional<Map<Volume, Set<BackendSessionExecutor>>> backends = getConnections(uniqueVolumes);
                 if (! backends.isPresent()) {
                     break;
                 }
@@ -901,14 +646,14 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             return request;
         }
 
-        protected Optional<Map<Volume, Set<BackendSession>>> getConnections(Set<Volume> volumes) throws Exception {
-            Map<Volume, Set<BackendSession>> backends = Maps.newHashMapWithExpectedSize(volumes.size());
+        protected Optional<Map<Volume, Set<BackendSessionExecutor>>> getConnections(Set<Volume> volumes) throws Exception {
+            Map<Volume, Set<BackendSessionExecutor>> backends = Maps.newHashMapWithExpectedSize(volumes.size());
             for (Volume v: volumes) {
                 if (v.equals(Volume.none())) {
                     boolean done = true;
-                    Set<BackendSession> all = Sets.newHashSetWithExpectedSize(backends().get().size());
+                    Set<BackendSessionExecutor> all = Sets.newHashSetWithExpectedSize(backends().get().size());
                     for (Identifier ensemble: backends().get().keySet()) {
-                        Optional<BackendSession> backend = backends().apply(ensemble, this);
+                        Optional<BackendSessionExecutor> backend = backends().apply(ensemble, this);
                         if (backend.isPresent()) {
                             all.add(backend.get());
                         } else {
@@ -924,7 +669,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                 } else {
                     Optional<Identifier> assignment = assignments().apply(v.getId(), this);
                     if (assignment.isPresent()) {
-                        Optional<BackendSession> backend = backends().apply(assignment.get(), this);
+                        Optional<BackendSessionExecutor> backend = backends().apply(assignment.get(), this);
                         if (backend.isPresent()) {
                             backends.put(v, ImmutableSet.of(backend.get()));
                         }
@@ -946,16 +691,17 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             }
         }
         
-        protected Map<Identifier, BackendSession.ResponseTask> submit(
+        protected Map<Identifier, BackendSessionExecutor.BackendResponseTask> submit(
                 Map<Volume, ShardedRequestMessage<?>> shards,
-                Map<Volume, Set<BackendSession>> backends) throws Exception {
-            this.state.compareAndSet(RequestState.WAITING, RequestState.SUBMITTING);
+                Map<Volume, Set<BackendSessionExecutor>> backends) throws Exception {
+            this.state.compareAndSet(OperationFuture.State.WAITING, OperationFuture.State.SUBMITTING);
             for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
-                for (BackendSession backend: backends.get(e.getKey())) {
+                for (BackendSessionExecutor backend: backends.get(e.getKey())) {
                     ClientPeerConnection<?> connection = backend.getConnection();
                     Identifier k = connection.remoteAddress().getIdentifier();
                     if (! submitted.containsKey(k)) {
-                        BackendSession.ResponseTask task = backend.submit(this, e.getValue());
+                        BackendSessionExecutor.BackendResponseTask task = backend.submit(
+                                Pair.<OperationFuture<?>, ShardedRequestMessage<?>>create(this, e.getValue()));
                         submitted.put(k, task);
                     }
                 }
@@ -965,7 +711,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
         
         @Override
         protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
-            if (state.get() != RequestState.SUBMITTING) {
+            if (state.get() != OperationFuture.State.SUBMITTING) {
                 return this;
             }
             
@@ -976,7 +722,7 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             Records.Response result = null;
             if (OpCode.MULTI == task().getRecord().getOpcode()) {
                 Map<Volume, ListIterator<Records.MultiOpResponse>> responses = Maps.newHashMapWithExpectedSize(shards.size());
-                for (BackendSession.ResponseTask task: submitted.values()) {
+                for (BackendSessionExecutor.BackendResponseTask task: submitted.values()) {
                     if (! task.isDone()) {
                         break;
                     } else {
@@ -1018,8 +764,8 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
                     result = new IMultiResponse(ops);
                 }
             } else {
-                BackendSession.ResponseTask selected = null;
-                for (BackendSession.ResponseTask task: submitted.values()) {
+                BackendSessionExecutor.BackendResponseTask selected = null;
+                for (BackendSessionExecutor.BackendResponseTask task: submitted.values()) {
                     if (! task.isDone()) {
                         selected = null;
                         break;
@@ -1059,16 +805,8 @@ public class FrontendSessionExecutor extends AbstractActor<FrontendSessionExecut
             if (published) {
                 for (Identifier peer: submitted.keySet()) {
                     Identifier ensemble = backends().getEnsembleForPeer().apply(peer);
-                    BackendSession backend = backends().get().get(ensemble);
-                    ListenableFuture<ShardedResponseMessage<?>> f = backend.poll();
-                    assert (f == submitted.get(peer));
-                    f = backend.peek();
-                    while ((f != null) && (f.isDone()) && (! (f instanceof BackendSession.ResponseTask))) {
-                        f = backend.poll();
-                        // TODO: exception?
-                        publisher.post(Futures.getUnchecked(f));
-                        f = backend.peek();
-                    }
+                    BackendSessionExecutor backend = backends().get().get(ensemble);
+                    backend.run();
                 }
             }
             return published;
