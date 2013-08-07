@@ -121,6 +121,7 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         if (state() == State.TERMINATED) {
             throw new RejectedExecutionException(State.TERMINATED.toString());
         } 
+        // synchronized ensures that queue order is same as submit order...
         super.send(request);
         if (request.state() == OperationFuture.State.WAITING) {
             try {
@@ -183,12 +184,10 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
             return;
         }
         if (Connection.State.CONNECTION_CLOSED == event.to()) {
-            KeeperException.ConnectionLossException e = new KeeperException.ConnectionLossException();
+            KeeperException.OperationTimeoutException e = new KeeperException.OperationTimeoutException();
             for (BackendRequestFuture next: mailbox) {
                 if (! next.isDone()) {
-                    if (next instanceof Promise) {
-                        ((Promise<?>) next).setException(e);
-                    }
+                    ((Promise<?>) next).setException(e);
                 }
             }
             stop();
