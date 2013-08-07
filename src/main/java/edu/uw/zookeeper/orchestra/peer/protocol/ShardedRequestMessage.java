@@ -13,7 +13,7 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.proto.Records;
 
-@JsonIgnoreProperties({"request", "xid", "record"})
+@JsonIgnoreProperties({"value", "request", "xid", "record"})
 public class ShardedRequestMessage<V extends Records.Request> extends ShardedMessage<Message.ClientRequest<V>> implements Message.ClientRequest<V>, ShardedOperation.Request<Message.ClientRequest<V>> {
 
     public static <V extends Records.Request> ShardedRequestMessage<V> of(
@@ -36,16 +36,16 @@ public class ShardedRequestMessage<V extends Records.Request> extends ShardedMes
     
     @Override
     public Message.ClientRequest<V> getRequest() {
-        return delegate();
+        return getValue();
     }
 
     @Override
     public int getXid() {
-        return getRequest().getXid();
+        return getValue().getXid();
     }
 
     @Override
     public V getRecord() {
-        return getRequest().getRecord();
+        return getValue().getRecord();
     }
 }

@@ -9,24 +9,24 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 
 @MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_OPEN_RESPONSE)
-public class MessageSessionOpenResponse extends MessageSessionOpen<ConnectMessage.Response> {
+public class MessageSessionOpenResponse extends OpenSessionMessage<ConnectMessage.Response> {
 
     public static MessageSessionOpenResponse of(
-            long sessionId,
-            ConnectMessage.Response record) {
-        return new MessageSessionOpenResponse(sessionId, record);
+            Long identifier,
+            ConnectMessage.Response value) {
+        return new MessageSessionOpenResponse(identifier, value);
     }
     
     @JsonCreator
     public MessageSessionOpenResponse(
-            @JsonProperty("sessionId") long sessionId,
+            @JsonProperty("identifier") Long identifier,
             @JsonProperty("payload") byte[] payload) throws IOException {
-        this(sessionId, ConnectMessage.Response.decode(Unpooled.wrappedBuffer(payload)));
+        this(identifier, ConnectMessage.Response.decode(Unpooled.wrappedBuffer(payload)));
     }
 
     public MessageSessionOpenResponse(
-            long sessionId,
-            ConnectMessage.Response record) {
-        super(sessionId, record);
+            Long identifier,
+            ConnectMessage.Response value) {
+        super(identifier, value);
     }
 }

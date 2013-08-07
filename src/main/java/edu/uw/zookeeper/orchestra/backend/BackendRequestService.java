@@ -206,15 +206,15 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         @Override
         public ShardedClientConnectionExecutor<C> apply(C connection) {
             ConnectMessage.Request request;
-            if (task.delegate() instanceof ConnectMessage.Request.NewRequest) {
+            if (task.getValue() instanceof ConnectMessage.Request.NewRequest) {
                 request = ConnectMessage.Request.NewRequest.newInstance(
                         TimeValue.create(
-                                Long.valueOf(task.delegate().getTimeOut()), 
+                                Long.valueOf(task.getValue().getTimeOut()), 
                                 TimeUnit.MILLISECONDS), 
                             connections.zxids().get());
             } else {
                 request = ConnectMessage.Request.RenewRequest.newInstance(
-                        task.delegate().toSession(), connections.zxids().get());
+                        task.getValue().toSession(), connections.zxids().get());
             }
             
             return ShardedClientConnectionExecutor.newInstance(
@@ -327,11 +327,11 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
         
         public void handleMessageHandshake(MessageHandshake second) {
-            assert(second.getId() == get().localAddress().getIdentifier());
+            assert(second.getIdentifier() == get().localAddress().getIdentifier());
         }
 
         public void handleMessageSessionOpen(MessageSessionOpenRequest message) {
-            long sessionId = message.getSessionId();
+            long sessionId = message.getIdentifier();
             BackendClient client = clients.get(sessionId);
             if (client == null) {
                 ListenableFuture<ShardedClientConnectionExecutor<C>> connection = connect(message);
@@ -345,15 +345,15 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
 
         public void handleMessageSessionRequest(MessageSessionRequest message) {
-            BackendClient client = clients.get(message.getSessionId());
+            BackendClient client = clients.get(message.getIdentifier());
             if (client != null) {
                 ListenableFuture<Message.ServerResponse<Records.Response>> future;
                 try {
-                    future = client.submit(message.getRequest());
+                    future = client.submit(message.getValue());
                 } catch (Exception e) {
                     throw Throwables.propagate(e);
                 }
-                if (message.getRequest().getRecord().getOpcode() == OpCode.CLOSE_SESSION) {
+                if (message.getValue().getRecord().getOpcode() == OpCode.CLOSE_SESSION) {
                     future.addListener(client.new RemoveTask(), MoreExecutors.sameThreadExecutor());
                 }
             } else {
@@ -402,7 +402,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             
             @Subscribe
             public void handleResponse(ShardedResponseMessage<?> message) {
-                get().write(MessagePacket.of(MessageSessionResponse.of(getFrontend().getSessionId(), message)));
+                get().write(MessagePacket.of(MessageSessionResponse.of(getFrontend().getIdentifier(), message)));
             }
 
             protected class RegisterTask implements Runnable {
@@ -422,7 +422,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             protected class RemoveTask implements Runnable {
                 @Override
                 public void run() {
-                    clients.remove(frontend.getSessionId(), BackendClient.this);
+                    clients.remove(frontend.getIdentifier(), BackendClient.this);
                 }
             }
         
@@ -484,7 +484,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             ListenableFuture<MessagePacket> future = connection.write(
                     MessagePacket.of(
                             MessageSessionOpenResponse.of(
-                                    task().getSessionId(), response)));
+                                    task().getIdentifier(), response)));
             Futures.addCallback(future, this);
         }
 

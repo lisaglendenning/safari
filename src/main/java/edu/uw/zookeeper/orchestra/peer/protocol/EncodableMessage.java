@@ -5,20 +5,15 @@ import io.netty.buffer.Unpooled;
 
 import java.io.IOException;
 
-import com.google.common.base.Objects;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import edu.uw.zookeeper.protocol.Encodable;
 
-public abstract class EncodableMessage<T extends Encodable> extends MessageBody implements Encodable {
+@JsonIgnoreProperties({"value"})
+public abstract class EncodableMessage<T, V extends Encodable> extends ValueMessage<T,V> implements Encodable {
 
-    private final T delegate;
-    
-    protected EncodableMessage(T delegate) {
-        this.delegate = delegate;
-    }
-    
-    public T delegate() {
-        return delegate;
+    protected EncodableMessage(T identifier, V value) {
+        super(identifier, value);
     }
 
     public byte[] getPayload() throws IOException {
@@ -31,30 +26,6 @@ public abstract class EncodableMessage<T extends Encodable> extends MessageBody 
 
     @Override
     public void encode(ByteBuf output) throws IOException {
-        delegate().encode(output);
-    }
-    
-    @Override
-    public String toString() {
-        return Objects.toStringHelper(this)
-                .addValue(delegate())
-                .toString();
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) {
-            return true;
-        }
-        if ((obj == null) || (obj.getClass() != getClass())) {
-            return false;
-        }
-        EncodableMessage<?> other = (EncodableMessage<?>) obj;
-        return Objects.equal(delegate(), other.delegate());
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hashCode(delegate());
+        getValue().encode(output);
     }
 }

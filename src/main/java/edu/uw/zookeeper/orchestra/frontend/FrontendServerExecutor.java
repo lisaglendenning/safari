@@ -438,8 +438,8 @@ public class FrontendServerExecutor extends DependentService {
                 case MESSAGE_TYPE_SESSION_RESPONSE:
                 {
                     MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
-                    FrontendSessionExecutor e = executors.get(body.getSessionId());
-                    e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getResponse()));
+                    FrontendSessionExecutor e = executors.get(body.getIdentifier());
+                    e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getValue()));
                     break;
                 }
                 default:

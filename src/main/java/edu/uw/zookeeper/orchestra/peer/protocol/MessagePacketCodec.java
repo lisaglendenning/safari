@@ -24,7 +24,7 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
                 MessageSessionOpenResponse.class,
                 MessageSessionRequest.class,
                 MessageSessionResponse.class)) {
-            MessageBody.register(cls);
+            MessageTypes.register(cls);
         }
     }
     
@@ -51,7 +51,7 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
         ByteBufInputStream stream = new ByteBufInputStream(input);
         try {
             MessageHeader first = MessageHeader.decode(input);
-            Class<? extends MessageBody> bodyType = MessageBody.registeredType(first.type());
+            Class<? extends MessageBody> bodyType = MessageTypes.registeredType(first.type());
             MessageBody second = mapper.readValue(stream, bodyType);
             return MessagePacket.of(first, second);
         } finally {

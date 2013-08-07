@@ -14,7 +14,7 @@ import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 
-@JsonIgnoreProperties({"response", "xid", "zxid", "record"})
+@JsonIgnoreProperties({"value", "response", "xid", "zxid", "record"})
 public class ShardedResponseMessage<V extends Records.Response> extends ShardedMessage<Message.ServerResponse<V>> implements Message.ServerResponse<V>, ShardedOperation.Response<Message.ServerResponse<V>> {
 
     public static <V extends Records.Response> ShardedResponseMessage<V> of(
@@ -37,22 +37,22 @@ public class ShardedResponseMessage<V extends Records.Response> extends ShardedM
 
     @Override
     public Message.ServerResponse<V> getResponse() {
-        return delegate();
+        return getValue();
     }
     
     @Override
     public int getXid() {
-        return getResponse().getXid();
+        return getValue().getXid();
     }
 
     @Override
     public long getZxid() {
-        return getResponse().getZxid();
+        return getValue().getZxid();
     }
 
     @Override
     public V getRecord() {
-        return getResponse().getRecord();
+        return getValue().getRecord();
     }
 
     public int getOpCode() {

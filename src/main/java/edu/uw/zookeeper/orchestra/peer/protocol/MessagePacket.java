@@ -5,8 +5,8 @@ import edu.uw.zookeeper.common.Pair;
 
 public class MessagePacket extends Pair<MessageHeader, MessageBody> {
 
-    public static MessagePacket of(MessageBody second) {
-        MessageHeader first = MessageHeader.of(MessageBody.typeOf(second.getClass()));
+    public static <T extends MessageBody> MessagePacket of(T second) {
+        MessageHeader first = MessageHeader.of(MessageTypes.typeOf(second.getClass()));
         return of(first, second);
     }
     

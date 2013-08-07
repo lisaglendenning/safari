@@ -89,13 +89,13 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
         case MESSAGE_TYPE_SESSION_OPEN_RESPONSE:
         {
             MessageSessionOpenResponse response = message.getBody(MessageSessionOpenResponse.class);
-            if (response.getSessionId() != frontend.id()) {
+            if (response.getIdentifier() != frontend.id()) {
                 break;
             }
             Futures.getUnchecked(connection).unregister(this);
             if (! isDone()) {
-                if (response.delegate() instanceof ConnectMessage.Response.Valid) {
-                    set(response.delegate().toSession());
+                if (response.getValue() instanceof ConnectMessage.Response.Valid) {
+                    set(response.getValue().toSession());
                 } else {
                     setException(new KeeperException.SessionExpiredException());
                 }
