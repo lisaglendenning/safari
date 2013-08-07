@@ -85,7 +85,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     protected final Lookups<Identifier, Identifier> assignments;
     protected final BackendLookups backends;
     protected final Processors.UncheckedProcessor<Pair<SessionOperation.Request<Records.Request>, Records.Response>, Message.ServerResponse<Records.Response>> processor;
-    protected volatile LinkedIterator<FrontendRequestFuture> finger;
+    // not thread safe
+    protected LinkedIterator<FrontendRequestFuture> finger;
 
     public FrontendSessionExecutor(
             Session session,
@@ -205,7 +206,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         finger = mailbox.iterator();
         FrontendRequestFuture next;
         while ((next = finger.peekNext()) != null) {
-            if (! apply(next)) {
+            if (!apply(next) || (finger.peekNext() == next)) {
+                finger = null;
                 break;
             }
         }
@@ -228,13 +230,23 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     // (note this is stronger than necessary)
                     // this also means that no tasks after this one can run!
                     // we also don't want to publish before our predecessor!
-                    return false;
+                    break;
                 } else if (input.call() == state) {
+                    finger.next();
                     break;
                 }
             }
         }
         return (state() != State.TERMINATED);
+    }
+    
+    @Override
+    protected void runExit() {
+        if (state.compareAndSet(State.RUNNING, State.WAITING)) {
+            if ((finger != null) && finger.hasNext()) {
+                schedule();
+            }
+        }
     }
 
     protected void doStop() {
@@ -394,19 +406,11 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         @Override
-        public State call() throws Exception {
-            if (logger.isTraceEnabled()) {
-                logger.trace("{}", this);
-            }
-            return state();
-        }
-        
-        @Override
         public String toString() {
             return Objects.toStringHelper(this)
+                    .add("state", state())
                     .add("task", task())
                     .add("future", delegate())
-                    .add("state", state())
                     .toString();
         }
 
@@ -467,7 +471,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         
         @Override
         public State call() throws Exception {
-            State state = super.call();
+            State state = state();
             switch (state) {
             case WAITING:
                 this.state.compareAndSet(state, OperationFuture.State.SUBMITTING);
@@ -529,6 +533,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
         @Override
         public State call() throws Exception {
+            logger.entry(this);
+            
             Iterator<ListenableFuture<?>> p = pending.iterator();
             while (p.hasNext()) {
                 ListenableFuture<?> next = p.next();
@@ -536,30 +542,29 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     p.remove();
                 }
             }
-            if (! pending.isEmpty()) {
-                return state();
+            if (pending.isEmpty()) {
+                switch (state()) {
+                case WAITING:
+                {
+                    submit();
+                    break;
+                }
+                case SUBMITTING:
+                {
+                    complete();
+                    break;
+                }
+                case COMPLETE:
+                {
+                    publish();
+                    break;
+                }
+                default:
+                    break;
+                }
             }
-            switch (super.call()) {
-            case WAITING:
-            {
-                submit();
-                break;
-            }
-            case SUBMITTING:
-            {
-                complete();
-                break;
-            }
-            case COMPLETE:
-            {
-                publish();
-                break;
-            }
-            default:
-                break;
-            }
-            
-            return state();
+                        
+            return logger.exit(state());
         }
 
         protected Optional<Map<ZNodeLabel.Path, Volume>> getVolumes(Set<ZNodeLabel.Path> paths) throws Exception {
@@ -751,6 +756,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     BackendSessionExecutor.BackendRequestFuture task = backend.submit(
                                 Pair.<OperationFuture<?>, ShardedRequestMessage<?>>create(this, shard.getValue()));
                     requests.add(task);
+                    pending.add(task);
                 }
             }
             return submitted;
@@ -878,9 +884,9 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         @Override
         public String toString() {
             return Objects.toStringHelper(this)
+                    .add("state", state())
                     .add("task", task())
                     .add("future", delegate())
-                    .add("state", state())
                     .add("volumes", volumes)
                     .add("shards", shards)
                     .add("submitted", submitted)

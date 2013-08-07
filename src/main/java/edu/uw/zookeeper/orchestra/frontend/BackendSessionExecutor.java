@@ -12,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.base.Objects;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -86,7 +87,7 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         this.executor = executor;
         this.mailbox = LinkedQueue.create();
         this.pending = mailbox.iterator();
-        this.finger = mailbox.iterator();
+        this.finger = null;
     }
     
     public Identifier getEnsemble() {
@@ -207,10 +208,11 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         finger = mailbox.iterator();
         BackendRequestFuture next;
         while ((next = finger.peekNext()) != null) {
-            if (! apply(next)) {
+            if (!apply(next) || (finger.peekNext() == next)) {
                 break;
             }
         }
+        finger = null;
     }
     
     @Override
@@ -230,12 +232,13 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
                     break;
                 }
             }
-            
-            if (finger.peekNext() == input) {
-                return false;
-            }
         }
         return (state() != State.TERMINATED);
+    }
+    
+    @Override
+    protected void runExit() {
+        state.compareAndSet(State.RUNNING, State.WAITING);
     }
     
     protected synchronized void doStop() {
@@ -328,6 +331,14 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
             }
             return state();
         }
+
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this)
+                    .add("state", state())
+                    .add("message", message)
+                    .toString();
+        }
     }
     
     protected class BackendResponseTask 
@@ -399,7 +410,7 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         
         @Override
         public boolean set(ShardedResponseMessage<?> result) {
-            if (result.getXid() != task().second().getXid()) {
+            if (result.getXid() != getXid()) {
                 throw new IllegalArgumentException(result.toString());
             }
             boolean set = super.set(result);
@@ -441,6 +452,15 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         @Override
         public void onFailure(Throwable t) {
             setException(t);
+        }
+
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this)
+                    .add("state", state())
+                    .add("task", task().second())
+                    .add("future", delegate())
+                    .toString();
         }
     }
 }

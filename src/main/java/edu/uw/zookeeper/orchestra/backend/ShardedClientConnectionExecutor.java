@@ -21,6 +21,7 @@ import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.client.AssignXidProcessor;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
+import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 public class ShardedClientConnectionExecutor<C extends Connection<? super Message.ClientSession>> extends ClientConnectionExecutor<C> {
@@ -89,10 +90,11 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     @Subscribe
     public void handleResponse(Message.ServerResponse<Records.Response> message) {
         if ((state() != State.TERMINATED) && !(message instanceof ShardedOperation)) {
+            int xid = message.getXid();
             ShardedResponseMessage<Records.Response> unshardedResponse;
             
             PendingResponseTask next = pending.peek();
-            if ((next != null) && (next.getXid() == message.getXid())) {
+            if ((next != null) && (next.getXid() == xid)) {
                 pending.remove(next);
                 Identifier id = ((ShardedRequestTask) next.delegate()).getIdentifier();
                 Records.Response record = message.getRecord();
@@ -103,13 +105,18 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                     unshardedResponse = ShardedResponseMessage.of(
                             id,
                             ProtocolResponseMessage.of(
-                                    message.getXid(), message.getZxid(), translated));
+                                    xid, message.getZxid(), translated));
                 }
                 
                 next.set(unshardedResponse);
             } else {
-                logger.debug("{} != {} ({})", next, message, this);
-
+                if (logger.isDebugEnabled()) {
+                    if (! ((xid == OpCodeXid.PING.getXid()) || (xid == OpCodeXid.NOTIFICATION.getXid()))) {
+                        // FIXME is this an error?
+                        logger.debug("{} != {} ({})", next, message, this);
+                    }
+                }
+                
                 Identifier id = Identifier.zero();
                 Records.Response record = message.getRecord();
                 if (record instanceof Records.PathGetter) {
@@ -123,7 +130,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
                         unshardedResponse = ShardedResponseMessage.of(
                                 id,
                                 ProtocolResponseMessage.of(
-                                        message.getXid(), message.getZxid(), translated));
+                                        xid, message.getZxid(), translated));
                     }
                 } else {
                     unshardedResponse = ShardedResponseMessage.of(id, message);
