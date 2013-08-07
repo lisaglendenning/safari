@@ -92,7 +92,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
             ShardedResponseMessage<Records.Response> unshardedResponse;
             
             PendingResponseTask next = pending.peek();
-            if ((next != null) && (next.task().getXid() == message.getXid())) {
+            if ((next != null) && (next.getXid() == message.getXid())) {
                 pending.remove(next);
                 Identifier id = ((ShardedRequestTask) next.delegate()).getIdentifier();
                 Records.Response record = message.getRecord();

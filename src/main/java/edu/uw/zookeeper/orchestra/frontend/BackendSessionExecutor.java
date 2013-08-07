@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.KeeperException;
 
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
@@ -17,6 +18,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ExecutorActor;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
@@ -25,6 +27,7 @@ import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
+import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
@@ -33,8 +36,12 @@ import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 
-public class BackendSessionExecutor extends ExecutorActor<OperationFuture<ShardedResponseMessage<?>>> implements TaskExecutor<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> {
+public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor.BackendRequestFuture> implements TaskExecutor<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> {
 
+    public static interface BackendRequestFuture extends OperationFuture<ShardedResponseMessage<?>> {
+        BackendSessionExecutor executor();
+    }
+    
     public static BackendSessionExecutor create(
             long frontend,
             Identifier ensemble,
@@ -53,11 +60,11 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
     protected final ClientPeerConnection<?> connection;
     protected final Publisher publisher;
     protected final Executor executor;
-    protected final LinkedQueue<OperationFuture<ShardedResponseMessage<?>>> mailbox;
+    protected final LinkedQueue<BackendRequestFuture> mailbox;
     // not thread safe
-    protected LinkedIterator<OperationFuture<ShardedResponseMessage<?>>> pending;
+    protected LinkedIterator<BackendRequestFuture> pending;
     // not thread safe
-    protected LinkedIterator<OperationFuture<ShardedResponseMessage<?>>> finger;
+    protected LinkedIterator<BackendRequestFuture> finger;
 
     public BackendSessionExecutor(
             long frontend,
@@ -79,10 +86,6 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
         this.finger = mailbox.iterator();
     }
     
-    protected LinkedQueue<OperationFuture<ShardedResponseMessage<?>>> mailbox() {
-        return mailbox;
-    }
-    
     public Identifier getEnsemble() {
         return ensemble;
     }
@@ -96,7 +99,7 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
     }
     
     @Override
-    public BackendResponseTask submit(
+    public BackendRequestFuture submit(
             Pair<OperationFuture<?>, ShardedRequestMessage<?>> request) {
         BackendResponseTask task = new BackendResponseTask(request);
         try {
@@ -108,7 +111,7 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
     }
 
     @Override
-    public synchronized void send(OperationFuture<ShardedResponseMessage<?>> request) {
+    public synchronized void send(BackendRequestFuture request) {
         // we won't get the response before putting the request in the queue
         // because we are synchronized
         if (request.state() == OperationFuture.State.WAITING) {
@@ -126,6 +129,9 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
     
     @Subscribe
     public synchronized void handleResponse(ShardedResponseMessage<?> message) {
+        if (state() == State.TERMINATED) {
+            return;
+        }
         int xid = message.getXid();
         if (xid == OpCodeXid.NOTIFICATION.getXid()) {
             while (pending.hasNext() && pending.peekNext().isDone()) {
@@ -163,12 +169,40 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
         run();
     }
     
+    @Subscribe
+    public synchronized void handleTransition(Automaton.Transition<?> event) {
+        if (state() == State.TERMINATED) {
+            return;
+        }
+        if (Connection.State.CONNECTION_CLOSED == event.to()) {
+            KeeperException.ConnectionLossException e = new KeeperException.ConnectionLossException();
+            for (BackendRequestFuture next: mailbox) {
+                if (! next.isDone()) {
+                    if (next instanceof Promise) {
+                        ((Promise<?>) next).setException(e);
+                    }
+                }
+            }
+            stop();
+        }
+    }
+    
+    protected LinkedQueue<BackendRequestFuture> mailbox() {
+        return mailbox;
+    }
+
+    @Override
+    protected Executor executor() {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
     @Override
     protected synchronized void doRun() throws Exception {
         if (! finger.hasNext()) {
             finger = mailbox.iterator();
         }
-        OperationFuture<ShardedResponseMessage<?>> next;
+        BackendRequestFuture next;
         while ((next = finger.peekNext()) != null) {
             if (! apply(next)) {
                 break;
@@ -177,7 +211,7 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
     }
     
     @Override
-    protected synchronized boolean apply(OperationFuture<ShardedResponseMessage<?>> input) throws Exception {
+    protected synchronized boolean apply(BackendRequestFuture input) throws Exception {
         if (state() != State.TERMINATED) {
             OperationFuture.State state;
             do {
@@ -210,8 +244,15 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
         }
         return (state() != State.TERMINATED);
     }
+    
+    protected synchronized void doStop() {
+        BackendRequestFuture next;
+        while ((next = mailbox.poll()) != null) {
+            next.cancel(true);
+        }
+    }
 
-    protected class BackendNotification implements OperationFuture<ShardedResponseMessage<?>> {
+    protected class BackendNotification implements BackendRequestFuture {
 
         protected final AtomicReference<State> state;
         protected final ShardedResponseMessage<?> message;
@@ -226,6 +267,11 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
             checkState(OpCodeXid.NOTIFICATION.getXid() == message.getXid());
             this.state = new AtomicReference<State>(state);
             this.message = message;
+        }
+        
+        @Override
+        public BackendSessionExecutor executor() {
+            return BackendSessionExecutor.this;
         }
         
         @Override
@@ -253,7 +299,7 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
         }
 
         @Override
-        public ShardedResponseMessage<?> get(long arg0, TimeUnit arg1) {
+        public ShardedResponseMessage<?> get(long time, TimeUnit unit) {
             return message;
         }
 
@@ -268,7 +314,7 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
         }
 
         @Override
-        public State call() throws Exception { 
+        public State call() { 
             State state = state();
             switch (state) {
             case WAITING:
@@ -293,7 +339,7 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
     
     protected class BackendResponseTask 
             extends PromiseTask<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> 
-            implements FutureCallback<MessagePacket>, OperationFuture<ShardedResponseMessage<?>> {
+            implements FutureCallback<MessagePacket>, BackendRequestFuture {
 
         protected final AtomicReference<State> state;
         protected volatile ListenableFuture<MessagePacket> writeFuture;
@@ -314,11 +360,12 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
             this.state = new AtomicReference<State>(state);
             this.writeFuture = null;
         }
-        
-        public BackendSessionExecutor getExecutor() {
+
+        @Override
+        public BackendSessionExecutor executor() {
             return BackendSessionExecutor.this;
         }
-
+        
         @Override
         public int getXid() {
             return task().second().getXid();
@@ -402,11 +449,5 @@ public class BackendSessionExecutor extends ExecutorActor<OperationFuture<Sharde
         public void onFailure(Throwable t) {
             setException(t);
         }
-    }
-
-    @Override
-    protected Executor executor() {
-        // TODO Auto-generated method stub
-        return null;
     }
 }

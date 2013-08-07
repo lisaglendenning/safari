@@ -45,6 +45,7 @@ import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionResponse;
+import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
@@ -421,7 +422,7 @@ public class FrontendServerExecutor extends DependentService {
                     } catch (IllegalArgumentException e) {}
                     dispatchers.remove(get(), this);
                     for (FrontendSessionExecutor e: executors.values()) {
-                        e.handleTransition(get().remoteAddress().getIdentifier(), event);
+                        e.handleTransition(Pair.<Identifier, Automaton.Transition<?>>create(get().remoteAddress().getIdentifier(), event));
                     }
                 }
             }
@@ -433,7 +434,7 @@ public class FrontendServerExecutor extends DependentService {
                 {
                     MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
                     FrontendSessionExecutor e = executors.get(body.getSessionId());
-                    e.handleResponse(get().remoteAddress().getIdentifier(), body.getResponse());
+                    e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getResponse()));
                     break;
                 }
                 default:
