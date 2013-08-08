@@ -17,7 +17,6 @@ import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutorService;
-import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn(ControlConnectionsService.class)
 public class ControlMaterializerService<C extends Connection<? super Operation.Request>> extends ClientConnectionExecutorService<C> {
@@ -54,7 +53,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         return new ControlMaterializerService<C>(connections);
     }
 
-    protected final Materializer<Message.ServerResponse<Records.Response>> materializer;
+    protected final Materializer<Message.ServerResponse<?>> materializer;
     protected final WatchPromiseTrie watches;
 
     protected ControlMaterializerService(
@@ -68,7 +67,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         this.watches = WatchPromiseTrie.newInstance();
     }
     
-    public Materializer<Message.ServerResponse<Records.Response>> materializer() {
+    public Materializer<Message.ServerResponse<?>> materializer() {
         return materializer;
     }
     

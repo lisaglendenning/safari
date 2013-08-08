@@ -71,12 +71,12 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.server.PingProcessor;
 
-public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>>, Publisher {
+public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher {
     
     public static FrontendSessionExecutor newInstance(
             Session session,
             Publisher publisher,
-            Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor,
+            Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
             Function<Identifier, Identifier> ensembleForPeer,
@@ -85,7 +85,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         return new FrontendSessionExecutor(session, publisher, processor, volumeLookup, assignmentLookup, ensembleForPeer, connectionLookup, executor);
     }
     
-    public static interface FrontendRequestFuture extends OperationFuture<Message.ServerResponse<Records.Response>> {}
+    public static interface FrontendRequestFuture extends OperationFuture<Message.ServerResponse<?>> {}
     
     protected final Logger logger;
     protected final Executor executor;
@@ -95,14 +95,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     protected final Lookups<ZNodeLabel.Path, Volume> volumes;
     protected final Lookups<Identifier, Identifier> assignments;
     protected final BackendLookups backends;
-    protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor;
+    protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
     // not thread safe
     protected LinkedIterator<FrontendRequestFuture> finger;
 
     public FrontendSessionExecutor(
             Session session,
             Publisher publisher,
-            Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor,
+            Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
             Function<Identifier, Identifier> ensembleForPeer,
@@ -153,7 +153,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             Records.Response response = ((ShardedResponseMessage<?>) event).getRecord();
             event = processor().apply(
                     Pair.create(session().id(),
-                            Pair.create(Optional.<Operation.ProtocolRequest<Records.Request>>absent(), response)));
+                            Pair.create(Optional.<Operation.ProtocolRequest<?>>absent(), response)));
         }
         publisher.post(event);
     }
@@ -174,16 +174,16 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         return backends;
     }
     
-    protected Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<Records.Request>>, Records.Response>>, Message.ServerResponse<Records.Response>> processor() {
+    protected Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor() {
         return processor;
     }
 
     @Override
-    public ListenableFuture<Message.ServerResponse<Records.Response>> submit(
-            Message.ClientRequest<Records.Request> request) {
-        Promise<Message.ServerResponse<Records.Response>> promise = 
+    public ListenableFuture<Message.ServerResponse<?>> submit(
+            Message.ClientRequest<?> request) {
+        Promise<Message.ServerResponse<?>> promise = 
                 LoggingPromise.create(logger, 
-                        SettableFuturePromise.<Message.ServerResponse<Records.Response>>create());
+                        SettableFuturePromise.<Message.ServerResponse<?>>create());
         FrontendRequestFuture task; 
         if (request.getXid() == OpCodeXid.PING.getXid()) {
             task = new LocalRequestTask(OperationFuture.State.SUBMITTING, request, promise);
@@ -400,14 +400,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
     }
 
-    protected abstract class RequestTask extends PromiseTask<Message.ClientRequest<Records.Request>, Message.ServerResponse<Records.Response>> implements FrontendRequestFuture {
+    protected abstract class RequestTask extends PromiseTask<Message.ClientRequest<?>, Message.ServerResponse<?>> implements FrontendRequestFuture {
 
         protected final AtomicReference<State> state;
 
         public RequestTask(
                 State state,
-                Message.ClientRequest<Records.Request> task,
-                Promise<Message.ServerResponse<Records.Response>> delegate) {
+                Message.ClientRequest<?> task,
+                Promise<Message.ServerResponse<?>> delegate) {
             super(task, delegate);
             this.state = new AtomicReference<State>(state);
         }
@@ -418,7 +418,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
         
         @Override
-        public boolean set(Message.ServerResponse<Records.Response> result) {
+        public boolean set(Message.ServerResponse<?> result) {
             if ((result.getRecord().getOpcode() != task().getRecord().getOpcode())
                     && (! (result.getRecord() instanceof Operation.Error))) {
                 throw new IllegalArgumentException(result.toString());
@@ -446,7 +446,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     .toString();
         }
 
-        protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
+        protected ListenableFuture<Message.ServerResponse<?>> complete() throws InterruptedException, ExecutionException {
             if (state() == OperationFuture.State.SUBMITTING) {
                 Records.Response result = null;
                 switch (task().getRecord().getOpcode()) {
@@ -474,9 +474,9 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             if (isDone()) {
                 return false;
             }
-            Message.ServerResponse<Records.Response> message = processor().apply(
+            Message.ServerResponse<?> message = processor().apply(
                     Pair.create(session().id(),
-                            Pair.create(Optional.<Operation.ProtocolRequest<Records.Request>>of(task()), result)));
+                            Pair.create(Optional.<Operation.ProtocolRequest<?>>of(task()), result)));
             return set(message);
         }
 
@@ -495,8 +495,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
         public LocalRequestTask(
                 State state,
-                Message.ClientRequest<Records.Request> task,
-                Promise<Message.ServerResponse<Records.Response>> delegate) {
+                Message.ClientRequest<?> task,
+                Promise<Message.ServerResponse<?>> delegate) {
             super(state, task, delegate);
         }
         
@@ -534,8 +534,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
         public BackendRequestTask(
                 State state,
-                Message.ClientRequest<Records.Request> task,
-                Promise<Message.ServerResponse<Records.Response>> delegate) {
+                Message.ClientRequest<?> task,
+                Promise<Message.ServerResponse<?>> delegate) {
             super(state, task, delegate);
             this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.getRecord()));
             this.volumes = Maps.<ZNodeLabel.Path, Volume>newHashMap();
@@ -794,7 +794,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
         
         @Override
-        protected ListenableFuture<Message.ServerResponse<Records.Response>> complete() throws InterruptedException, ExecutionException {
+        protected ListenableFuture<Message.ServerResponse<?>> complete() throws InterruptedException, ExecutionException {
             if (state.get() != OperationFuture.State.SUBMITTING) {
                 return this;
             }

@@ -55,7 +55,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Peers.Entity> create(
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Peers.Entity> create(
                     final ServerInetAddressView value, 
                     final Materializer<O> materializer,
                     final Executor executor) {
@@ -157,7 +157,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     super(parent);
                 }
 
-                public <V extends Operation.ProtocolResponse<Records.Response>> 
+                public <V extends Operation.ProtocolResponse<?>> 
                 ListenableFuture<V> create(Materializer<V> materializer) {
                     return materializer.operator().create(path()).submit();
                 }
@@ -305,9 +305,9 @@ public abstract class ControlSchema extends Control.ControlZNode {
         public static ListenableFuture<List<Ensembles.Entity>> getEnsembles(ClientExecutor<? super Records.Request, ?> client) {
             return Futures.transform(
                     client.submit(Operations.Requests.getChildren().setPath(path(Ensembles.class)).build()), 
-                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, List<Ensembles.Entity>>() {
+                    new AsyncFunction<Operation.ProtocolResponse<?>, List<Ensembles.Entity>>() {
                         @Override
-                        public ListenableFuture<List<Ensembles.Entity>> apply(Operation.ProtocolResponse<Records.Response> input) throws KeeperException {
+                        public ListenableFuture<List<Ensembles.Entity>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                             Records.ChildrenGetter response = (Records.ChildrenGetter) Operations.unlessError(input.getRecord());
                             List<Ensembles.Entity> result = Lists.newArrayListWithCapacity(response.getChildren().size());
                             for (String child: response.getChildren()) {
@@ -324,7 +324,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Ensembles.Entity> create(
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Ensembles.Entity> create(
                     final EnsembleView<ServerInetAddressView> value, 
                     final Materializer<O> materializer,
                     final Executor executor) {
@@ -436,10 +436,10 @@ public abstract class ControlSchema extends Control.ControlZNode {
                             final Peers peers = Peers.of(Entity.of(ensemble));
                             return Futures.transform(
                                     materializer.operator().getChildren(peers.path()).submit(),
-                                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, List<Member>>() {
+                                    new AsyncFunction<Operation.ProtocolResponse<?>, List<Member>>() {
                                         @Override
                                         @Nullable
-                                        public ListenableFuture<List<Member>> apply(Operation.ProtocolResponse<Records.Response> input) throws KeeperException {
+                                        public ListenableFuture<List<Member>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                                             Operations.unlessError(input.getRecord());
                                             return Futures.immediateFuture(peers.get(materializer));
                                         }
@@ -503,9 +503,9 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return create(Entity.Leader.class, value, parent, materializer);
                 }
                 
-                public static class Proposal<O extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Entity.Leader, Entity.Leader> implements Runnable {
+                public static class Proposal<O extends Operation.ProtocolResponse<?>> extends PromiseTask<Entity.Leader, Entity.Leader> implements Runnable {
 
-                    public static <O extends Operation.ProtocolResponse<Records.Response>>
+                    public static <O extends Operation.ProtocolResponse<?>>
                     Proposal<O> of(
                             Entity.Leader task, 
                             Materializer<O> materializer,
@@ -558,9 +558,9 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     }
                 }
                 
-                public static class Proposer<O extends Operation.ProtocolResponse<Records.Response>> implements AsyncFunction<Entity.Leader, Entity.Leader> {
+                public static class Proposer<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<Entity.Leader, Entity.Leader> {
 
-                    public static <O extends Operation.ProtocolResponse<Records.Response>> Proposer<O> of(
+                    public static <O extends Operation.ProtocolResponse<?>> Proposer<O> of(
                             Materializer<O> materializer,
                             Executor executor) {
                         return new Proposer<O>(materializer, executor);
@@ -606,7 +606,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <O extends Operation.ProtocolResponse<Records.Response>> ListenableFuture<Volumes.Entity> create(
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Volumes.Entity> create(
                     final VolumeDescriptor value, 
                     final Materializer<O> materializer,
                     final Executor executor) {

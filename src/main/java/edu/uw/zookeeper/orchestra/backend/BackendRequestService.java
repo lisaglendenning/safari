@@ -347,7 +347,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public void handleMessageSessionRequest(MessageSessionRequest message) {
             BackendClient client = clients.get(message.getIdentifier());
             if (client != null) {
-                ListenableFuture<Message.ServerResponse<Records.Response>> future;
+                ListenableFuture<Message.ServerResponse<?>> future;
                 try {
                     future = client.submit(message.getValue());
                 } catch (Exception e) {
@@ -384,7 +384,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 return client;
             }
 
-            public ListenableFuture<Message.ServerResponse<Records.Response>> submit(Operation.Request request) throws InterruptedException, ExecutionException {
+            public ListenableFuture<Message.ServerResponse<?>> submit(Operation.Request request) throws InterruptedException, ExecutionException {
                 return client.get().submit(request);
             }
     

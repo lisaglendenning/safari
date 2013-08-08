@@ -45,7 +45,6 @@ import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.protocol.proto.Records.Response;
 
 public abstract class Control {
 
@@ -71,7 +70,7 @@ public abstract class Control {
         
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
-            Operation.ProtocolResponse<Records.Response> result = materializer.operator().exists(node.path()).submit().get();
+            Operation.ProtocolResponse<?> result = materializer.operator().exists(node.path()).submit().get();
             Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
             if (error.isPresent()) {
                 result = materializer.operator().create(node.path()).submit().get();
@@ -178,10 +177,10 @@ public abstract class Control {
             final ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
             return Futures.transform(
                     materializer.operator().getData(path).submit(),
-                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, C>() {
+                    new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
                         @Override
                         public @Nullable
-                        ListenableFuture<C> apply(Operation.ProtocolResponse<Response> input) throws KeeperException {
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                             Operations.unlessError(input.getRecord());
                             T value = (T) materializer.get(path).get().get();
                             return Futures.immediateFuture(newInstance(cls, value, parent));
@@ -197,10 +196,10 @@ public abstract class Control {
             final C instance = newInstance(cls, value, parent);
             return Futures.transform(
                     materializer.operator().create(instance.path(), instance.get()).submit(),
-                    new AsyncFunction<Operation.ProtocolResponse<Records.Response>, C>() {
+                    new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
                         @Override
                         public @Nullable
-                        ListenableFuture<C> apply(Operation.ProtocolResponse<Response> input) throws KeeperException {
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                             Optional<Operation.Error> error = Operations.maybeError(input.getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
                             if (error.isPresent()) {
                                 return get(cls, parent, materializer);
@@ -233,9 +232,9 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<U extends Operation.ProtocolResponse<Records.Response>> extends PromiseTask<Materializer<U>, Void> implements FutureCallback<Void> {
+    public static class FetchUntil<U extends Operation.ProtocolResponse<?>> extends PromiseTask<Materializer<U>, Void> implements FutureCallback<Void> {
 
-        public static <T extends Operation.ProtocolRequest<Records.Request>, V extends Operation.ProtocolResponse<Records.Response>> FetchUntil<V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?>> predicate, Materializer<V> materializer) throws InterruptedException, ExecutionException {
+        public static <T extends Operation.ProtocolRequest<?>, V extends Operation.ProtocolResponse<?>> FetchUntil<V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?>> predicate, Materializer<V> materializer) throws InterruptedException, ExecutionException {
             Promise<Void> delegate = newPromise();
             return new FetchUntil<V>(root, predicate, materializer, delegate);
         }
@@ -338,9 +337,9 @@ public abstract class Control {
         }
     }
     
-    public static class RegisterHashedTask<O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode> extends PromiseTask<T,V> implements Runnable {
+    public static class RegisterHashedTask<O extends Operation.ProtocolResponse<?>, T, V extends ControlZNode> extends PromiseTask<T,V> implements Runnable {
 
-        public static <O extends Operation.ProtocolResponse<Records.Response>, T, V extends ControlZNode>
+        public static <O extends Operation.ProtocolResponse<?>, T, V extends ControlZNode>
         RegisterHashedTask<O,T,V> of(
                 T task,
                 Hash.Hashed hashed,

@@ -40,7 +40,6 @@ import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.control.ControlSchema.Ensembles.Entity;
 import edu.uw.zookeeper.orchestra.data.VolumeDescriptor;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({ControlMaterializerService.class})
 public class EnsembleMemberService extends DependentService.SimpleDependentService {
@@ -104,11 +103,11 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected void startUp() throws Exception {      
         super.startUp();
         
-        Materializer<Message.ServerResponse<Records.Response>> materializer = control.materializer();
-        Materializer<Message.ServerResponse<Records.Response>>.Operator operator = materializer.operator();
+        Materializer<Message.ServerResponse<?>> materializer = control.materializer();
+        Materializer<Message.ServerResponse<?>>.Operator operator = materializer.operator();
 
         // Register my identifier
-        Message.ServerResponse<Records.Response> result = operator.create(Control.path(myMember.parent())).submit().get();
+        Message.ServerResponse<?> result = operator.create(Control.path(myMember.parent())).submit().get();
         Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
         result = operator.create(myMember.path()).submit().get();
         Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);

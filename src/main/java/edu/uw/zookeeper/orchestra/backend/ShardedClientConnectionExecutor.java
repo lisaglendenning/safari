@@ -88,11 +88,11 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
 
     @Override
     @Subscribe
-    public void handleResponse(Message.ServerResponse<Records.Response> message) {
+    public void handleResponse(Message.ServerResponse<?> message) {
         if ((state() != State.TERMINATED) && !(message instanceof ShardedOperation)) {
             int xid = message.getXid();
             if (xid != OpCodeXid.PING.getXid()) {
-                ShardedResponseMessage<Records.Response> unshardedResponse;
+                ShardedResponseMessage<?> unshardedResponse;
                 PendingResponseTask next = pending.peek();
                 if ((next != null) && (next.getXid() == xid)) {
                     pending.remove(next);
@@ -141,17 +141,17 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     }
     
     @Override
-    protected boolean apply(PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> input) {
+    protected boolean apply(PromiseTask<Operation.Request, Message.ServerResponse<?>> input) {
         return super.apply(new ShardedRequestTask(shard(input.task()), input));
     }
     
-    protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Message.ServerResponse<Records.Response>> implements ShardedOperation {
+    protected static class ShardedRequestTask extends PromiseTask<Operation.Request, Message.ServerResponse<?>> implements ShardedOperation {
 
         protected final ShardedOperation.Request<?> sharded;
         
         public ShardedRequestTask(
                 ShardedOperation.Request<?> sharded,
-                Promise<Message.ServerResponse<Records.Response>> delegate) {
+                Promise<Message.ServerResponse<?>> delegate) {
             super(sharded.getRequest(), delegate);
             this.sharded = sharded;
         }

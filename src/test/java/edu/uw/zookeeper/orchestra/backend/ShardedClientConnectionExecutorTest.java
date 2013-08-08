@@ -72,7 +72,7 @@ public class ShardedClientConnectionExecutorTest {
                 connections.first());
         
         GetEvent<Message.ClientRequest<?>> requestEvent = GetEvent.newInstance(connections.second());
-        ListenableFuture<Message.ServerResponse<Records.Response>> clientFuture = client.submit(Operations.Requests.getChildren().setPath(volume.getDescriptor().getRoot()).build());
+        ListenableFuture<Message.ServerResponse<?>> clientFuture = client.submit(Operations.Requests.getChildren().setPath(volume.getDescriptor().getRoot()).build());
         connections.second().read();
         assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().getRecord()).getPath());
 
