@@ -4,7 +4,6 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
 
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -39,7 +38,7 @@ public class PeerConfiguration {
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
             ServerInetAddressView conductorAddress = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
                             "Peer", "address", "peerAddress", "", 2281).get(configuration);
-            ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(conductorAddress, controlClient.materializer(), MoreExecutors.sameThreadExecutor()).get();
+            ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(conductorAddress, controlClient.materializer()).get();
             return new PeerConfiguration(PeerAddressView.of(entityNode.get(), conductorAddress));
         }
     }

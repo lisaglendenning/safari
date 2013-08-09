@@ -2,8 +2,9 @@ package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.concurrent.Executor;
 
-import com.google.common.base.Predicate;
+import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -12,6 +13,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -75,7 +77,43 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
-    
+
+    public static class AllVolumesAssigned implements Processor<Object, Optional<Boolean>> {
+        
+        public static ZNodeLabel.Path root() {
+            return ROOT;
+        }
+        
+        public static ListenableFuture<Boolean> call(Materializer<?> materializer) {
+            return Control.FetchUntil.newInstance(
+                    AllVolumesAssigned.root(), 
+                    new AllVolumesAssigned(materializer), 
+                    materializer);
+        }
+        
+        protected static final ZNodeLabel.Path ROOT = Control.path(ControlSchema.Volumes.class);
+        
+        protected final Materializer<?> materializer;
+        
+        public AllVolumesAssigned(Materializer<?> materializer) {
+            this.materializer = materializer;
+        }
+
+        @Override
+        public Optional<Boolean> apply(Object input) throws Exception {
+            Materializer.MaterializedNode root = materializer.get(ROOT);
+            if (root != null) {
+                for (Materializer.MaterializedNode e: root.values()) {
+                    if (! e.containsKey(ControlSchema.Volumes.Entity.Ensemble.LABEL)) {
+                        return Optional.absent();
+                    }
+                }
+                return Optional.of(Boolean.valueOf(true));
+            }
+            return Optional.absent();
+        }
+    }
+
     protected final ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections;
     
     protected FrontendServerService(
@@ -89,29 +127,13 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         return connections;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     protected void startUp() throws Exception {
         super.startUp();
         
-        final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
-        
-        // Global barrier - Wait for all volumes to be assigned
-        Predicate<Materializer<?>> allAssigned = new Predicate<Materializer<?>>() {
-            @Override
-            public boolean apply(Materializer<?> input) {
-                ZNodeLabel.Component label = ControlSchema.Volumes.Entity.Ensemble.LABEL;
-                boolean done = true;
-                for (Materializer.MaterializedNode e: input.get(VOLUMES_PATH).values()) {
-                    if (! e.containsKey(label)) {
-                        done = false;
-                        break;
-                    }
-                }
-                return done;
-            }
-        };
-        Control.FetchUntil.newInstance(VOLUMES_PATH, allAssigned, locator().getInstance(ControlMaterializerService.class).materializer()).get();
+        // global barrier - wait for all volumes to be assigned
+        AllVolumesAssigned.call( 
+                locator().getInstance(ControlMaterializerService.class).materializer()).get();
 
         connections().start().get();
     }

@@ -4,7 +4,6 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
 
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -38,8 +37,7 @@ public class EnsembleConfiguration {
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
             ControlSchema.Ensembles.Entity ensembleNode = ControlSchema.Ensembles.Entity.create(
                     myView, 
-                    controlClient.materializer(),
-                    MoreExecutors.sameThreadExecutor()).get();
+                    controlClient.materializer()).get();
             return new EnsembleConfiguration(ensembleNode.get());
         }
     }

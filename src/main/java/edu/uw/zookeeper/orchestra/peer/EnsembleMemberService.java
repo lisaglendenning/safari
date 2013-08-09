@@ -5,17 +5,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
-import javax.annotation.Nullable;
-
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
-import com.google.common.base.Predicate;
+import com.google.common.base.Optional;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -25,6 +23,7 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
+import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
@@ -74,6 +73,42 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         }
     }
     
+    public static class AllEnsemblesHaveLeaders implements Processor<Object, Optional<Boolean>> {
+        
+        public static ZNodeLabel.Path root() {
+            return ROOT;
+        }
+        
+        public static ListenableFuture<Boolean> call(Materializer<?> materializer) {
+            return Control.FetchUntil.newInstance(
+                    AllEnsemblesHaveLeaders.root(), 
+                    new AllEnsemblesHaveLeaders(materializer), 
+                    materializer);
+        }
+        
+        protected static final ZNodeLabel.Path ROOT = Control.path(ControlSchema.Ensembles.class);
+        
+        protected final Materializer<?> materializer;
+        
+        public AllEnsemblesHaveLeaders(Materializer<?> materializer) {
+            this.materializer = materializer;
+        }
+
+        @Override
+        public Optional<Boolean> apply(Object input) throws Exception {
+            Materializer.MaterializedNode root = materializer.get(ROOT);
+            if (root != null) {
+                for (Materializer.MaterializedNode e: root.values()) {
+                    if (! e.containsKey(ControlSchema.Ensembles.Entity.Leader.LABEL)) {
+                        return Optional.absent();
+                    }
+                }
+                return Optional.of(Boolean.valueOf(true));
+            }
+            return Optional.absent();
+        }
+    }
+
     protected final ControlMaterializerService<?> control;
     protected final ControlSchema.Ensembles.Entity.Peers.Member myMember;
     protected final ControlSchema.Ensembles.Entity myEnsemble;
@@ -104,42 +139,26 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         super.startUp();
         
         Materializer<Message.ServerResponse<?>> materializer = control.materializer();
-        Materializer<Message.ServerResponse<?>>.Operator operator = materializer.operator();
 
         // Register my identifier
-        Message.ServerResponse<?> result = operator.create(Control.path(myMember.parent())).submit().get();
+        Message.ServerResponse<?> result = materializer.operator().create(Control.path(myMember.parent())).submit().get();
         Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
-        result = operator.create(myMember.path()).submit().get();
+        result = materializer.operator().create(myMember.path()).submit().get();
         Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
 
         // Propose myself as leader
         EnsembleRole role = this.role.elect();
         
         // Global barrier - Wait for every ensemble to elect a leader
-        Predicate<Materializer<?>> allLeaders = new Predicate<Materializer<?>>() {
-            @Override
-            public boolean apply(@Nullable Materializer<?> input) {
-                ZNodeLabel.Path root = Control.path(ControlSchema.Ensembles.class);
-                ZNodeLabel.Component label = ControlSchema.Ensembles.Entity.Leader.LABEL;
-                boolean done = true;
-                for (Materializer.MaterializedNode e: input.get(root).values()) {
-                    if (! e.containsKey(label)) {
-                        done = false;
-                        break;
-                    }
-                }
-                return done;
-            }
-        };
-        Control.FetchUntil.newInstance(Control.path(ControlSchema.Ensembles.class), allLeaders, materializer).get();
+        AllEnsemblesHaveLeaders.call(materializer).get();
     
         if (EnsembleRole.LEADING == role) {
             // create root volume if there are no volumes
             ZNodeLabel.Path path = Control.path(ControlSchema.Volumes.class);
-            operator.getChildren(path).submit().get();
+            materializer.operator().getChildren(path).submit().get();
             if (materializer.get(path).isEmpty()) {
                 VolumeDescriptor rootVolume = VolumeDescriptor.all();
-                ControlSchema.Volumes.Entity.create(rootVolume, materializer, MoreExecutors.sameThreadExecutor()).get();
+                ControlSchema.Volumes.Entity.create(rootVolume, materializer).get();
             }
             
             // Calculate "my" volumes using distance in the identifier space
@@ -175,8 +194,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                     control, Automatons.createSimple(EnsembleRole.LOOKING));
             this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Ensembles.Entity.Leader>of(0L, null));
             this.proposer = ControlSchema.Ensembles.Entity.Leader.Proposer.of(
-                    control.materializer(), 
-                            MoreExecutors.sameThreadExecutor());
+                    control.materializer());
             myRole.register(this);
             control.materializer().register(this);
             subscribeLeaderWatch();

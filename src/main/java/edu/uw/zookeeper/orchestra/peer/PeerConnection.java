@@ -32,28 +32,42 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
     }
 
     @Override
-    protected C delegate() {
+    public C delegate() {
         return delegate;
     }
     
     public static class ClientPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
 
+        public static <C extends Connection<? super MessagePacket>> ClientPeerConnection<C> create(
+                Identifier localIdentifier,
+                Identifier remoteIdentifier,
+                C connection) {
+            return new ClientPeerConnection<C>(localIdentifier, remoteIdentifier, connection);
+        }
+        
         public ClientPeerConnection(
                 Identifier localIdentifier,
                 Identifier remoteIdentifier,
-                C delegate) {
-            super(localIdentifier, remoteIdentifier, delegate);
+                C connection) {
+            super(localIdentifier, remoteIdentifier, connection);
         }
     }
 
 
     public static class ServerPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
 
+        public static <C extends Connection<? super MessagePacket>> ServerPeerConnection<C> create(
+                Identifier localIdentifier,
+                Identifier remoteIdentifier,
+                C connection) {
+            return new ServerPeerConnection<C>(localIdentifier, remoteIdentifier, connection);
+        }
+        
         public ServerPeerConnection(
                 Identifier localIdentifier,
                 Identifier remoteIdentifier,
-                C delegate) {
-            super(localIdentifier, remoteIdentifier, delegate);
+                C connection) {
+            super(localIdentifier, remoteIdentifier, connection);
         }
     }
 }

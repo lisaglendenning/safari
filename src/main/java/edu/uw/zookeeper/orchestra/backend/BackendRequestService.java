@@ -91,7 +91,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 DependentServiceMonitor monitor,
                 Executor executor) throws Exception {
             return monitor.add(BackendRequestService.newInstance(
-                    locator, volumes.get(), connections, peers.servers(), executor));
+                    locator, volumes.asCache(), connections, peers.servers(), executor));
         }
     }
     

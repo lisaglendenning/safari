@@ -214,9 +214,18 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
     @Subscribe
     public void handleTransition(Pair<Identifier, Automaton.Transition<?>> event) {
+        if (state() == State.TERMINATED) {
+            // FIXME
+            throw new IllegalStateException();
+        }
+        Identifier ensemble = backends.getEnsembleForPeer().apply(event.first());
+        BackendSessionExecutor backend = backends.get().get(ensemble);
+        if (backend != null) {
+            backend.handleTransition(event.second());
+        } else {
+            throw new AssertionError(ensemble);
+        }
         if (Connection.State.CONNECTION_CLOSED == event.second().to()) {
-            Identifier ensemble = backends().getEnsembleForPeer().apply(event.first());
-            backends().get().get(ensemble).handleTransition(event.second());
             // FIXME
             throw new UnsupportedOperationException();
         }
@@ -224,12 +233,17 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
 
     @Subscribe
     public void handleResponse(Pair<Identifier, ShardedResponseMessage<?>> message) {
-        if (state.get() == State.TERMINATED) {
+        if (state() == State.TERMINATED) {
             // FIXME
             throw new IllegalStateException();
         }
-        Identifier ensemble = backends().getEnsembleForPeer().apply(message.first());
-        backends().get().get(ensemble).handleResponse(message.second());
+        Identifier ensemble = backends.getEnsembleForPeer().apply(message.first());
+        BackendSessionExecutor backend = backends.get().get(ensemble);
+        if (backend != null) {
+            backend.handleResponse(message.second());
+        } else {
+            throw new AssertionError(ensemble);
+        }
         run();
     }
 

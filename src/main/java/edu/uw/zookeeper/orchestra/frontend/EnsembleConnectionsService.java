@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -11,7 +10,6 @@ import javax.annotation.Nullable;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
@@ -24,19 +22,18 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.client.ZNodeViewCache;
-import edu.uw.zookeeper.common.Factories;
-import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
+import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
-import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
+import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.EnsembleConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
@@ -44,8 +41,8 @@ import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.protocol.proto.Records;
 
-@DependsOn({PeerConnectionsService.class})
-public class EnsembleConnectionsService extends DependentService.SimpleDependentService implements Iterable<Identifier> {
+@DependsOn({PeerToEnsembleLookup.class, PeerConnectionsService.class})
+public class EnsembleConnectionsService extends DependentService.SimpleDependentService {
 
     public static Module module() {
         return new Module();
@@ -57,6 +54,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         
         @Override
         protected void configure() {
+            install(PeerToEnsembleLookup.module());
             install(PeerConnectionsService.module());
         }
 
@@ -64,138 +62,83 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         public EnsembleConnectionsService getEnsemblePeerService(
                 PeerConfiguration peer,
                 EnsembleConfiguration ensemble,
-                ControlMaterializerService<?> controlClient,
+                ControlMaterializerService<?> control,
+                PeerToEnsembleLookup peerToEnsemble,
                 PeerConnectionsService<?> peerConnections,
                 ServiceLocator locator,
                 DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
-            EnsembleConnectionsService instance = 
-                    monitor.listen(
-                            new EnsembleConnectionsService(
-                                peer.getView().id(),
-                                ensemble.getEnsemble(),
-                                peerConnections, 
-                                controlClient, 
-                                locator));
-            return instance;
-        }
-    }
-    
-    public static class Cache<K,V> extends Factories.Holder<ConcurrentMap<K,V>> implements Function<K,V> {
-
-        public Cache(ConcurrentMap<K, V> instance) {
-            super(instance);
-        }
-
-        @Override
-        public @Nullable V apply(K input) {
-            return get().get(input);
+            return monitor.listen(
+                    EnsembleConnectionsService.newInstance(
+                            peer.getView().id(),
+                            ensemble.getEnsemble(),
+                            peerToEnsemble.get().asLookup().first(),
+                            peerConnections.clients(), 
+                            control, 
+                            locator));
         }
     }
 
-    protected final Identifier myId;
-    protected final Identifier myEnsemble;
-    protected final ControlMaterializerService<?> control;
-    protected final PeerConnectionsService<?> peerConnections;
-    protected final Cache<Identifier, Identifier> peerToEnsemble;
-    protected final Cache<Identifier, Identifier> selectedPeers;
-    protected final CachedFunction<Identifier, List<ControlSchema.Ensembles.Entity.Peers.Member>> memberLookup;
-    protected final CachedFunction<Identifier, Identifier> selectPeers;
-    protected final AsyncFunction<List<ControlSchema.Ensembles.Entity.Peers.Member>, Identifier> selectMemberFunction;
-    protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectFunction;
-    protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> ensembleConnections;
-    protected final UpdatePeersFromCache updater;
-    
-    public EnsembleConnectionsService(
+    public static EnsembleConnectionsService newInstance(
             Identifier myId,
             Identifier myEnsemble,
-            PeerConnectionsService<?> peerConnections,
-            ControlMaterializerService<?> controlClient,
+            Function<Identifier, Identifier> peerToEnsemble,
+            ClientPeerConnections<?> peerConnections,
+            ControlMaterializerService<?> control,
+            ServiceLocator locator) {
+        SelectedPeers selectedPeers = SelectedPeers.create(
+                SelectSelfTask.create(myId, myEnsemble, control.materializer()));
+        return new EnsembleConnectionsService(
+                selectedPeers,
+                peerToEnsemble,
+                peerConnections,
+                control,
+                locator);
+    }
+    
+    protected final ControlMaterializerService<?> control;
+    protected final ClientPeerConnections<?> peerConnections;
+    protected final SelectedPeers selectedPeers;
+    protected final EnsembleConnections ensembleConnections;
+    protected final Function<Identifier, Identifier> peerToEnsemble;
+    
+    public EnsembleConnectionsService(
+            SelectedPeers selectedPeers,
+            Function<Identifier, Identifier> peerToEnsemble,
+            ClientPeerConnections<?> peerConnections,
+            ControlMaterializerService<?> control,
             ServiceLocator locator) {
         super(locator);
-        this.myId = myId;
-        this.myEnsemble = myEnsemble;
-        this.control = controlClient;
+        this.control = control;
+        this.peerToEnsemble = peerToEnsemble;
         this.peerConnections = peerConnections;
-        this.peerToEnsemble = new Cache<Identifier, Identifier>(new MapMaker().<Identifier, Identifier>makeMap());
-        this.selectedPeers = new Cache<Identifier, Identifier>(new MapMaker().<Identifier, Identifier>makeMap());
-        selectedPeers.get().put(myEnsemble, myId);
-        this.memberLookup = ControlSchema.Ensembles.Entity.Peers.getMembers(controlClient.materializer());
-        this.selectMemberFunction = SelectMemberTask.of(controlClient.materializer());
-        this.selectPeers = CachedFunction.create(
-                selectedPeers, 
-                new AsyncFunction<Identifier, Identifier>() {
-                    @Override
-                    public ListenableFuture<Identifier> apply(
-                            final Identifier ensemble) throws Exception {
-                        Identifier peer = selectedPeers.apply(ensemble);
-                        if (peer != null) {
-                            return Futures.immediateFuture(peer);
-                        } else {
-                            return Futures.transform(
-                                    Futures.transform(
-                                    memberLookup.apply(ensemble),
-                                    selectMemberFunction),
-                                    new Function<Identifier, Identifier>() {
-                                        @Override
-                                        public @Nullable
-                                        Identifier apply(
-                                                @Nullable Identifier peer) {
-                                            selectedPeers.get().putIfAbsent(ensemble, peer);
-                                            return selectedPeers.apply(ensemble);
-                                        }
-                                    });
-                        }
-                    }
-                });
-        this.connectFunction = peerConnections.clients().connectFunction();
-        this.ensembleConnections = CachedFunction.create(
-                new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
-                    @Override
-                    public @Nullable
-                    ClientPeerConnection<Connection<? super MessagePacket>> apply(Identifier ensemble) {
-                        Identifier peer = selectedPeers.apply(ensemble);
-                        if (peer != null) {
-                            return connectFunction.first().apply(peer);
-                        } else {
-                            return null;
-                        }
-                    }
-                }, 
-                new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
-                    @Override
-                    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
-                            Identifier ensemble) throws Exception {
-                        return Futures.transform(
-                                selectPeers.apply(ensemble),
-                                connectFunction);
-                    }
-                });
-        this.updater = new UpdatePeersFromCache();
+        this.selectedPeers = selectedPeers;
+        this.ensembleConnections = EnsembleConnections.create(
+                selectedPeers.asLookup(), peerConnections.asLookup());
     }
 
-    public Function<Identifier, Identifier> getEnsembleForPeer() {
-        return peerToEnsemble;
-    }
-
-    public CachedFunction<Identifier, Identifier> getPeerForEnsemble() {
-        return selectPeers;
+    public CachedLookup<Identifier, Identifier> getPeerForEnsemble() {
+        return selectedPeers;
     }
 
     public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> getConnectionForEnsemble() {
         return ensembleConnections;
     }
 
-    @Override
-    public Iterator<Identifier> iterator() {
-        return selectedPeers.get().keySet().iterator();
+    @Subscribe
+    public void handleClientPeerConnection(ClientPeerConnection<?> connection) {
+        new UnselectOnClose(connection);
     }
 
     @Override
     protected void startUp() throws Exception {
+        peerConnections.register(this);
+        for (ClientPeerConnection<?> c: peerConnections) {
+            handleClientPeerConnection(c);
+        }
+        
         super.startUp();
 
-        updater.initialize();
-        
+        // establish a peer connection per ensemble
         Futures.transform(
                 ControlSchema.Ensembles.getEnsembles(control.materializer()), 
                 new AsyncFunction<List<ControlSchema.Ensembles.Entity>, List<ClientPeerConnection<Connection<? super MessagePacket>>>>() {
@@ -205,17 +148,133 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                         List<ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>>> futures = Lists.newArrayListWithCapacity(input.size());
                         for (ControlSchema.Ensembles.Entity e: input) {
                             futures.add(Futures.transform(
-                                    selectPeers.second().apply(e.get()), 
+                                    selectedPeers.asLookup().apply(e.get()), 
                                     ensembleConnections));
                         }
                         return Futures.successfulAsList(futures);
                     }
                 }).get();
     }
+    
+    @Override
+    protected void shutDown() throws Exception {
+        super.shutDown();
+    }
+    
+    protected class UnselectOnClose {
+        protected final ClientPeerConnection<?> connection;
+        
+        public UnselectOnClose(ClientPeerConnection<?> connection) {
+            this.connection = connection;
+            connection.register(this);
+        }
+        
+        @Subscribe
+        public void handleTransition(Automaton.Transition<?> event) {
+            if ((event.to() == Connection.State.CONNECTION_CLOSING) ||
+                    (event.to() == Connection.State.CONNECTION_CLOSED)) {
+                try {
+                    connection.unregister(this);
+                } catch (Exception e) {}
+                
+                Identifier peer = connection.remoteAddress().getIdentifier();
+                Identifier ensemble = peerToEnsemble.apply(peer);
+                if (ensemble == null) {
+                    for (Map.Entry<Identifier, Identifier> e: selectedPeers.asCache().entrySet()) {
+                        if (e.getValue().equals(peer)) {
+                            ensemble = e.getKey();
+                            break;
+                        }
+                    }
+                }
+                if (ensemble != null) {
+                    selectedPeers.asCache().remove(ensemble, peer);
+                }
+            }
+        }
+    }
+
+    public static class SelectedPeers extends CachedLookup<Identifier, Identifier> {
+    
+        public static SelectedPeers create(
+                AsyncFunction<Identifier, Identifier> async) {
+            ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
+            return create(cache, async);
+        }
+        
+        public static SelectedPeers create(
+                final ConcurrentMap<Identifier, Identifier> cache,
+                final AsyncFunction<Identifier, Identifier> async) {
+            CachedFunction<Identifier, Identifier> lookup = 
+                    CachedFunction.create(
+                            CachedLookup.newLookup(cache),
+                            new AsyncFunction<Identifier, Identifier>() {
+                                @Override
+                                public ListenableFuture<Identifier> apply(
+                                        final Identifier ensemble) throws Exception {
+                                    return Futures.transform(
+                                            async.apply(ensemble),
+                                            new Function<Identifier, Identifier>() {
+                                                @Override
+                                                public @Nullable Identifier apply(@Nullable Identifier peer) {
+                                                    if (peer != null) {
+                                                        cache.putIfAbsent(ensemble, peer);
+                                                    }
+                                                    return cache.get(ensemble);
+                                                }
+                                            });
+                                }
+                                
+                            });
+            return new SelectedPeers(cache, lookup);
+        }
+        
+        protected SelectedPeers(
+                ConcurrentMap<Identifier, Identifier> cache,
+                CachedFunction<Identifier, Identifier> lookup) {
+            super(cache, lookup);
+        }
+    }
+
+    public static class EnsembleConnections extends CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> {
+    
+        public static EnsembleConnections create(
+                final CachedFunction<Identifier, Identifier> peers,
+                final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectFunction) {
+            return new EnsembleConnections(
+                    new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                        @Override
+                        public @Nullable
+                        ClientPeerConnection<Connection<? super MessagePacket>> apply(Identifier ensemble) {
+                            Identifier peer = peers.first().apply(ensemble);
+                            if (peer != null) {
+                                return connectFunction.first().apply(peer);
+                            } else {
+                                return null;
+                            }
+                        }
+                    }, 
+                    new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                        @Override
+                        public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
+                                Identifier ensemble) throws Exception {
+                            return Futures.transform(
+                                    peers.apply(ensemble),
+                                    connectFunction);
+                        }
+                    });
+        }
+        
+        protected EnsembleConnections(
+                Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> first,
+                AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> second) {
+            super(first, second);
+        }
+    }
 
     public static class SelectRandom<V> implements Function<List<V>, V> {
         
-        public static <V> SelectRandom<V> of() {
+        public static <V> SelectRandom<V> create() {
             return new SelectRandom<V> ();
         }
         
@@ -236,20 +295,76 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
             }
         }
     }
+    
+    public static class SelectSelfTask implements AsyncFunction<Identifier, Identifier> {
 
-    public static class SelectMemberTask implements AsyncFunction<List<ControlSchema.Ensembles.Entity.Peers.Member>, Identifier> {
+        public static SelectSelfTask create(
+                Identifier myId,
+                Identifier myEnsemble,
+                Materializer<?> materializer) {
+            return new SelectSelfTask(myId, myEnsemble, SelectMemberTask.create(materializer));
+        }
+        
+        protected final Identifier myId;
+        protected final Identifier myEnsemble;
+        protected final AsyncFunction<Identifier, Identifier> fallback;
+        
+        public SelectSelfTask(
+                Identifier myId,
+                Identifier myEnsemble,
+                AsyncFunction<Identifier, Identifier> fallback) {
+            this.myId = myId;
+            this.myEnsemble = myEnsemble;
+            this.fallback = fallback;
+        }
 
-        public static SelectMemberTask of(
+        @Override
+        public ListenableFuture<Identifier> apply(Identifier ensemble)
+                throws Exception {
+            return (ensemble == myEnsemble) ?
+                    Futures.immediateFuture(myId) : 
+                        fallback.apply(ensemble);
+        }
+    }
+    
+    public static class SelectMemberTask<T> implements AsyncFunction<Identifier, Identifier> {
+
+        public static SelectMemberTask<List<ControlSchema.Ensembles.Entity.Peers.Member>> create(Materializer<?> materializer) {
+            return new SelectMemberTask<List<ControlSchema.Ensembles.Entity.Peers.Member>>(
+                    ControlSchema.Ensembles.Entity.Peers.getMembers(materializer),
+                    SelectPresentMemberTask.create(materializer));
+        }
+        
+        protected final CachedFunction<Identifier, ? extends T> memberLookup;
+        protected final AsyncFunction<? super T, Identifier> selector;
+        
+        public SelectMemberTask(
+                CachedFunction<Identifier, ? extends T> memberLookup,
+                AsyncFunction<? super T, Identifier> selector) {
+            this.memberLookup = memberLookup;
+            this.selector = selector;
+        }
+
+        @Override
+        public ListenableFuture<Identifier> apply(Identifier ensemble)
+                throws Exception {
+            return Futures.transform(memberLookup.apply(ensemble), selector);
+        }
+    }
+
+    public static class SelectPresentMemberTask implements AsyncFunction<List<ControlSchema.Ensembles.Entity.Peers.Member>, Identifier> {
+
+        public static SelectPresentMemberTask create(
                 ClientExecutor<? super Records.Request, ?> client) {
-            return new SelectMemberTask(
+            return new SelectPresentMemberTask(
                     client,
-                    new SelectRandom<ControlSchema.Ensembles.Entity.Peers.Member>());
+                    SelectRandom.<ControlSchema.Ensembles.Entity.Peers.Member>create());
         }
         
         protected final ClientExecutor<? super Records.Request, ?> client;
         protected final Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector;
         
-        public SelectMemberTask(
+        public SelectPresentMemberTask(
                 ClientExecutor<? super Records.Request, ?> client,
                 Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector) {
             this.client = client;
@@ -264,13 +379,13 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 presence.add(ControlSchema.Peers.Entity.of(e.get()).presence().exists(client));
             }
             ListenableFuture<List<Boolean>> future = Futures.successfulAsList(presence);
-            return Futures.transform(future, SelectPresentMemberFunction.of(members, selector));
+            return Futures.transform(future, SelectPresentMemberFunction.create(members, selector));
         }
     }
     
     public static class SelectPresentMemberFunction implements Function<List<Boolean>, Identifier> {
 
-        public static SelectPresentMemberFunction of(
+        public static SelectPresentMemberFunction create(
                 List<ControlSchema.Ensembles.Entity.Peers.Member> members,
                 Function<List<ControlSchema.Ensembles.Entity.Peers.Member>, ControlSchema.Ensembles.Entity.Peers.Member> selector) {
             return new SelectPresentMemberFunction(members, selector);
@@ -290,87 +405,14 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         public Identifier apply(List<Boolean> presence) {
             List<ControlSchema.Ensembles.Entity.Peers.Member> living = Lists.newArrayListWithCapacity(members.size());
             for (int i=0; i<members.size(); ++i) {
-                if (Boolean.TRUE.equals(presence.get(i))) {
-                    living.add(members.get(i));
-                }
+                try {
+                    if (Boolean.TRUE.equals(presence.get(i))) {
+                        living.add(members.get(i));
+                    }
+                } catch (Exception e) {}
             }
             ControlSchema.Ensembles.Entity.Peers.Member selected = selector.apply(living);
             return (selected == null) ? null : selected.get();
-        }
-    }
-    
-
-    protected static final ZNodeLabel.Path ENSEMBLES_PATH = Control.path(ControlSchema.Ensembles.class);
-
-    protected class UpdatePeersFromCache {
-        
-        public UpdatePeersFromCache() {}
-        
-        public void initialize() {
-            control.materializer().register(this);
-            
-            Materializer.MaterializedNode ensembles = control.materializer().get(ENSEMBLES_PATH);
-            if (ensembles != null) {
-                for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> ensemble: ensembles.entrySet()) {
-                    Identifier ensembleId = Identifier.valueOf(ensemble.getKey().toString());
-                    Materializer.MaterializedNode peers = ensemble.getValue().get(ControlSchema.Ensembles.Entity.Peers.LABEL);
-                    if (peers != null) {
-                        for (ZNodeLabel.Component peer: peers.keySet()) {
-                            Identifier peerId = Identifier.valueOf(peer.toString());
-                            peerToEnsemble.get().put(peerId, ensembleId);
-                        }
-                    }
-                }
-            }
-        }
-        
-        @Subscribe
-        public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
-            ZNodeLabel.Path path = event.path().get();
-            if (! ENSEMBLES_PATH.prefixOf(path)) {
-                return;
-            }
-
-            ImmutableList<ZNodeLabel.Component> components = ImmutableList.copyOf(path);
-            assert (components.size() >= 2);
-            if (components.size() == 2) {
-                if (event.type() == ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED) {
-                    peerToEnsemble.get().clear();
-                }
-            } else {
-                Identifier ensembleId = Identifier.valueOf(components.get(2).toString());
-                if (components.size() == 3) {
-                    if (event.type() == ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED) {
-                        for (Map.Entry<Identifier, Identifier> e: peerToEnsemble.get().entrySet()) {
-                            if (e.getValue().equals(ensembleId)) {
-                                peerToEnsemble.get().remove(e.getKey(), e.getValue());
-                            }
-                        }
-                    }
-                } else {
-                    if (components.get(3).equals(ControlSchema.Ensembles.Entity.Peers.LABEL)) {
-                        if (components.size() == 4) {
-                            if (event.type() == ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED) {
-                                for (Map.Entry<Identifier, Identifier> e: peerToEnsemble.get().entrySet()) {
-                                    if (e.getValue().equals(ensembleId)) {
-                                        peerToEnsemble.get().remove(e.getKey(), e.getValue());
-                                    }
-                                }
-                            }
-                        } else {
-                            Identifier peerId = Identifier.valueOf(components.get(4).toString());
-                            switch (event.type()) {
-                            case NODE_REMOVED:
-                                peerToEnsemble.get().remove(peerId, ensembleId);
-                                break;
-                            case NODE_ADDED:
-                                peerToEnsemble.get().put(peerId, ensembleId);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

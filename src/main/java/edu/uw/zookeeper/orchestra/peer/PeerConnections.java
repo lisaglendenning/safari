@@ -31,7 +31,15 @@ public class PeerConnections<C extends Connection<? super MessagePacket>, V exte
     }
 
     public V get(Identifier peer) {
-        return peers.get(peer);
+        V connection = peers.get(peer);
+        switch (connection.state()) {
+        case CONNECTION_CLOSING:
+        case CONNECTION_CLOSED:
+            peers.remove(peer, connection);
+            return null;
+        default:
+            return connection;
+        }
     }
     
     public Set<Map.Entry<Identifier, V>> entrySet() {
@@ -45,17 +53,17 @@ public class PeerConnections<C extends Connection<? super MessagePacket>, V exte
 
     @Override
     public void post(Object event) {
-        connections().post(event);
+        connections.post(event);
     }
 
     @Override
     public void register(Object handler) {
-        connections().register(handler);
+        connections.register(handler);
     }
 
     @Override
     public void unregister(Object handler) {
-        connections().unregister(handler);
+        connections.unregister(handler);
     }
     
     protected V put(Identifier id, V v) {

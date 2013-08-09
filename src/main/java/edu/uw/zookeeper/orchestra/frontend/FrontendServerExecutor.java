@@ -110,6 +110,7 @@ public class FrontendServerExecutor extends DependentService {
                 ServiceLocator locator,
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
+                PeerToEnsembleLookup peerToEnsemble,
                 PeerConnectionsService<?> peers,
                 EnsembleConnectionsService ensembles,
                 Executor executor,
@@ -117,7 +118,7 @@ public class FrontendServerExecutor extends DependentService {
                 DependentServiceMonitor monitor,
                 Generator<Long> zxids) {
             return monitor.add(FrontendServerExecutor.newInstance(
-                    volumes, assignments, peers, ensembles, executor, sessions, zxids, locator));
+                    volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator));
         }
 
         @Provides @Singleton
@@ -130,6 +131,7 @@ public class FrontendServerExecutor extends DependentService {
     public static FrontendServerExecutor newInstance(
             VolumeCacheService volumes,
             AssignmentCacheService assignments,
+            PeerToEnsembleLookup peerToEnsemble,
             PeerConnectionsService<?> peers,
             EnsembleConnectionsService ensembles,
             Executor executor,
@@ -137,7 +139,7 @@ public class FrontendServerExecutor extends DependentService {
             Generator<Long> zxids,
             ServiceLocator locator) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
-        FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, ensembles, executor, sessions, zxids);
+        FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
         return new FrontendServerExecutor(handlers, server, peers.clients(), locator);
     }
     
@@ -244,6 +246,7 @@ public class FrontendServerExecutor extends DependentService {
                 ConcurrentMap<Long, FrontendSessionExecutor> handlers,
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
+                PeerToEnsembleLookup peerToEnsemble,
                 EnsembleConnectionsService connections,
                 Executor executor,
                 ExpiringSessionTable sessions,
@@ -255,9 +258,9 @@ public class FrontendServerExecutor extends DependentService {
                     ServerTaskExecutor.ProcessorExecutor.of(
                             new ConnectProcessor(
                                 handlers,
-                                volumes.lookup(),
-                                assignments.lookup(),
-                                connections.getEnsembleForPeer(),
+                                volumes.asLookup(),
+                                assignments.get().asLookup(),
+                                peerToEnsemble.get().asLookup().first(),
                                 connections.getConnectionForEnsemble(),
                                 ConnectTableProcessor.create(sessions, zxids),
                                 ResponseProcessor.create(handlers, sessions, zxids),

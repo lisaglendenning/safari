@@ -3,8 +3,6 @@ package edu.uw.zookeeper.orchestra.control;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.util.List;
-import java.util.concurrent.Executor;
-
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
@@ -16,13 +14,13 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.CreateMode;
@@ -34,61 +32,59 @@ import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.orchestra.backend.BackendView;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.common.RunnablePromiseTask;
+import edu.uw.zookeeper.orchestra.control.Control.CreateEntityTask;
 import edu.uw.zookeeper.orchestra.data.VolumeDescriptor;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 public abstract class ControlSchema extends Control.ControlZNode {
     
+    public static SchemaInstance getInstance() {
+        return Holder.getInstance().get();
+    }
+
     @Label
     public static final ZNodeLabel.Path ROOT = ZNodeLabel.Path.of("/orchestra");
     
-    @ZNode()
+    @ZNode
     public static abstract class Peers extends Control.ControlZNode {
 
         @Label
         public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peers");
         
         @ZNode
-        public static class Entity extends Control.TypedLabelZNode<Identifier> {
+        public static class Entity extends Control.IdentifierZNode {
 
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
+            
+            public static Control.EntityValue<ServerInetAddressView, Entity, PeerAddress> schema() {
+                return EntityHolder.ENTITY_SCHEMA.get();
+            }
+            
+            protected static enum EntityHolder implements Reference<Control.EntityValue<ServerInetAddressView, Entity, PeerAddress>> {
+                ENTITY_SCHEMA;
+
+                private final Control.EntityValue<ServerInetAddressView, Entity, PeerAddress> instance;
+                
+                private EntityHolder() {
+                    this.instance = Control.EntityValue.create(Entity.class, PeerAddress.class);
+                }
+                
+                @Override
+                public Control.EntityValue<ServerInetAddressView, Entity, PeerAddress> get() {
+                    return instance;
+                }
+            }
 
             public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Peers.Entity> create(
                     final ServerInetAddressView value, 
-                    final Materializer<O> materializer,
-                    final Executor executor) {
-                Control.RegisterHashedTask<O, ServerInetAddressView, ControlSchema.Peers.Entity> task = 
-                        Control.RegisterHashedTask.of(
-                                value,
-                                ControlSchema.Peers.Entity.hashOf(value),
-                                new Function<Identifier, ControlSchema.Peers.Entity>() {
-                                    @Override
-                                    @Nullable
-                                    public
-                                    Peers.Entity apply(@Nullable Identifier input) {
-                                        return ControlSchema.Peers.Entity.of(input);
-                                    }
-                                },
-                                new Function<ControlSchema.Peers.Entity, ZNodeLabel.Path>() {
-                                    @Override
-                                    @Nullable
-                                    public
-                                    ZNodeLabel.Path apply(@Nullable Peers.Entity input) {
-                                        return ControlSchema.Peers.Entity.PeerAddress.pathOf(input);
-                                    }
-                                },
-                                new AsyncFunction<ControlSchema.Peers.Entity, ControlSchema.Peers.Entity.PeerAddress>() {
-                                    @Override
-                                    public ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> apply(
-                                            Peers.Entity input) {
-                                        return ControlSchema.Peers.Entity.PeerAddress.get(input, materializer);
-                                    }
-                                },
-                                materializer, 
-                                executor);
-                executor.execute(task);
+                    final Materializer<O> materializer) {
+                Control.LookupHashedTask<Peers.Entity> task = Control.LookupHashedTask.create(
+                        hashOf(value),
+                        CreateEntityTask.create(value, schema(), materializer));
+                task.run();
                 return task;
             }
             
@@ -107,6 +103,27 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     }
                 };
                 return CachedFunction.create(cached, lookup);
+            }
+            
+            public static AsyncFunction<Identifier, Identifier> lookupEnsemble(
+                    final Materializer<?> materializer) {
+                final AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier> ensembleOfBackend = Ensembles.Entity.lookup(materializer);
+                return new AsyncFunction<Identifier, Identifier>() {
+                    @Override
+                    public ListenableFuture<Identifier> apply(
+                            final Identifier peer)
+                            throws Exception {
+                        return Futures.transform(
+                                Entity.of(peer).backend(materializer), 
+                                new AsyncFunction<Peers.Entity.Backend, Identifier>() {
+                                    @Override
+                                    public ListenableFuture<Identifier> apply(Peers.Entity.Backend backend)
+                                            throws Exception {
+                                        return ensembleOfBackend.apply(backend.get().getEnsemble());
+                                    }
+                                });
+                    }
+                };
             }
 
             public static Peers.Entity valueOf(String label) {
@@ -134,6 +151,10 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 return Entity.Presence.of(this);
             }
 
+            public ListenableFuture<Backend> backend(Materializer<?> materializer) {
+                return Backend.get(this, materializer);
+            }
+            
             @ZNode(createMode=CreateMode.EPHEMERAL)
             public static class Presence extends Control.ControlZNode {
 
@@ -170,7 +191,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             @ZNode(type=ServerInetAddressView.class)
-            public static class ClientAddress extends Control.TypedValueZNode<ServerInetAddressView> {
+            public static class ClientAddress extends Control.ValueZNode<ServerInetAddressView> {
 
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("clientAddress");
@@ -197,7 +218,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             @ZNode(type=ServerInetAddressView.class)
-            public static class PeerAddress extends Control.TypedValueZNode<ServerInetAddressView> {
+            public static class PeerAddress extends Control.ValueZNode<ServerInetAddressView> {
 
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peerAddress");
@@ -278,7 +299,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             @ZNode(label="backend", type=BackendView.class)
-            public static class Backend extends Control.TypedValueZNode<BackendView> {
+            public static class Backend extends Control.ValueZNode<BackendView> {
                 
                 public static ListenableFuture<Entity.Backend> get(Peers.Entity entity, Materializer<?> materializer) {
                     return get(Entity.Backend.class, entity, materializer);
@@ -319,46 +340,72 @@ public abstract class ControlSchema extends Control.ControlZNode {
         }
         
         @ZNode
-        public static class Entity extends Control.TypedLabelZNode<Identifier> {
+        public static class Entity extends Control.IdentifierZNode {
 
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
+            public static Control.EntityValue<EnsembleView<ServerInetAddressView>, Entity, Backend> schema() {
+                return EntityHolder.ENTITY_SCHEMA.get();
+            }
+            
+            protected static enum EntityHolder implements Reference<Control.EntityValue<EnsembleView<ServerInetAddressView>, Entity, Backend>> {
+                ENTITY_SCHEMA;
+
+                private final Control.EntityValue<EnsembleView<ServerInetAddressView>, Entity, Backend> instance;
+                
+                private EntityHolder() {
+                    this.instance = Control.EntityValue.create(Entity.class, Backend.class);
+                }
+                
+                @Override
+                public Control.EntityValue<EnsembleView<ServerInetAddressView>, Entity, Backend> get() {
+                    return instance;
+                }
+            }
+
             public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Ensembles.Entity> create(
                     final EnsembleView<ServerInetAddressView> value, 
-                    final Materializer<O> materializer,
-                    final Executor executor) {
-                Control.RegisterHashedTask<O, EnsembleView<ServerInetAddressView>, ControlSchema.Ensembles.Entity> task = 
-                        Control.RegisterHashedTask.of(
-                                value,
-                                ControlSchema.Ensembles.Entity.hashOf(value),
-                                new Function<Identifier, ControlSchema.Ensembles.Entity>() {
-                                    @Override
-                                    @Nullable
-                                    public
-                                    Ensembles.Entity apply(@Nullable Identifier input) {
-                                        return ControlSchema.Ensembles.Entity.of(input);
-                                    }
-                                },
-                                new Function<ControlSchema.Ensembles.Entity, ZNodeLabel.Path>() {
-                                    @Override
-                                    @Nullable
-                                    public
-                                    ZNodeLabel.Path apply(@Nullable Ensembles.Entity input) {
-                                        return ControlSchema.Ensembles.Entity.Backend.pathOf(input);
-                                    }
-                                },
-                                new AsyncFunction<ControlSchema.Ensembles.Entity, ControlSchema.Ensembles.Entity.Backend>() {
-                                    @Override
-                                    public ListenableFuture<ControlSchema.Ensembles.Entity.Backend> apply(
-                                            Ensembles.Entity input) {
-                                        return ControlSchema.Ensembles.Entity.Backend.get(input, materializer);
-                                    }
-                                },
-                                materializer, 
-                                executor);
-                executor.execute(task);
+                    final Materializer<O> materializer) {
+                Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.create(
+                        hashOf(value),
+                        CreateEntityTask.create(value, schema(), materializer));
+                task.run();
                 return task;
+            }
+            
+            public static AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier> lookup(
+                    final Materializer<?> materializer) {
+                return new AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier>() {
+                        @Override
+                        public ListenableFuture<Identifier> apply(
+                                final EnsembleView<ServerInetAddressView> backend)
+                                throws Exception {
+                            return Control.LookupHashedTask.create(
+                                    ControlSchema.Ensembles.Entity.hashOf(backend),
+                                    new AsyncFunction<Identifier, Optional<Identifier>>() {
+                                        @Override
+                                        public ListenableFuture<Optional<Identifier>> apply(
+                                                final Identifier ensemble)
+                                                throws Exception {
+                                            return Futures.transform(
+                                                    Entity.of(ensemble).backend(materializer),
+                                                    new Function<Backend, Optional<Identifier>>() {
+                                                        @Override
+                                                        public @Nullable
+                                                        Optional<Identifier> apply(
+                                                                @Nullable Backend input) {
+                                                            if ((input == null) || !backend.equals(input.get())) {
+                                                                return Optional.absent();
+                                                            } else {
+                                                                return Optional.of(ensemble);
+                                                            }
+                                                        }
+                                                    });
+                                        }
+                                    });
+                        }
+                };
             }
 
             public static Hash.Hashed hashOf(EnsembleView<ServerInetAddressView> value) {
@@ -381,9 +428,13 @@ public abstract class ControlSchema extends Control.ControlZNode {
             public String toString() {
                 return get().toString();
             }
+            
+            public ListenableFuture<Backend> backend(Materializer<?> materializer) {
+                return Backend.get(this, materializer);
+            }
 
             @ZNode(type=EnsembleView.class)
-            public static class Backend extends Control.TypedValueZNode<EnsembleView<ServerInetAddressView>> {
+            public static class Backend extends Control.ValueZNode<EnsembleView<ServerInetAddressView>> {
 
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("backend");
@@ -465,7 +516,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
                 
                 @ZNode
-                public static class Member extends Control.TypedLabelZNode<Identifier> {
+                public static class Member extends Control.IdentifierZNode {
 
                     @Label(type=LabelType.PATTERN)
                     public static final String LABEL_PATTERN = Identifier.PATTERN;
@@ -490,7 +541,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             @ZNode(type=Identifier.class, createMode=CreateMode.EPHEMERAL)
-            public static class Leader extends Control.TypedValueZNode<Identifier> {
+            public static class Leader extends Control.ValueZNode<Identifier> {
 
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("leader");
@@ -503,82 +554,88 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return create(Entity.Leader.class, value, parent, materializer);
                 }
                 
-                public static class Proposal<O extends Operation.ProtocolResponse<?>> extends PromiseTask<Entity.Leader, Entity.Leader> implements Runnable {
+                public static class Proposal<O extends Operation.ProtocolResponse<?>> extends RunnablePromiseTask<Entity.Leader, Entity.Leader> {
 
                     public static <O extends Operation.ProtocolResponse<?>>
                     Proposal<O> of(
                             Entity.Leader task, 
-                            Materializer<O> materializer,
-                            Executor executor) {
+                            Materializer<O> materializer) {
                         Promise<Entity.Leader> promise = SettableFuturePromise.create();
-                        Proposal<O> proposal = new Proposal<O>(task, materializer, executor, promise);
-                        executor.execute(proposal);
+                        Proposal<O> proposal = new Proposal<O>(task, materializer, promise);
+                        proposal.run();
                         return proposal;
                     }
                     
                     protected final Materializer<O> materializer;
-                    protected final Executor executor;
-                    protected volatile ListenableFuture<O> future;
+                    protected ListenableFuture<O> future;
                     
                     public Proposal(
                             Entity.Leader task, 
                             Materializer<O> materializer,
-                            Executor executor,
                             Promise<Entity.Leader> delegate) {
                         super(task, delegate);
                         this.materializer = materializer;
-                        this.executor = executor;
                         this.future = null;
                     }
                     
                     @Override
-                    public synchronized void run() {
-                        if (isDone()) {
-                            return;
-                        }
-                        
-                        if (future == null) {
-                            Materializer<O>.Operator operator = materializer.operator();
-                            operator.create(task.path(), task.get()).submit();
-                            operator.sync(task.path()).submit();
-                            future = operator.getData(task().path(), true).submit();
-                            future.addListener(this, executor);
-                        } else if (future.isDone()) {
-                            try {
-                                O result = future.get();
-                                Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
-                                if (! error.isPresent()) {
-                                    Materializer.MaterializedNode node = materializer.get(task.path());
-                                    set(Entity.Leader.of((Identifier) node.get().get(), task().parent()));
-                                }
-                            } catch (Throwable t) {
-                                setException(t);
+                    public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+                        boolean cancel = super.cancel(mayInterruptIfRunning);
+                        if (cancel) {
+                            if (future != null) {
+                                future.cancel(mayInterruptIfRunning);
                             }
                         }
+                        return cancel;
+                    }
+                    
+                    @Override
+                    public synchronized Optional<Entity.Leader> call() throws Exception {
+                        if (future == null) {
+                            materializer.operator().create(task().path(), task().get()).submit();
+                            materializer.operator().sync(task().path()).submit();
+                            future = materializer.operator().getData(task().path(), true).submit();
+                            future.addListener(this, MoreExecutors.sameThreadExecutor());
+                            return Optional.absent();
+                        }
+                        if (future.isDone()) {
+                            O result = future.get();
+                            Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
+                            if (! error.isPresent()) {
+                                Materializer.MaterializedNode node = materializer.get(task().path());
+                                if (node != null) {
+                                    Identifier id = (Identifier) node.get().get();
+                                    if (id != null) {
+                                        return Optional.of(Entity.Leader.of(id, task().parent()));
+                                    }
+                                }
+                            }
+                            
+                            // try again
+                            future = null;
+                            run();
+                        }
+                        return Optional.absent();
                     }
                 }
                 
                 public static class Proposer<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<Entity.Leader, Entity.Leader> {
 
                     public static <O extends Operation.ProtocolResponse<?>> Proposer<O> of(
-                            Materializer<O> materializer,
-                            Executor executor) {
-                        return new Proposer<O>(materializer, executor);
+                            Materializer<O> materializer) {
+                        return new Proposer<O>(materializer);
                     }
                     
                     protected final Materializer<O> materializer;
-                    protected final Executor executor;
                     
                     public Proposer(
-                            Materializer<O> materializer,
-                            Executor executor) {
+                            Materializer<O> materializer) {
                         this.materializer = materializer;
-                        this.executor = executor;
                     }
                     
                     @Override
                     public ListenableFuture<Entity.Leader> apply(Entity.Leader input) {
-                        return Proposal.of(input, materializer, executor);
+                        return Proposal.of(input, materializer);
                     }
                 }
                 
@@ -591,7 +648,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
                 
                 public Ensembles.Entity parent() {
-                    return (Ensembles.Entity) parent;
+                    return (Ensembles.Entity) super.parent();
                 }
             }
         }
@@ -601,48 +658,40 @@ public abstract class ControlSchema extends Control.ControlZNode {
     public static abstract class Volumes extends Control.ControlZNode {
         
         @ZNode
-        public static class Entity extends Control.TypedLabelZNode<Identifier> {
+        public static class Entity extends Control.IdentifierZNode {
 
             @Label(type=LabelType.PATTERN)
             public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Volumes.Entity> create(
-                    final VolumeDescriptor value, 
-                    final Materializer<O> materializer,
-                    final Executor executor) {
-                Control.RegisterHashedTask<O, VolumeDescriptor, ControlSchema.Volumes.Entity> task = 
-                        Control.RegisterHashedTask.of(
-                                value,
-                                ControlSchema.Volumes.Entity.hashOf(value),
-                                new Function<Identifier, ControlSchema.Volumes.Entity>() {
-                                    @Override
-                                    @Nullable
-                                    public
-                                    Volumes.Entity apply(@Nullable Identifier input) {
-                                        return ControlSchema.Volumes.Entity.of(input);
-                                    }
-                                },
-                                new Function<ControlSchema.Volumes.Entity, ZNodeLabel.Path>() {
-                                    @Override
-                                    @Nullable
-                                    public
-                                    ZNodeLabel.Path apply(@Nullable Volumes.Entity input) {
-                                        return ControlSchema.Volumes.Entity.Volume.pathOf(input);
-                                    }
-                                },
-                                new AsyncFunction<ControlSchema.Volumes.Entity, ControlSchema.Volumes.Entity.Volume>() {
-                                    @Override
-                                    public ListenableFuture<ControlSchema.Volumes.Entity.Volume> apply(
-                                            Volumes.Entity input) {
-                                        return ControlSchema.Volumes.Entity.Volume.get(input, materializer);
-                                    }
-                                },
-                                materializer, 
-                                executor);
-                executor.execute(task);
-                return task;
+            public static Control.EntityValue<VolumeDescriptor, Entity, Entity.Volume> schema() {
+                return EntityHolder.ENTITY_SCHEMA.get();
             }
             
+            protected static enum EntityHolder implements Reference<Control.EntityValue<VolumeDescriptor, Entity, Entity.Volume>> {
+                ENTITY_SCHEMA;
+
+                private final Control.EntityValue<VolumeDescriptor, Entity, Entity.Volume> instance;
+                
+                private EntityHolder() {
+                    this.instance = Control.EntityValue.create(Entity.class, Entity.Volume.class);
+                }
+                
+                @Override
+                public Control.EntityValue<VolumeDescriptor, Entity, Entity.Volume> get() {
+                    return instance;
+                }
+            }
+
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Volumes.Entity> create(
+                    final VolumeDescriptor value, 
+                    final Materializer<O> materializer) {
+                Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.create(
+                        hashOf(value),
+                        CreateEntityTask.create(value, schema(), materializer));
+                task.run();
+                return task;
+            }
+
             public static Hash.Hashed hashOf(VolumeDescriptor value) {
                 return Hash.default32().apply(value.getRoot().toString());
             }
@@ -665,7 +714,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             @ZNode(type=VolumeDescriptor.class)
-            public static class Volume extends Control.TypedValueZNode<VolumeDescriptor> {
+            public static class Volume extends Control.ValueZNode<VolumeDescriptor> {
 
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("volume");
@@ -692,7 +741,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
 
             @ZNode(type=Identifier.class)
-            public static class Ensemble extends Control.TypedValueZNode<Identifier> {
+            public static class Ensemble extends Control.ValueZNode<Identifier> {
 
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("ensemble");
@@ -716,11 +765,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
         }            
     }
     
-    public static SchemaInstance getInstance() {
-        return Holder.getInstance().get();
-    }
-    
-    public static enum Holder implements Reference<SchemaInstance> {
+    protected static enum Holder implements Reference<SchemaInstance> {
         SCHEMA(ControlSchema.class);
         
         public static Holder getInstance() {

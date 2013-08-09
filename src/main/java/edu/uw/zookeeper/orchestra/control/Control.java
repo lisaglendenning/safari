@@ -6,14 +6,13 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
-
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
 
-import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
@@ -26,6 +25,8 @@ import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.TreeFetcher;
+import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Reference;
@@ -33,13 +34,13 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Schema;
-import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.common.RunnablePromiseTask;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
@@ -50,6 +51,14 @@ public abstract class Control {
 
     public static ZNodeLabel.Path path(Object element) {
         return ControlZNode.path(element);
+    }
+
+    public static ZNodeLabel.Path path(Object parent, Object element) {
+        return ControlZNode.path(parent, element);
+    }
+
+    public static ZNodeLabel label(Object element) {
+        return ControlZNode.label(element);
     }
     
     public static void createPrefix(Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
@@ -81,10 +90,23 @@ public abstract class Control {
 
     @ZNode(acl=Acls.Definition.ANYONE_ALL)
     public static abstract class ControlZNode {
+        
         public static Schema.SchemaNode schemaNode(Object element) {
             return ControlSchema.getInstance().byElement(element);
         }
-        
+
+        public static ZNodeLabel label(Object element) {
+            if (element instanceof ControlZNode) {
+                return ((ControlZNode) element).label();
+            } else {
+                return schemaNode(element).parent().get().label();
+            }
+        }
+
+        public static ZNodeLabel.Path path(Object parent, Object element) {
+            return ZNodeLabel.Path.of(path(element), label(element));
+        }
+
         public static ZNodeLabel.Path path(Object element) {
             if (element instanceof ControlZNode) {
                 return ((ControlZNode) element).path();
@@ -93,14 +115,40 @@ public abstract class Control {
             }
         }
 
-        protected final Object parent;
+        @SuppressWarnings("unchecked")
+        public static <C extends ControlZNode> C newInstance(Class<C> cls, Object parent) {
+            for (Constructor<?> c: cls.getDeclaredConstructors()) {
+                Class<?>[] parameterTypes = c.getParameterTypes();
+                if ((parameterTypes.length == 1) 
+                        && parameterTypes[0].isAssignableFrom(parent.getClass())) {
+                    try {
+                        return (C) c.newInstance(parent);
+                    } catch (Exception e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+            throw new AssertionError(Arrays.toString(cls.getDeclaredConstructors()));
+        }
+        
+        private final Object parent;
+        private final ZNodeLabel.Path path;
+        private final ZNodeLabel label;
 
         protected ControlZNode() {
             this(null);
         }
-        
+
         protected ControlZNode(Object parent) {
+            this(parent, null);
+        }
+        
+        protected ControlZNode(
+                Object parent,
+                ZNodeLabel label) {
             this.parent = (parent == null) ? getClass().getEnclosingClass() : parent;
+            this.label = (label == null) ? label(getClass()) : label;
+            this.path = ZNodeLabel.Path.of(path(this.parent), this.label);
         }
         
         public Object parent() {
@@ -108,52 +156,39 @@ public abstract class Control {
         }
 
         public ZNodeLabel label() {
-            return path(getClass()).tail();
+            return label;
         }
 
         public ZNodeLabel.Path path() {
-            return ZNodeLabel.Path.of(path(parent()), label());
+            return path;
         }
 
         @Override
         public String toString() {
-            return path().toString();
+            return Objects.toStringHelper(this).addValue(path().toString()).toString();
         }
     }
-    
-    public static abstract class TypedLabelZNode<T> extends ControlZNode implements Reference<T> {
-        
-        protected final T label;
 
-        protected TypedLabelZNode(T label) {
-            this(label, null);
-        }
-        
-        protected TypedLabelZNode(T label, Object parent) {
-            super(parent);
-            this.label = label;
-        }
-        
-        @Override
-        public T get() {
-            return label;
-        }
-        
-        @Override
-        public ZNodeLabel.Component label() {
-            return ZNodeLabel.Component.of(toString());
-        }
+    public static abstract class ValueZNode<T> extends ControlZNode implements Reference<T> {
 
-        @Override
-        public String toString() {
-            return Serializers.ToString.TO_STRING.apply(get());
+        @SuppressWarnings("unchecked")
+        public static <T, C extends ValueZNode<T>> C newInstance(Class<C> cls, T value) {
+            for (Constructor<?> c: cls.getDeclaredConstructors()) {
+                Class<?>[] parameterTypes = c.getParameterTypes();
+                if ((parameterTypes.length == 1) 
+                        && parameterTypes[0].isAssignableFrom(value.getClass())) {
+                    try {
+                        return (C) c.newInstance(value);
+                    } catch (Exception e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+            throw new AssertionError(Arrays.toString(cls.getDeclaredConstructors()));
         }
-    }
-    
-    public static abstract class TypedValueZNode<T> extends ControlZNode implements Reference<T> {
         
         @SuppressWarnings("unchecked")
-        public static <T, C extends TypedValueZNode<T>> C newInstance(Class<C> cls, T value, Object parent) {
+        public static <T, C extends ValueZNode<T>> C newInstance(Class<C> cls, T value, Object parent) {
             for (Constructor<?> c: cls.getDeclaredConstructors()) {
                 Class<?>[] parameterTypes = c.getParameterTypes();
                 if ((parameterTypes.length == 2) 
@@ -168,34 +203,61 @@ public abstract class Control {
             }
             throw new AssertionError(Arrays.toString(cls.getDeclaredConstructors()));
         }
-        
+
         @SuppressWarnings("unchecked")
-        public static <T, C extends TypedValueZNode<T>> ListenableFuture<C> get(
+        public static <T, C extends ValueZNode<T>> ListenableFuture<C> get(
                 final Class<C> cls, 
                 final Object parent, 
                 final Materializer<?> materializer) {
-            final ZNodeLabel.Path path = ZNodeLabel.Path.of(path(parent), path(cls).tail());
+            final ZNodeLabel.Path path = path(parent, cls);
+            final Callable<Optional<C>> creator = new Callable<Optional<C>>() {
+                @Override
+                public Optional<C> call() {
+                    Materializer.MaterializedNode node = materializer.get(path);
+                    if (node != null) {
+                        T value = (T) node.get();
+                        if (value != null) {
+                            return Optional.of(newInstance(cls, value, parent));
+                        }
+                    }
+                    return Optional.absent();
+                }
+            };
+            try {
+                Optional<C> result = creator.call();
+                if (result.isPresent()) {
+                    return Futures.immediateFuture(result.get());
+                }
+            } catch (Exception e) {
+                return Futures.immediateFailedFuture(e);
+            }
             return Futures.transform(
                     materializer.operator().getData(path).submit(),
                     new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
                         @Override
                         public @Nullable
-                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws Exception {
                             Operations.unlessError(input.getRecord());
-                            T value = (T) materializer.get(path).get().get();
-                            return Futures.immediateFuture(newInstance(cls, value, parent));
+                            Optional<C> result = creator.call();               
+                            if (result.isPresent()) {
+                                return Futures.immediateFuture(result.get());
+                            } else {
+                                // dunno
+                                throw new AssertionError();
+                            }
                         }
                     });
         }
         
-        public static <T, C extends TypedValueZNode<T>> ListenableFuture<C> create(
+        public static <T, C extends ValueZNode<T>> ListenableFuture<C> create(
                 final Class<C> cls, 
                 final T value, 
                 final Object parent, 
                 final Materializer<?> materializer) {
             final C instance = newInstance(cls, value, parent);
+            final ZNodeLabel.Path path = instance.path();
             return Futures.transform(
-                    materializer.operator().create(instance.path(), instance.get()).submit(),
+                    materializer.operator().create(path, value).submit(),
                     new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
                         @Override
                         public @Nullable
@@ -211,13 +273,17 @@ public abstract class Control {
         }
         
         protected final T value;
-
-        protected TypedValueZNode(T value) {
+    
+        protected ValueZNode(T value) {
             this(value, null);
         }
+
+        protected ValueZNode(T value, Object parent) {
+            this(value, parent, null);
+        }
         
-        protected TypedValueZNode(T value, Object parent) {
-            super(parent);
+        protected ValueZNode(T value, Object parent, ZNodeLabel label) {
+            super(parent, label);
             this.value = value;
         }
         
@@ -228,76 +294,172 @@ public abstract class Control {
 
         @Override
         public String toString() {
-            return get().toString();
+            return Objects.toStringHelper(this)
+                    .addValue(path().toString()).addValue(get()).toString();
+        }
+    }
+    
+    public static abstract class IdentifierZNode extends ValueZNode<Identifier> {
+        
+        public static <C extends IdentifierZNode> ListenableFuture<C> get(
+                final Class<C> cls, 
+                final Object parent, 
+                final Materializer<?> materializer) {
+            final ZNodeLabel.Path path = path(parent, cls);
+            final Callable<Optional<C>> creator = new Callable<Optional<C>>() {
+                @Override
+                public Optional<C> call() {
+                    Materializer.MaterializedNode node = materializer.get(path);
+                    if (node != null) {
+                        Identifier value = Identifier.valueOf(node.parent().get().label().toString());
+                        return Optional.of(newInstance(cls, value, parent));
+                    }
+                    return Optional.absent();
+                }
+            };
+            try {
+                Optional<C> result = creator.call();
+                if (result.isPresent()) {
+                    return Futures.immediateFuture(result.get());
+                }
+            } catch (Exception e) {
+                return Futures.immediateFailedFuture(e);
+            }
+            return Futures.transform(
+                    materializer.operator().getData(path).submit(),
+                    new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
+                        @Override
+                        public @Nullable
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws Exception {
+                            Operations.unlessError(input.getRecord());
+                            Optional<C> result = creator.call();               
+                            if (result.isPresent()) {
+                                return Futures.immediateFuture(result.get());
+                            } else {
+                                // dunno
+                                throw new AssertionError();
+                            }
+                        }
+                    });
+        }
+        
+        public static <T, C extends IdentifierZNode> ListenableFuture<C> create(
+                final Class<C> cls, 
+                final Identifier value, 
+                final Object parent, 
+                final Materializer<?> materializer) {
+            final C instance = newInstance(cls, value, parent);
+            final ZNodeLabel.Path path = instance.path();
+            return Futures.transform(
+                    materializer.operator().create(path).submit(),
+                    new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
+                        @Override
+                        public @Nullable
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
+                            Optional<Operation.Error> error = Operations.maybeError(input.getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
+                            if (error.isPresent()) {
+                                return get(cls, parent, materializer);
+                            } else {
+                                return Futures.immediateFuture(instance);
+                            }
+                        }
+                    });
+        }
+        
+        protected IdentifierZNode(Identifier value) {
+            this(value, null);
+        }
+        
+        protected IdentifierZNode(Identifier value, Object parent) {
+            super(value, parent, ZNodeLabel.Component.of(value.toString()));
         }
     }
 
-    public static class FetchUntil<U extends Operation.ProtocolResponse<?>> extends PromiseTask<Materializer<U>, Void> implements FutureCallback<Void> {
-
-        public static <T extends Operation.ProtocolRequest<?>, V extends Operation.ProtocolResponse<?>> FetchUntil<V> newInstance(ZNodeLabel.Path root, Predicate<Materializer<?>> predicate, Materializer<V> materializer) throws InterruptedException, ExecutionException {
-            Promise<Void> delegate = newPromise();
-            return new FetchUntil<V>(root, predicate, materializer, delegate);
-        }
+    public static class EntityValue<V, T extends IdentifierZNode, U extends ValueZNode<V>> {
         
-        protected class Updater implements Runnable {
-            protected final ListenableFuture<Void> future;
+        public static <V, T extends IdentifierZNode, U extends ValueZNode<V>> EntityValue<V,T,U> create(
+                Class<T> entityType, Class<U> valueType) {
+            return new EntityValue<V,T,U>(entityType, valueType);
+        }
             
-            public Updater(ZNodeLabel.Path root) {
-                this.future = TreeFetcher.<U,Void>builder().setClient(task()).setData(true).setWatch(true).build().apply(root);
-                Futures.addCallback(future, FetchUntil.this, MoreExecutors.sameThreadExecutor());
-                FetchUntil.this.addListener(this, MoreExecutors.sameThreadExecutor());
-            }
-
-            @Override
-            public void run() {
-                future.cancel(true);
-            }
+        protected final Class<T> entityType;
+        protected final Class<U> valueType;
+        
+        public EntityValue(Class<T> entityType, Class<U> valueType) {
+            super();
+            this.entityType = entityType;
+            this.valueType = valueType;
         }
-        
-        protected final ZNodeLabel.Path root;
-        protected final Predicate<Materializer<?>> predicate;
-        
-        protected FetchUntil(
+    
+        public Class<T> getEntityType() {
+            return entityType;
+        }
+    
+        public Class<U> getValueType() {
+            return valueType;
+        }
+    }
+
+    public static class FetchUntil<U extends Operation.ProtocolResponse<?>, V> extends PromiseTask<TreeFetcher<U, V>, V> implements FutureCallback<Optional<V>> {
+    
+        public static <U extends Operation.ProtocolResponse<?>, V> FetchUntil<U,V> newInstance(
                 ZNodeLabel.Path root, 
-                Predicate<Materializer<?>> predicate, 
-                Materializer<U> task, 
-                Promise<Void> delegate) throws InterruptedException, ExecutionException {
-            super(task, delegate);
+                Processor<? super Optional<Pair<Records.Request, ListenableFuture<U>>>, Optional<V>> result, 
+                Materializer<U> materializer) {
+            TreeFetcher<U,V> fetcher = TreeFetcher.<U,V>builder()
+                    .setResult(result).setClient(materializer).setData(true).setWatch(true).build();
+            Promise<V> promise = newPromise();
+            return newInstance(root, materializer, fetcher, promise);
+        }
+    
+        public static <U extends Operation.ProtocolResponse<?>, V> FetchUntil<U,V> newInstance(
+                ZNodeLabel.Path root, Materializer<U> materializer, TreeFetcher<U,V> fetcher, Promise<V> promise) {
+            return new FetchUntil<U,V>(
+                    root, materializer, fetcher, promise);
+        }
+    
+        protected final ZNodeLabel.Path root;
+        protected final Materializer<U> materializer;
+        
+        public FetchUntil(
+                ZNodeLabel.Path root, 
+                Materializer<U> materializer, 
+                TreeFetcher<U,V> fetcher,
+                Promise<V> promise) {
+            super(fetcher, promise);
             this.root = root;
-            this.predicate = predicate;
+            this.materializer = materializer;
             
-            task().register(this);
-            task().operator().sync(root).submit();
+            materializer.register(this);
+            materializer.operator().sync(root).submit();
             new Updater(root);
         }
-
+    
         @Subscribe
         public void handleReply(Operation.ProtocolResponse<?> message) {
             if (OpCodeXid.NOTIFICATION.getXid() == message.getXid()) {
-                @SuppressWarnings("unchecked")
-                WatchEvent event = WatchEvent.of((Operation.ProtocolResponse<IWatcherEvent>) message);
-                if (root.prefixOf(event.getPath())) {
-                    new Updater(event.getPath());
+                WatchEvent event = WatchEvent.fromRecord((IWatcherEvent) message.getRecord());
+                ZNodeLabel.Path path = event.getPath();
+                if (root.prefixOf(path)) {
+                    new Updater(path);
                 }
             }
         }
-
+    
         @Override
-        public void onSuccess(Void result) {
-            boolean done = predicate.apply(task());
-
-            if (done) {
-                set(null);
-            } else {
-                try {
+        public void onSuccess(Optional<V> result) {
+            try {
+                if (result.isPresent()) {
+                    set(result.get());
+                } else {
                     // force watches
-                    task().operator().sync(root).submit().get();
-                } catch (Exception e) {
-                    setException(e);
+                    materializer.operator().sync(root).submit();
                 }
+            } catch (Exception e) {
+                setException(e);
             }
         }
-
+    
         @Override
         public void onFailure(Throwable t) {
             setException(t);
@@ -308,18 +470,18 @@ public abstract class Control {
             boolean isSet = super.cancel(mayInterruptIfRunning);
             if (isSet) {
                 try {
-                    task().unregister(this);
+                    materializer.unregister(this);
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;
         }
         
         @Override
-        public boolean set(Void result) {
+        public boolean set(V result) {
             boolean isSet = super.set(result);
             if (isSet) {
                 try {
-                    task().unregister(this);
+                    materializer.unregister(this);
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;
@@ -330,140 +492,222 @@ public abstract class Control {
             boolean isSet = super.setException(t);
             if (isSet) {
                 try {
-                    task().unregister(this);
+                    materializer.unregister(this);
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;
         }
-    }
+        
+        protected class Updater implements Runnable {
+            protected final ListenableFuture<Optional<V>> future;
+            
+            public Updater(ZNodeLabel.Path path) {
+                this.future = task().apply(path);
+                Futures.addCallback(future, FetchUntil.this, MoreExecutors.sameThreadExecutor());
+                FetchUntil.this.addListener(this, MoreExecutors.sameThreadExecutor());
+            }
     
-    public static class RegisterHashedTask<O extends Operation.ProtocolResponse<?>, T, V extends ControlZNode> extends PromiseTask<T,V> implements Runnable {
+            @Override
+            public void run() {
+                future.cancel(true);
+            }
+        }
+    }
 
-        public static <O extends Operation.ProtocolResponse<?>, T, V extends ControlZNode>
-        RegisterHashedTask<O,T,V> of(
-                T task,
+    public static class LookupHashedTask<V> extends RunnablePromiseTask<AsyncFunction<Identifier, Optional<V>>, V> {
+    
+        public static <V> LookupHashedTask<V> create(
                 Hash.Hashed hashed,
-                Function<Identifier, V> entityOf,
-                Function<V, ZNodeLabel.Path> pathOfValue,
-                AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf,
-                Materializer<O> materializer,
-                Executor executor) {
+                AsyncFunction<Identifier, Optional<V>> lookup) {
             Promise<V> promise = SettableFuturePromise.create();
-            return new RegisterHashedTask<O,T,V>(task, hashed, entityOf, pathOfValue, valueOf, materializer, executor, promise);
+            return new LookupHashedTask<V>(hashed, lookup, promise);
         }
         
-        protected final Executor executor;
-        protected final Materializer<O> materializer;
-        protected final Function<Identifier, V> entityOf;
-        protected final Function<V, ZNodeLabel.Path> pathOfValue;
-        protected final AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf;
-        protected volatile Hash.Hashed hashed;
-        protected volatile ListenableFuture<O> createFuture;
-        protected volatile ListenableFuture<? extends TypedValueZNode<T>> valueFuture;
+        protected ListenableFuture<Optional<V>> pending;
+        protected Hash.Hashed hashed;
         
-        public RegisterHashedTask(
-                T task,
+        public LookupHashedTask(
                 Hash.Hashed hashed,
-                Function<Identifier, V> entityOf,
-                Function<V, ZNodeLabel.Path> pathOfValue,
-                AsyncFunction<V, ? extends TypedValueZNode<T>> valueOf,
-                Materializer<O> materializer,
-                Executor executor,
-                Promise<V> delegate) {
-            super(task, delegate);
-            this.materializer = checkNotNull(materializer);
-            this.executor = checkNotNull(executor);
+                AsyncFunction<Identifier, Optional<V>> lookup,
+                Promise<V> promise) {
+            super(lookup, promise);
             this.hashed = checkNotNull(hashed);
-            this.entityOf = checkNotNull(entityOf);
-            this.pathOfValue = checkNotNull(pathOfValue);
-            this.valueOf = checkNotNull(valueOf);
-            this.createFuture = null;
-            this.valueFuture = null;
+            this.pending = null;
         }
-        
+
         @Override
-        public synchronized void run() {
-            try {
-                doRun();
-            } catch (Throwable t) {
-                setException(t);
+        public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+            boolean cancel = super.cancel(mayInterruptIfRunning);
+            if (cancel) {
+                if (pending != null) {
+                    pending.cancel(mayInterruptIfRunning);
+                }
             }
+            return cancel;
         }
-        
-        protected void doRun() throws Exception {
-            if (isDone()) {
-                return;
-            }
-            if (createFuture == null) {
+
+        @Override
+        public synchronized Optional<V> call() throws Exception {
+            if (pending == null) {
                 Identifier id = hashed.asIdentifier();
                 while (id.equals(Identifier.zero())) {
                     hashed = hashed.rehash();
                     id = hashed.asIdentifier();
                 }
-                V entity = entityOf.apply(id);
-                createFuture = materializer.submit(
-                        Operations.Requests.multi()
-                            .add(materializer.operator().create(
-                                    entity.path()).get())
-                            .add(materializer.operator().create(
-                                    pathOfValue.apply(entity), 
-                                    task()).get())
-                            .build());
-                createFuture.addListener(this, executor);
-                return;
-            } else if (! createFuture.isDone()) {
-                return;
-            } else {
-                IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().getRecord());
-                Operation.Error error = null;
-                for (Records.MultiOpResponse e: response) {
-                    if (e instanceof Operation.Error) {
-                        error = (Operation.Error) e;
-                        if (error.getError() != KeeperException.Code.NODEEXISTS) {
-                            throw KeeperException.create(error.getError());
-                        }
-                        break;
+                pending = task().apply(id);
+                pending.addListener(this, MoreExecutors.sameThreadExecutor());
+                return Optional.absent();
+            }
+            
+            if (!pending.isDone()) {
+                return Optional.absent();
+            } else if (pending.isCancelled()) {
+                cancel(true);
+                return Optional.absent();
+            }
+            
+            Optional<V> result = pending.get();
+            if (!result.isPresent()) {
+                // try again
+                hashed = hashed.rehash();
+                pending = null;
+                run();
+            }
+            return result;
+        }
+    }
+
+    public static class CreateEntityTask<O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>> implements Reference<V>, AsyncFunction<Identifier, Optional<T>> {
+
+        public static <O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>>
+        CreateEntityTask<O,V,T,U> create(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            return new CreateEntityTask<O,V,T,U>(value, schema, materializer);
+        }
+
+        protected final V value;
+        protected final EntityValue<V,T,U> schema;
+        protected final Materializer<O> materializer;
+        
+        public CreateEntityTask(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            this.value = checkNotNull(value);
+            this.materializer = checkNotNull(materializer);
+            this.schema = checkNotNull(schema);
+        }
+        
+        @Override
+        public V get() {
+            return value;
+        }
+
+        @Override
+        public ListenableFuture<Optional<T>> apply(Identifier input) throws Exception {
+            return new CreateHashedEntityTask(ValueZNode.newInstance(schema.getEntityType(), input), SettableFuturePromise.<Optional<T>>create());
+        }
+
+        protected class CreateHashedEntityTask extends RunnablePromiseTask<T, Optional<T>> {
+        
+            protected ListenableFuture<O> createFuture;
+            protected ListenableFuture<U> valueFuture;
+            
+            public CreateHashedEntityTask(
+                    T entity,
+                    Promise<Optional<T>> promise) {
+                super(entity, promise);
+                this.createFuture = null;
+                this.valueFuture = null;
+            }
+
+            @Override
+            public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+                boolean cancel = super.cancel(mayInterruptIfRunning);
+                if (cancel) {
+                    if (createFuture != null) {
+                        createFuture.cancel(mayInterruptIfRunning);
+                    }
+                    if (valueFuture != null) {
+                        valueFuture.cancel(mayInterruptIfRunning);
                     }
                 }
-                if (error == null) {
-                    // success!
-                    set(entityOf.apply(hashed.asIdentifier()));
-                    return;
-                } else {
-                    // now, check that the existing node is my address!
+                return cancel;
+            }
+            
+            @Override
+            public synchronized Optional<Optional<T>> call() throws Exception {
+                if (createFuture == null) {
+                    createFuture = materializer.submit(
+                            Operations.Requests.multi()
+                                .add(materializer.operator().create(
+                                        task().path()).get())
+                                .add(materializer.operator().create(
+                                        path(task(), schema.getValueType()), 
+                                        task()).get())
+                                .build());
+                    createFuture.addListener(this, MoreExecutors.sameThreadExecutor());
+                    return Optional.absent();
                 }
-            }
-            if (isDone()) {
-                return;
-            }
-            assert ((createFuture != null) && createFuture.isDone());
-            if (valueFuture == null) {
-                valueFuture = valueOf.apply(entityOf.apply(hashed.asIdentifier()));
-                valueFuture.addListener(this, executor);
-            } else if (! valueFuture.isDone()) {
-                return;
-            } else {
-                try {
-                    T value = valueFuture.get().get();
-                    assert (value != null);
-                    if (task().equals(value)) {
+                if (! createFuture.isDone()) {
+                    return Optional.absent();
+                } else if (createFuture.isCancelled()) {
+                    cancel(true);
+                    return Optional.absent();
+                }
+        
+                if (valueFuture == null) {
+                    IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().getRecord());
+                    Operation.Error error = null;
+                    for (Records.MultiOpResponse e: response) {
+                        if (e instanceof Operation.Error) {
+                            error = (Operation.Error) e;
+                            if (error.getError() != KeeperException.Code.NODEEXISTS) {
+                                throw KeeperException.create(error.getError());
+                            }
+                            break;
+                        }
+                    }
+                    if (error == null) {
                         // success!
-                        set(entityOf.apply(hashed.asIdentifier()));
-                        return;
+                        return Optional.of(Optional.of(task()));
+                    }
+                    
+                    // check if the existing node is my value
+                    
+                    valueFuture = ValueZNode.get(schema.getValueType(), task(), materializer);
+                    valueFuture.addListener(this, MoreExecutors.sameThreadExecutor());
+                    return Optional.absent();
+                }
+                if (! valueFuture.isDone()) {
+                    return Optional.absent();
+                } else if (valueFuture.isCancelled()) {
+                    cancel(true);
+                    return Optional.absent();
+                }
+                
+                try {
+                    V value = valueFuture.get().get();
+                    assert (value != null);
+                    if (CreateEntityTask.this.get().equals(value)) {
+                        // success!
+                        return Optional.of(Optional.of(task()));
                     } else {
                         // collision! try again...
-                        hashed = hashed.rehash();
-                        valueFuture = null;
-                        createFuture = null;
+                        return Optional.of(Optional.<T>absent());
                     }
                 } catch (ExecutionException e) {
                     if (e.getCause() instanceof KeeperException.NoNodeException) {
                         // hmm...try again?
                         valueFuture = null;
                         createFuture = null;
+                        run();
                     } else {
                         throw e;
                     }
+                    return Optional.absent();
                 }
             }
         }

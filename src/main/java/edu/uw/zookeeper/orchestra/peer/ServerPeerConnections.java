@@ -83,7 +83,7 @@ public class ServerPeerConnections<C extends Connection<? super MessagePacket>> 
         public void handleMessage(MessagePacket event) {
             if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.first().type()) {
                 MessageHandshake body = event.getBody(MessageHandshake.class);
-                ServerPeerConnection<Connection<? super MessagePacket>> peer = new ServerPeerConnection<Connection<? super MessagePacket>>(identifier(), body.getIdentifier(), connection);
+                ServerPeerConnection<Connection<? super MessagePacket>> peer = ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier(), body.getIdentifier(), connection);
                 connection.unregister(this);
                 put(peer);
             } else {
