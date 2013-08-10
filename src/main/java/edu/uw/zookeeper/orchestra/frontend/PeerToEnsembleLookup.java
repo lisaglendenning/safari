@@ -1,7 +1,10 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentMap;
+
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -13,6 +16,7 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.CachedLookupService;
 import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -40,10 +44,13 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
     
     public static PeerToEnsembleLookup newInstance(
             Materializer<?> materializer) {
-        CachedLookup<Identifier, Identifier> cache = 
+        ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
+        CachedLookup<Identifier, Identifier> lookup = 
                 CachedLookup.create(
-                        ControlSchema.Peers.Entity.lookupEnsemble(materializer));
-        return newInstance(materializer, cache);
+                        cache,
+                        SharedLookup.create(
+                                ControlSchema.Peers.Entity.lookupEnsemble(materializer)));
+        return newInstance(materializer, lookup);
     }
     
     public static PeerToEnsembleLookup newInstance(

@@ -20,10 +20,10 @@ import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
-import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.CachedLookupService;
 import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -57,8 +57,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         final ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
         CachedLookup<Identifier, Identifier> lookup = CachedLookup.create(
                 cache,
-                CachedFunction.create(
-                        CachedLookup.newLookup(cache),
+                SharedLookup.create(
                         new AsyncFunction<Identifier, Identifier>() {
                             @Override
                             public ListenableFuture<Identifier> apply(final Identifier volume)

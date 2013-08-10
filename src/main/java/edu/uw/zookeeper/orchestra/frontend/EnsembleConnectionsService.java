@@ -3,7 +3,6 @@ package edu.uw.zookeeper.orchestra.frontend;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import javax.annotation.Nullable;
 
@@ -11,7 +10,6 @@ import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
-import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
@@ -31,6 +29,7 @@ import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
+import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
@@ -85,8 +84,10 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
             ClientPeerConnections<?> peerConnections,
             ControlMaterializerService<?> control,
             ServiceLocator locator) {
-        SelectedPeers selectedPeers = SelectedPeers.create(
-                SelectSelfTask.create(myId, myEnsemble, control.materializer()));
+        CachedLookup<Identifier, Identifier> selectedPeers = 
+                CachedLookup.create(
+                        SelectSelfTask.create(
+                                myId, myEnsemble, control.materializer()));
         return new EnsembleConnectionsService(
                 selectedPeers,
                 peerToEnsemble,
@@ -97,12 +98,12 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     
     protected final ControlMaterializerService<?> control;
     protected final ClientPeerConnections<?> peerConnections;
-    protected final SelectedPeers selectedPeers;
+    protected final CachedLookup<Identifier, Identifier> selectedPeers;
     protected final EnsembleConnections ensembleConnections;
     protected final Function<Identifier, Identifier> peerToEnsemble;
     
-    public EnsembleConnectionsService(
-            SelectedPeers selectedPeers,
+    protected EnsembleConnectionsService(
+            CachedLookup<Identifier, Identifier> selectedPeers,
             Function<Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections<?> peerConnections,
             ControlMaterializerService<?> control,
@@ -194,48 +195,6 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         }
     }
 
-    public static class SelectedPeers extends CachedLookup<Identifier, Identifier> {
-    
-        public static SelectedPeers create(
-                AsyncFunction<Identifier, Identifier> async) {
-            ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
-            return create(cache, async);
-        }
-        
-        public static SelectedPeers create(
-                final ConcurrentMap<Identifier, Identifier> cache,
-                final AsyncFunction<Identifier, Identifier> async) {
-            CachedFunction<Identifier, Identifier> lookup = 
-                    CachedFunction.create(
-                            CachedLookup.newLookup(cache),
-                            new AsyncFunction<Identifier, Identifier>() {
-                                @Override
-                                public ListenableFuture<Identifier> apply(
-                                        final Identifier ensemble) throws Exception {
-                                    return Futures.transform(
-                                            async.apply(ensemble),
-                                            new Function<Identifier, Identifier>() {
-                                                @Override
-                                                public @Nullable Identifier apply(@Nullable Identifier peer) {
-                                                    if (peer != null) {
-                                                        cache.putIfAbsent(ensemble, peer);
-                                                    }
-                                                    return cache.get(ensemble);
-                                                }
-                                            });
-                                }
-                                
-                            });
-            return new SelectedPeers(cache, lookup);
-        }
-        
-        protected SelectedPeers(
-                ConcurrentMap<Identifier, Identifier> cache,
-                CachedFunction<Identifier, Identifier> lookup) {
-            super(cache, lookup);
-        }
-    }
-
     public static class EnsembleConnections extends CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> {
     
         public static EnsembleConnections create(
@@ -254,15 +213,16 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                             }
                         }
                     }, 
-                    new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
-                        @Override
-                        public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
-                                Identifier ensemble) throws Exception {
-                            return Futures.transform(
-                                    peers.apply(ensemble),
-                                    connectFunction);
-                        }
-                    });
+                    SharedLookup.create(
+                            new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                                @Override
+                                public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
+                                        Identifier ensemble) throws Exception {
+                                    return Futures.transform(
+                                            peers.apply(ensemble),
+                                            connectFunction);
+                                }
+                            }));
         }
         
         protected EnsembleConnections(

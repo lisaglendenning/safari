@@ -1,13 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer;
 
 import java.net.SocketAddress;
-import java.util.concurrent.ConcurrentMap;
-
-import javax.annotation.Nullable;
-
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
-import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -19,8 +13,10 @@ import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
+import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.RunnablePromiseTask;
+import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
@@ -31,7 +27,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
     protected final Identifier identifier;
     protected final MessagePacket handshake;
     protected final CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> addressLookup;
-    protected final ConcurrentMap<Identifier, ConnectTask> lookups;
+    protected final CachedLookup<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> lookups;
     
     public ClientPeerConnections(
             Identifier identifier,
@@ -41,7 +37,23 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         this.identifier = identifier;
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
         this.addressLookup = lookup;
-        this.lookups = new MapMaker().makeMap();
+        this.lookups = CachedLookup.create(
+                peers, 
+                SharedLookup.create(
+                        new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                            @Override
+                            public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
+                                    Identifier peer) throws Exception {
+                                ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> lookupFuture = addressLookup.apply(peer);
+                                ConnectionTask connection = new ConnectionTask(lookupFuture);
+                                try {
+                                    return new ConnectTask(peer, connection);
+                                } catch (Exception e) {
+                                    connection.cancel(true);
+                                    throw e;
+                                }
+                            }
+                        }));
     }
 
     @Override
@@ -59,53 +71,16 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         return connect(((IdentifierSocketAddress) remoteAddress).getIdentifier());
     }
 
-    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connect(Identifier identifier) {
-        ClientPeerConnection<Connection<? super MessagePacket>> connection = get(identifier);
-        if (connection != null) {
-            return Futures.immediateFuture(connection);
-        } else {
-            ConnectTask connectTask = lookups.get(identifier);
-            if (connectTask != null) {
-                return connectTask;
-            } else {
-                try {
-                    ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> lookupFuture = addressLookup.apply(identifier);
-                    ConnectionTask connectionTask = new ConnectionTask(lookupFuture);
-                    try {
-                        connectTask = new ConnectTask(identifier, connectionTask);
-                        ConnectTask prev = lookups.putIfAbsent(identifier, connectTask);
-                        if (prev == null) {
-                            Futures.addCallback(connectionTask, connectTask);
-                        } else {
-                            connectTask.cancel(true);
-                            connectTask = prev;
-                        }
-                        return connectTask;
-                    } catch (Exception e) {
-                        connectionTask.cancel(true);
-                        throw e;
-                    }
-                } catch (Exception e) {
-                    return Futures.immediateFailedFuture(e);
-                }
-            }
+    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connect(Identifier peer) {
+        try {
+            return asLookup().apply(peer);
+        } catch (Exception e) {
+            return Futures.immediateFailedFuture(e);
         }
     }
 
     public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> asLookup() {
-        return CachedFunction.create(
-                new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
-                    @Override
-                    public @Nullable ClientPeerConnection<Connection<? super MessagePacket>> apply(Identifier ensemble) {
-                        return get(ensemble);
-                    }                    
-                }, 
-                new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
-                    @Override
-                    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(Identifier ensemble) {
-                        return connect(ensemble);
-                    }
-                });
+        return lookups.asLookup();
     }
 
     protected ListenableFuture<MessagePacket> handshake(ClientPeerConnection<Connection<? super MessagePacket>> peer) {
@@ -125,7 +100,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         }
         return prev;
     }
-    
+
     protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ControlSchema.Peers.Entity.PeerAddress>, C> implements FutureCallback<C> {
         
         protected ListenableFuture<C> future;
@@ -141,7 +116,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
             super(task, delegate);
             this.future = null;
             
-            task.addListener(this, MoreExecutors.sameThreadExecutor());
+            task().addListener(this, MoreExecutors.sameThreadExecutor());
         }
         
         @Override
@@ -213,6 +188,8 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
                 Promise<ClientPeerConnection<Connection<? super MessagePacket>>> delegate) {
             super(task, delegate);
             this.connection = connection;
+            
+            Futures.addCallback(connection, this);
         }
         
         @Override
@@ -220,7 +197,6 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
                 connection.cancel(mayInterruptIfRunning);
-                lookups.remove(task(), this);
             }
             return cancel;
         }
@@ -237,21 +213,9 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
             } else {
                 set = super.set(result);
             }
-            if (set) {
-                lookups.remove(task(), this);
-            }
             return set;
         }
 
-        @Override
-        public boolean setException(Throwable t) {
-            boolean setException = super.setException(t);
-            if (setException) {
-                lookups.remove(task(), this);
-            }
-            return setException;
-        }
-        
         @Override
         public void onSuccess(C result) {
             try {
