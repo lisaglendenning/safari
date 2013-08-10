@@ -63,7 +63,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 EnsembleConfiguration ensemble,
                 ControlMaterializerService<?> control,
                 PeerToEnsembleLookup peerToEnsemble,
-                PeerConnectionsService<?> peerConnections,
+                ClientPeerConnections<?> peerConnections,
                 ServiceLocator locator,
                 DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
             return monitor.listen(
@@ -71,7 +71,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                             peer.getView().id(),
                             ensemble.getEnsemble(),
                             peerToEnsemble.get().asLookup().first(),
-                            peerConnections.clients(), 
+                            peerConnections, 
                             control, 
                             locator));
         }

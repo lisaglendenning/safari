@@ -116,6 +116,18 @@ public class PeerConnectionsService<T> extends AbstractIdleService {
             monitor.addOnStart(instance);
             return instance;
         }
+
+        @Provides @Singleton
+        public ClientPeerConnections<?> getClientPeerConnections(
+                PeerConnectionsService<?> service) {
+            return service.clients();
+        }
+
+        @Provides @Singleton
+        public ServerPeerConnections<?> getServerPeerConnections(
+                PeerConnectionsService<?> service) {
+            return service.servers();
+        }
     }
     
     public static <C extends Connection<? super MessagePacket>> PeerConnectionsService<C> newInstance(

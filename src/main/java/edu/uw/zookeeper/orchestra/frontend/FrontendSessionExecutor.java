@@ -204,9 +204,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 throw Throwables.propagate(e);
             }
         } else {
-            if (logger.isTraceEnabled()) {
-                logger.trace("Submitting {}", message);
-            }
+            logger.trace("Submitting {}", message);
             super.send(message);
             message.addListener(this, MoreExecutors.sameThreadExecutor());
         }
@@ -215,17 +213,21 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     @Subscribe
     public void handleTransition(Pair<Identifier, Automaton.Transition<?>> event) {
         if (state() == State.TERMINATED) {
-            // FIXME
-            throw new IllegalStateException();
+            return;
         }
         Identifier ensemble = backends.getEnsembleForPeer().apply(event.first());
         BackendSessionExecutor backend = backends.get().get(ensemble);
-        if (backend != null) {
-            backend.handleTransition(event.second());
-        } else {
-            throw new AssertionError(ensemble);
+        if (backend == null) {
+            return;
         }
-        if (Connection.State.CONNECTION_CLOSED == event.second().to()) {
+        backend.handleTransition(event.second());
+        
+        if (backend.state() == State.TERMINATED) {
+            // FIXME
+            throw new UnsupportedOperationException();
+        }
+        if ((Connection.State.CONNECTION_CLOSING == event.second().to()) 
+                || (Connection.State.CONNECTION_CLOSED == event.second().to())) {
             // FIXME
             throw new UnsupportedOperationException();
         }
@@ -234,17 +236,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     @Subscribe
     public void handleResponse(Pair<Identifier, ShardedResponseMessage<?>> message) {
         if (state() == State.TERMINATED) {
-            // FIXME
-            throw new IllegalStateException();
+            return;
         }
         Identifier ensemble = backends.getEnsembleForPeer().apply(message.first());
         BackendSessionExecutor backend = backends.get().get(ensemble);
-        if (backend != null) {
-            backend.handleResponse(message.second());
-        } else {
-            throw new AssertionError(ensemble);
+        if (backend == null) {
+            return;
         }
-        run();
+        backend.handleResponse(message.second());
     }
 
     @Override
@@ -300,6 +299,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         while ((next = mailbox.poll()) != null) {
             next.cancel(true);
         }
+        // FIXME stop backends
     }
 
     protected static class Lookups<I,O> extends Pair<CachedFunction<I,O>, ConcurrentMap<I, ListenableFuture<O>>> {
@@ -430,6 +430,18 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         public int getXid() {
             return task().getXid();
         }
+
+        @Override
+        public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+            boolean cancel = super.cancel(mayInterruptIfRunning);
+            if (cancel) {
+                OperationFuture.State state = state();
+                if (OperationFuture.State.COMPLETE.compareTo(state) > 0) {
+                    this.state.compareAndSet(state, OperationFuture.State.COMPLETE);
+                }
+            }
+            return cancel;
+        }
         
         @Override
         public boolean set(Message.ServerResponse<?> result) {
@@ -444,6 +456,20 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             }
 
             return super.set(result);
+        }
+        
+        @Override
+        public boolean setException(Throwable t) {
+            OperationFuture.State state = state();
+            if (OperationFuture.State.COMPLETE.compareTo(state) > 0) {
+                this.state.compareAndSet(state, OperationFuture.State.COMPLETE);
+            }
+            
+            if (t instanceof KeeperException) {
+                return complete(new IErrorResponse(((KeeperException) t).code()));
+            } else {
+                return super.setException(t);
+            }
         }
         
         @Override
@@ -475,7 +501,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     break;
                 }
                 default:
-                    break;
+                    throw new AssertionError(this);
                 }
                 if (result != null) {
                     complete(result);
@@ -484,7 +510,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             return this;
         }
         
-        protected boolean complete(Records.Response result) {
+        protected synchronized boolean complete(Records.Response result) {
             if (isDone()) {
                 return false;
             }
@@ -515,7 +541,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
         
         @Override
-        public State call() throws Exception {
+        public synchronized State call() throws Exception {
             State state = state();
             switch (state) {
             case WAITING:
@@ -564,7 +590,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
 
         @Override
-        public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+        public boolean cancel(boolean mayInterruptIfRunning) {
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
                 for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
@@ -572,10 +598,39 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                         e.cancel(mayInterruptIfRunning);
                     }
                 }
+                pending.clear();
             }
             return cancel;
         }
 
+        @Override
+        public boolean set(Message.ServerResponse<?> result) {
+            boolean set = super.set(result);
+            if (set) {
+                for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
+                    for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                        e.cancel(true);
+                    }
+                }
+                pending.clear();
+            }
+            return set;
+        }
+        
+        @Override
+        public boolean setException(Throwable t) {
+            boolean setException = super.setException(t);
+            if (setException) {
+                for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
+                    for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                        e.cancel(true);
+                    }
+                }
+                pending.clear();
+            }
+            return setException;
+        }
+        
         @Override
         public synchronized State call() throws Exception {
             logger.entry(this);
@@ -802,6 +857,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                                 Pair.<OperationFuture<?>, ShardedRequestMessage<?>>create(this, shard.getValue()));
                     requests.add(task);
                     pending.add(task);
+                    task.addListener(FrontendSessionExecutor.this, executor);
                 }
             }
             return submitted;
@@ -827,7 +883,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 for (Map.Entry<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> e: submitted.entrySet()) {
                     BackendSessionExecutor.BackendRequestFuture request = Iterables.getOnlyElement(e.getValue());
                     if (! request.isDone()) {
-                        break;
+                        return this;
                     } else {
                         responses.put(
                                 e.getKey(), 
@@ -844,45 +900,50 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     IMultiRequest multi = (IMultiRequest) task().getRecord();
                     List<Records.MultiOpResponse> ops = Lists.newArrayListWithCapacity(multi.size());
                     for (Records.MultiOpRequest op: multi) {
-                        Volume v = null;
-                        Records.MultiOpResponse response = null;
-                        for (Map.Entry<Volume, ListIterator<Records.MultiOpRequest>> e: requests.entrySet()) {
-                            if (! e.getValue().hasNext()) {
+                        Pair<Volume, Records.MultiOpResponse> response = null;
+                        for (Map.Entry<Volume, ListIterator<Records.MultiOpRequest>> request: requests.entrySet()) {
+                            if (! request.getValue().hasNext()) {
                                 continue;
                             }
-                            if (! op.equals(e.getValue().next())) {
-                                e.getValue().previous();
+                            if (! op.equals(request.getValue().next())) {
+                                request.getValue().previous();
                                 continue;
                             }
+
+                            Volume v = request.getKey();
                             if ((response == null) 
-                                    || (v.getDescriptor().getRoot().prefixOf(
-                                            e.getKey().getDescriptor().getRoot()))) {
-                                v = e.getKey();
-                                response = responses.get(v).next();
+                                    || (response.first().getDescriptor().getRoot().prefixOf(
+                                            v.getDescriptor().getRoot()))) {
+                                response = Pair.create(v, responses.get(v).next());
                             }
                         }
                         assert (response != null);
-                        ops.add(response);
+                        ops.add(response.second());
                     }
                     result = new IMultiResponse(ops);
                 }
             } else {
                 Pair<Volume, BackendSessionExecutor.BackendRequestFuture> selected = null;
-                for (Map.Entry<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> e: submitted.entrySet()) {
-                    if (e.getValue().isEmpty()) {
-                        selected = null;
-                        break;
+                for (Map.Entry<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> requests: submitted.entrySet()) {
+                    Volume v = requests.getKey();
+                    if (requests.getValue().isEmpty()) {
+                        return this;
                     }
-                    boolean completed = true;
-                    for (BackendSessionExecutor.BackendRequestFuture request: e.getValue()) {
+                    for (BackendSessionExecutor.BackendRequestFuture request: requests.getValue()) {
                         if (! request.isDone()) {
-                            completed = false;
-                            break;
+                            return this;
                         } else {
+                            ShardedResponseMessage<?> response;
+                            try {
+                                response = request.get();
+                            } catch (ExecutionException e) {
+                                setException(e.getCause());
+                                return this;
+                            }
                             if (selected == null) {
-                               selected = Pair.create(e.getKey(), request);
-                           } else {
-                               if ((selected.second().get().getRecord() instanceof Operation.Error) || (request.get().getRecord() instanceof Operation.Error)) {
+                               selected = Pair.create(v, request);
+                            } else {
+                               if ((selected.second().get().getRecord() instanceof Operation.Error) || (response.getRecord() instanceof Operation.Error)) {
                                    if (task().getRecord().getOpcode() != OpCode.CLOSE_SESSION) {
                                        throw new UnsupportedOperationException();
                                    }
@@ -891,25 +952,19 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                                    // and only if the path is for a volume root
                                    // in that case, pick the response that came from the volume root
                                    if (selected.first().getDescriptor().getRoot().prefixOf(
-                                           e.getKey().getDescriptor().getRoot())) {
-                                       selected = Pair.create(e.getKey(), request);
+                                           v.getDescriptor().getRoot())) {
+                                       selected = Pair.create(v, request);
                                    }
                                }
                            }
                         }
                     }
-                    if (! completed) {
-                        selected = null;
-                        break;
-                    }
                 }
-                if (selected != null) {
-                    result = selected.second().get().getRecord();
-                }
+                assert (selected != null);
+                result = selected.second().get().getRecord();
             }
-            if (result != null) {
-                super.complete(result);
-            }
+            assert (result != null);
+            super.complete(result);
             return this;
         }
         

@@ -183,7 +183,8 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
         if (state() == State.TERMINATED) {
             return;
         }
-        if (Connection.State.CONNECTION_CLOSED == event.to()) {
+        if ((Connection.State.CONNECTION_CLOSING == event.to()) 
+                || (Connection.State.CONNECTION_CLOSED == event.to())) {
             KeeperException.OperationTimeoutException e = new KeeperException.OperationTimeoutException();
             for (BackendRequestFuture next: mailbox) {
                 if (! next.isDone()) {
