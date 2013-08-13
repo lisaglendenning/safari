@@ -20,39 +20,21 @@ import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.InjectorServiceLocator;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
-import edu.uw.zookeeper.server.SimpleServerConnections;
-import edu.uw.zookeeper.server.SimpleServerExecutor;
 
 @RunWith(JUnit4.class)
 public class ControlTest {
     
     public static class MainModule extends AbstractModule {
     
-        protected final SimpleServerExecutor serverExecutor;
-        protected final SimpleServerConnections serverConnections;
-
-        public MainModule() { 
-            this.serverExecutor = SimpleServerExecutor.newInstance();
-            this.serverConnections = SimpleServerConnections.newInstance(serverExecutor.getTasks());
+        public MainModule() {
         }
     
         @Override
         protected void configure() {
             bind(ServiceLocator.class).to(InjectorServiceLocator.class).in(Singleton.class);
-            
-            install(SimpleControlMaterializer.create(getServerConnections()));
+            install(SimpleControlMaterializer.create());
         }
         
-        @Provides @Singleton
-        public SimpleServerExecutor getServerExecutor() {
-            return serverExecutor;
-        }
-
-        @Provides @Singleton
-        public SimpleServerConnections getServerConnections() {
-            return serverConnections;
-        }
-
         @Provides @Singleton
         public ServiceMonitor getServiceMonitor() {
             return ServiceMonitor.newInstance();
@@ -69,7 +51,7 @@ public class ControlTest {
     }
 
     @Singleton
-    @DependsOn({SimpleServerConnections.class, ControlMaterializerService.class})
+    @DependsOn({SimpleControlServer.class, ControlMaterializerService.class})
     public static class MainService extends DependentService {
 
         protected final ServiceLocator locator;

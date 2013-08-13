@@ -5,23 +5,20 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.server.SimpleServerConnections;
-
 public class SimpleControlMaterializer extends AbstractModule {
 
-    public static SimpleControlMaterializer create(SimpleServerConnections server) {
-        return new SimpleControlMaterializer(server);
+    public static SimpleControlMaterializer create() {
+        return new SimpleControlMaterializer();
     }
     
-    protected final SimpleServerConnections server;
-    
-    public SimpleControlMaterializer(SimpleServerConnections server) {
-        this.server = server;
+    public SimpleControlMaterializer() {
     }
     
     @Override
     protected void configure() {
-        install(getControlConnectionsModule());
+        install(SimpleControlServer.module());
+        install(SimpleControlConfiguration.create());
+        install(SimpleControlConnections.create());
         TypeLiteral<ControlMaterializerService<?>> generic = new TypeLiteral<ControlMaterializerService<?>>(){};
         bind(ControlMaterializerService.class).to(generic);
     }
@@ -30,9 +27,5 @@ public class SimpleControlMaterializer extends AbstractModule {
     public ControlMaterializerService<?> getControlClientService(
             ControlConnectionsService<?> connections) {
         return ControlMaterializerService.newInstance(connections);
-    }
-    
-    protected com.google.inject.Module getControlConnectionsModule() {
-        return SimpleControlConnections.create(server);
     }
 }

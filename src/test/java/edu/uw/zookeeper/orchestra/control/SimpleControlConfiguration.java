@@ -11,19 +11,14 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.TimeValue;
-import edu.uw.zookeeper.net.ServerConnectionFactory;
 
 public class SimpleControlConfiguration extends AbstractModule {
 
-    public static SimpleControlConfiguration create(
-            ServerConnectionFactory<?> server) {
-        return new SimpleControlConfiguration(server);
+    public static SimpleControlConfiguration create() {
+        return new SimpleControlConfiguration();
     }
     
-    protected final ServerConnectionFactory<?> server;
-    
-    public SimpleControlConfiguration(ServerConnectionFactory<?> server) {
-        this.server = server;
+    public SimpleControlConfiguration() {
     }
 
     @Override
@@ -31,9 +26,10 @@ public class SimpleControlConfiguration extends AbstractModule {
     }
 
     @Provides @Singleton
-    public ControlConfiguration getControlConfiguration() {
+    public ControlConfiguration getControlConfiguration(
+            SimpleControlServer server) {
         EnsembleView<ServerInetAddressView> ensemble = 
-                EnsembleView.of(ServerInetAddressView.of((InetSocketAddress) server.listenAddress()));
+                EnsembleView.of(ServerInetAddressView.of((InetSocketAddress) server.getConnections().connections().listenAddress()));
         TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, TimeUnit.MILLISECONDS);
         return new ControlConfiguration(ensemble, timeOut);
     }
