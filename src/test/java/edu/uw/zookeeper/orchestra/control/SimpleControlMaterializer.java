@@ -16,8 +16,7 @@ public class SimpleControlMaterializer extends AbstractModule {
     
     @Override
     protected void configure() {
-        install(SimpleControlServer.module());
-        install(SimpleControlConfiguration.create());
+        install(SimpleControlConfiguration.module());
         install(SimpleControlConnections.create());
         TypeLiteral<ControlMaterializerService<?>> generic = new TypeLiteral<ControlMaterializerService<?>>(){};
         bind(ControlMaterializerService.class).to(generic);

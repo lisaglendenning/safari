@@ -9,15 +9,12 @@ import org.junit.runners.JUnit4;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
-import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
-import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.InjectorServiceLocator;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 
@@ -39,41 +36,17 @@ public class ControlTest {
         public ServiceMonitor getServiceMonitor() {
             return ServiceMonitor.newInstance();
         }
-        
-        @Provides @Singleton
-        public MainService getMainService(
-                DependentServiceMonitor monitor,
-                ServiceLocator locator) {
-            MainService main = monitor.listen(new MainService(locator));
-            monitor.get().add(main);
-            return main;
-        }
     }
 
-    @Singleton
-    @DependsOn({SimpleControlServer.class, ControlMaterializerService.class})
-    public static class MainService extends DependentService {
-
-        protected final ServiceLocator locator;
-        
-        @Inject
-        public MainService(ServiceLocator locator) {
-            this.locator = locator;
-        }
-
-        @Override
-        protected ServiceLocator locator() {
-            return locator;
-        }
-    }
-    
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         MainModule module = new MainModule();
         Injector injector = Guice.createInjector(module);
-        injector.getInstance(MainService.class);
-        injector.getInstance(ServiceMonitor.class).start().get();
+        DependentServiceMonitor monitor = injector.getInstance(DependentServiceMonitor.class);
+        monitor.get().add(injector.getInstance(SimpleControlConfiguration.class).getServer());
+        monitor.get().add(monitor.listen(injector.getInstance(ControlMaterializerService.class)));
+        monitor.get().start().get();
 
-        injector.getInstance(ServiceMonitor.class).stop().get();
+        monitor.get().stop().get();
     }
 }

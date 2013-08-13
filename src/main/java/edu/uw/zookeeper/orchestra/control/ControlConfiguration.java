@@ -11,7 +11,7 @@ import edu.uw.zookeeper.common.TimeValue;
 
 public class ControlConfiguration {
  
-    public static Module module() {
+    public static com.google.inject.Module module() {
         return new Module();
     }
     
