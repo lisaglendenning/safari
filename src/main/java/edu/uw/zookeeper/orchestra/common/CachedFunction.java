@@ -7,15 +7,15 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Pair;
 
-public class CachedFunction<I,O> extends Pair<Function<I,O>, AsyncFunction<I,O>> implements AsyncFunction<I,O> {
+public class CachedFunction<I,O> extends Pair<Function<? super I,O>, AsyncFunction<? super I,O>> implements AsyncFunction<I,O> {
 
     public static <I,O> CachedFunction<I,O> create(
-            Function<I,O> first, AsyncFunction<I,O> second) {
+            Function<? super I,O> first, AsyncFunction<? super I,O> second) {
         return new CachedFunction<I,O>(first, second);
     }
     
     public CachedFunction(
-            Function<I,O> first, AsyncFunction<I,O> second) {
+            Function<? super I,O> first, AsyncFunction<? super I,O> second) {
         super(first, second);
     }
 

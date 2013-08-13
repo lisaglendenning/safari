@@ -34,6 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ExecutorActor;
 import edu.uw.zookeeper.common.LoggingPromise;
@@ -42,7 +43,6 @@ import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.Publisher;
-import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.CreateFlag;
@@ -50,9 +50,11 @@ import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
+import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.LinkedIterator;
 import edu.uw.zookeeper.orchestra.common.LinkedQueue;
+import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
@@ -79,7 +81,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
-            Function<Identifier, Identifier> ensembleForPeer,
+            Function<? super Identifier, Identifier> ensembleForPeer,
             CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
             Executor executor) {
         return new FrontendSessionExecutor(session, publisher, processor, volumeLookup, assignmentLookup, ensembleForPeer, connectionLookup, executor);
@@ -92,8 +94,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     protected final LinkedQueue<FrontendRequestFuture> mailbox;
     protected final Publisher publisher;
     protected final Session session;
-    protected final Lookups<ZNodeLabel.Path, Volume> volumes;
-    protected final Lookups<Identifier, Identifier> assignments;
+    protected final CachedFunction<ZNodeLabel.Path, Volume> volumes;
+    protected final CachedFunction<Identifier, Identifier> assignments;
     protected final BackendLookups backends;
     protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
     // not thread safe
@@ -103,9 +105,9 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             Session session,
             Publisher publisher,
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
-            CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
-            CachedFunction<Identifier, Identifier> assignmentLookup,
-            Function<Identifier, Identifier> ensembleForPeer,
+            CachedFunction<ZNodeLabel.Path, Volume> volumes,
+            CachedFunction<Identifier, Identifier> assignments,
+            Function<? super Identifier, Identifier> ensembleForPeer,
             CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
             Executor executor) {
         super();
@@ -115,14 +117,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         this.publisher = publisher;
         this.session = session;
         this.processor = processor;
-        this.volumes = new Lookups<ZNodeLabel.Path, Volume>(
-                volumeLookup, 
-                this,
-                MoreExecutors.sameThreadExecutor());
-        this.assignments = new Lookups<Identifier, Identifier>(
-                assignmentLookup, 
-                this,
-                MoreExecutors.sameThreadExecutor());
+        this.volumes = CachedFunction.create(
+                volumes.first(),
+                RunnableLookup.create(
+                        volumes.second(), this, MoreExecutors.sameThreadExecutor()));
+        this.assignments = CachedFunction.create(
+                assignments.first(),
+                RunnableLookup.create(
+                        assignments.second(), this, MoreExecutors.sameThreadExecutor()));
         this.backends = new BackendLookups(ensembleForPeer, connectionLookup);
         this.finger = mailbox.iterator();
     }
@@ -162,11 +164,11 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         return session;
     }
     
-    protected Lookups<ZNodeLabel.Path, Volume> volumes() {
+    protected CachedFunction<ZNodeLabel.Path, Volume> volumes() {
         return volumes;
     }
     
-    protected Lookups<Identifier, Identifier> assignments() {
+    protected CachedFunction<Identifier, Identifier> assignments() {
         return assignments;
     }
     
@@ -216,7 +218,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             return;
         }
         Identifier ensemble = backends.getEnsembleForPeer().apply(event.first());
-        BackendSessionExecutor backend = backends.get().get(ensemble);
+        BackendSessionExecutor backend = backends.asCache().get(ensemble);
         if (backend == null) {
             return;
         }
@@ -239,7 +241,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             return;
         }
         Identifier ensemble = backends.getEnsembleForPeer().apply(message.first());
-        BackendSessionExecutor backend = backends.get().get(ensemble);
+        BackendSessionExecutor backend = backends.asCache().get(ensemble);
         if (backend == null) {
             return;
         }
@@ -302,115 +304,134 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         // FIXME stop backends
     }
 
-    protected static class Lookups<I,O> extends Pair<CachedFunction<I,O>, ConcurrentMap<I, ListenableFuture<O>>> {
+    protected static class RunnableLookup<I,O> implements AsyncFunction<I,O> {
     
-        protected final Runnable runnable;
-        protected final Executor executor;
-        
-        public Lookups(
-                CachedFunction<I, O> first,
+        public static <I,O> RunnableLookup<I,O> create(
+                AsyncFunction<I,O> delegate,
                 Runnable runnable,
                 Executor executor) {
-            super(first, new MapMaker().<I, ListenableFuture<O>>makeMap());
-            this.runnable = runnable;
-            this.executor = executor;
+            return new RunnableLookup<I,O>(delegate, runnable, executor);
         }
         
-        public ListenableFuture<O> apply(I input) throws Exception {
-            O output = first().first().apply(input);
-            if (output != null) {
-                return Futures.immediateFuture(output);
-            } else {
-                ListenableFuture<O> future = second().get(input);
-                if (future == null) {
-                    future = first().apply(input);
-                    ListenableFuture<O> prev = second().putIfAbsent(input, future);
-                    if (prev != null) {
-                        future.cancel(true);
-                        future = prev;
-                    } else {
-                        future.addListener(runnable, executor);
-                    }
-                }
-                // TODO: if future was processed...?
-                return future;
+        protected final AsyncFunction<I,O> delegate;
+        protected final Runnable runnable;
+        protected final Executor executor;
+        protected final Set<ListenableFuture<O>> futures;
+        
+        public RunnableLookup(
+                AsyncFunction<I,O> delegate,
+                Runnable runnable,
+                Executor executor) {
+            this.delegate = delegate;
+            this.runnable = runnable;
+            this.executor = executor;
+            this.futures = Sets.newHashSet();
+        }
+        
+        public synchronized ListenableFuture<O> apply(I input) throws Exception {
+            ListenableFuture<O> future = delegate.apply(input);
+            if (!future.isDone() && !futures.contains(future)) {
+                new Listener(future);
+            }
+            return future;
+        }
+        
+        protected synchronized boolean remove(ListenableFuture<O> future) {
+            return futures.remove(future);
+        }
+        
+        protected class Listener implements Runnable {
+
+            protected final ListenableFuture<O> future;
+            
+            public Listener(ListenableFuture<O> future) {
+                this.future = future;
+                futures.add(future);
+                future.addListener(runnable, executor);
+                future.addListener(this, MoreExecutors.sameThreadExecutor());
+            }
+            
+            @Override
+            public void run() {
+                remove(future);
             }
         }
     }
 
     // TODO handle disconnects and reconnects
-    protected class BackendLookups extends Lookups<Identifier, BackendSessionExecutor> implements Reference<ConcurrentMap<Identifier, BackendSessionExecutor>> {
+    protected class BackendLookups extends CachedLookup<Identifier, BackendSessionExecutor> {
     
-        protected final ConcurrentMap<Identifier, BackendSessionExecutor> backendSessions;
         protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
-        protected final Function<Identifier, Identifier> ensembleForPeer;
+        protected final Function<? super Identifier, Identifier> ensembleForPeer;
         
         public BackendLookups(
-                Function<Identifier, Identifier> ensembleForPeer,
+                Function<? super Identifier, Identifier> ensembleForPeer,
                 CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup) {
             this(ensembleForPeer, connectionLookup, 
                     new MapMaker().<Identifier, BackendSessionExecutor>makeMap());
         }
         
         public BackendLookups(
-                final Function<Identifier, Identifier> ensembleForPeer,
+                final Function<? super Identifier, Identifier> ensembleForPeer,
                 final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
-                final ConcurrentMap<Identifier, BackendSessionExecutor> backendSessions) {
-            super(CachedFunction.create(
-                    new Function<Identifier, BackendSessionExecutor>() {
-                        @Override
-                        public BackendSessionExecutor apply(Identifier ensemble) {
-                            return backendSessions.get(ensemble);
-                        }
-                    }, 
-                    new AsyncFunction<Identifier, BackendSessionExecutor>() {
-                        @Override
-                        public ListenableFuture<BackendSessionExecutor> apply(Identifier ensemble) throws Exception {
-                            final EstablishBackendSessionTask task = new EstablishBackendSessionTask(
-                                    session(),
-                                    Optional.<Session>absent(),
-                                    ensemble, 
-                                    connectionLookup.apply(ensemble),
-                                    SettableFuturePromise.<Session>create());
-                            final FrontendSessionExecutor self = FrontendSessionExecutor.this;
-                            return Futures.transform(
-                                    task, 
-                                    new Function<Session, BackendSessionExecutor>() {
-                                        @Override
-                                        @Nullable
-                                        public BackendSessionExecutor apply(Session input) {
-                                            BackendSessionExecutor backend = BackendSessionExecutor.create(
-                                                    self.session().id(), 
-                                                    task.task(),
-                                                    Futures.getUnchecked(task),
-                                                    Futures.getUnchecked(task.connection()),
-                                                    self,
-                                                    MoreExecutors.sameThreadExecutor());
-                                            BackendSessionExecutor prev = backendSessions.putIfAbsent(backend.getEnsemble(), backend);
-                                            if (prev != null) {
-                                                // TODO
-                                                throw new AssertionError();
-                                            }
-                                            return backend;
-                                        }
-                                        
-                                    });
-                        }
-                    }),
-                    FrontendSessionExecutor.this,
-                    MoreExecutors.sameThreadExecutor());
+                final ConcurrentMap<Identifier, BackendSessionExecutor> cache) {
+            super(cache, CachedFunction.create(
+                        new Function<Identifier, BackendSessionExecutor>() {
+                             @Override
+                             public BackendSessionExecutor apply(Identifier ensemble) {
+                                 BackendSessionExecutor value = cache.get(ensemble);
+                                 if ((value != null) && (value.state().compareTo(Actor.State.TERMINATED) < 0)) {
+                                     return value;
+                                 } else {
+                                     return null;
+                                 }
+                             }
+                        },
+                        RunnableLookup.create(SharedLookup.create(
+                            new AsyncFunction<Identifier, BackendSessionExecutor>() {
+                                @Override
+                                public ListenableFuture<BackendSessionExecutor> apply(Identifier ensemble) throws Exception {
+                                    final BackendSessionExecutor prev = cache.get(ensemble);
+                                    Optional<Session> session = (prev == null) ? 
+                                            Optional.<Session>absent() : 
+                                                Optional.of(prev.getSession());
+                                    final EstablishBackendSessionTask task = new EstablishBackendSessionTask(
+                                            session(),
+                                            session,
+                                            ensemble, 
+                                            connectionLookup.apply(ensemble),
+                                            SettableFuturePromise.<Session>create());
+                                    final FrontendSessionExecutor self = FrontendSessionExecutor.this;
+                                    return Futures.transform(
+                                            task, 
+                                            new Function<Session, BackendSessionExecutor>() {
+                                                @Override
+                                                @Nullable
+                                                public BackendSessionExecutor apply(Session input) {
+                                                    BackendSessionExecutor backend = BackendSessionExecutor.create(
+                                                            self.session().id(), 
+                                                            task.task(),
+                                                            input,
+                                                            Futures.getUnchecked(task.connection()),
+                                                            self,
+                                                            MoreExecutors.sameThreadExecutor());
+                                                    BackendSessionExecutor prev = cache.put(backend.getEnsemble(), backend);
+                                                    if (prev != null) {
+                                                        assert (prev.state() == Actor.State.TERMINATED);
+                                                    }
+                                                    return backend;
+                                                }
+                                            });
+                                }
+                            }), 
+                            FrontendSessionExecutor.this, 
+                            MoreExecutors.sameThreadExecutor())));
             this.ensembleForPeer = ensembleForPeer;
             this.connectionLookup = connectionLookup;
-            this.backendSessions = backendSessions;
         }
         
-        public Function<Identifier, Identifier> getEnsembleForPeer() {
+        public Function<? super Identifier, Identifier> getEnsembleForPeer() {
             return ensembleForPeer;
-        }
-        
-        @Override
-        public ConcurrentMap<Identifier, BackendSessionExecutor> get() {
-            return backendSessions;
         }
     }
 
@@ -761,9 +782,9 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             for (Volume v: volumes) {
                 if (v.equals(Volume.none())) {
                     boolean done = true;
-                    Set<BackendSessionExecutor> all = Sets.newHashSetWithExpectedSize(backends().get().size());
-                    for (Identifier ensemble: backends().get().keySet()) {
-                        ListenableFuture<BackendSessionExecutor> backend = backends().apply(ensemble);
+                    Set<BackendSessionExecutor> all = Sets.newHashSetWithExpectedSize(backends().asCache().size());
+                    for (Identifier ensemble: backends().asCache().keySet()) {
+                        ListenableFuture<BackendSessionExecutor> backend = backends().asLookup().apply(ensemble);
                         if (backend.isDone()) {
                             all.add(backend.get());
                         } else {
@@ -781,7 +802,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                     ListenableFuture<Identifier> assignment = assignments().apply(v.getId());
                     if (assignment.isDone()) {
                         Identifier ensemble = assignment.get();
-                        ListenableFuture<BackendSessionExecutor> backend = backends().apply(ensemble);
+                        ListenableFuture<BackendSessionExecutor> backend = backends().asLookup().apply(ensemble);
                         if (backend.isDone()) {
                             backends.put(v, ImmutableSet.of(backend.get()));
                         } else {

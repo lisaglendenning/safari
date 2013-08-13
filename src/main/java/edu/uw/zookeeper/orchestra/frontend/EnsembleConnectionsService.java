@@ -80,7 +80,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     public static EnsembleConnectionsService newInstance(
             Identifier myId,
             Identifier myEnsemble,
-            Function<Identifier, Identifier> peerToEnsemble,
+            Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections<?> peerConnections,
             ControlMaterializerService<?> control,
             ServiceLocator locator) {
@@ -100,11 +100,11 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     protected final ClientPeerConnections<?> peerConnections;
     protected final CachedLookup<Identifier, Identifier> selectedPeers;
     protected final EnsembleConnections ensembleConnections;
-    protected final Function<Identifier, Identifier> peerToEnsemble;
+    protected final Function<? super Identifier, Identifier> peerToEnsemble;
     
     protected EnsembleConnectionsService(
             CachedLookup<Identifier, Identifier> selectedPeers,
-            Function<Identifier, Identifier> peerToEnsemble,
+            Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections<?> peerConnections,
             ControlMaterializerService<?> control,
             ServiceLocator locator) {

@@ -25,7 +25,6 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -86,24 +85,23 @@ public class VolumeCacheService extends AbstractIdleService {
                         return cache.get(input);
                     }
                 },
-                SharedLookup.create(
-                        new AsyncFunction<ZNodeLabel.Path, Volume>() {
+                new AsyncFunction<ZNodeLabel.Path, Volume>() {
+                    @Override
+                    public ListenableFuture<Volume> apply(
+                            final ZNodeLabel.Path path)
+                            throws Exception {
+                        // since we can't hash on an arbitrary path,
+                        // we must do a scan
+                        Processor<Object, Optional<Volume>> processor = new Processor<Object, Optional<Volume>>() {
                             @Override
-                            public ListenableFuture<Volume> apply(
-                                    final ZNodeLabel.Path path)
+                            public Optional<Volume> apply(Object input)
                                     throws Exception {
-                                // since we can't hash on an arbitrary path,
-                                // we must do a scan
-                                Processor<Object, Optional<Volume>> processor = new Processor<Object, Optional<Volume>>() {
-                                    @Override
-                                    public Optional<Volume> apply(Object input)
-                                            throws Exception {
-                                        return Optional.fromNullable(cache.get(path));
-                                    }
-                                };
-                                return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, client);
+                                return Optional.fromNullable(cache.get(path));
                             }
-                        }));
+                        };
+                        return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, client);
+                    }
+                });
     }
     
     public VolumeCache asCache() {

@@ -11,17 +11,17 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Pair;
 
-public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFunction<K,V>> implements AsyncFunction<K,V> {
+public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFunction<? super K,V>> implements AsyncFunction<K,V> {
     
     public static <K,V> AddToCacheLookup<K,V> create(
             ConcurrentMap<K,V> cache,
-            AsyncFunction<K,V> delegate) {
+            AsyncFunction<? super K,V> delegate) {
         return new AddToCacheLookup<K,V>(cache, delegate);
     }
     
     public AddToCacheLookup(
             ConcurrentMap<K,V> cache,
-            AsyncFunction<K,V> delegate) {
+            AsyncFunction<? super K,V> delegate) {
         super(cache, delegate);
     }
 

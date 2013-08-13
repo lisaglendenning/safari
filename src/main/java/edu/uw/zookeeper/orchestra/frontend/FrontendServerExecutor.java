@@ -334,7 +334,7 @@ public class FrontendServerExecutor extends DependentService {
         protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
         protected final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup;
         protected final CachedFunction<Identifier, Identifier> assignmentLookup;
-        protected final Function<Identifier, Identifier> ensembleForPeer;
+        protected final Function<? super Identifier, Identifier> ensembleForPeer;
         protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
         protected final Executor executor;
         
@@ -342,7 +342,7 @@ public class FrontendServerExecutor extends DependentService {
                 ConcurrentMap<Long, FrontendSessionExecutor> handlers,
                 CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
                 CachedFunction<Identifier, Identifier> assignmentLookup,
-                Function<Identifier, Identifier> ensembleForPeer,
+                Function<? super Identifier, Identifier> ensembleForPeer,
                 CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
                 ConnectTableProcessor connector,
                 Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
