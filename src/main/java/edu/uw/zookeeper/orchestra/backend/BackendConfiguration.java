@@ -55,7 +55,8 @@ public class BackendConfiguration {
         }
 
         @Provides @Singleton
-        public BackendConfiguration getBackendConfiguration(Configuration configuration) throws Exception {
+        public BackendConfiguration getBackendConfiguration(
+                Configuration configuration) throws Exception {
             ServerInetAddressView clientAddress = BackendAddressDiscovery.call(configuration);
             EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(configuration);
             TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);

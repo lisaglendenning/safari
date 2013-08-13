@@ -2,7 +2,7 @@ package edu.uw.zookeeper.orchestra.backend;
 
 import java.util.concurrent.ScheduledExecutorService;
 
-import com.google.common.util.concurrent.AbstractIdleService;
+import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -18,12 +18,13 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
+import edu.uw.zookeeper.orchestra.common.ForwardingService;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 
-public class BackendConnectionsService<C extends Connection<? super Operation.Request>> extends AbstractIdleService implements Factory<C> {
+public class BackendConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<C> {
 
     public static Module module() {
         return new Module();
@@ -88,12 +89,7 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
     }
     
     @Override
-    protected void startUp() throws Exception {
-        connections.second().start().get();
-    }
-
-    @Override
-    protected void shutDown() throws Exception {
-        connections.second().stop().get();
+    protected Service delegate() {
+        return connections.second();
     }
 }

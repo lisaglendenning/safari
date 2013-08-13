@@ -63,7 +63,7 @@ import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 
-@DependsOn({ControlMaterializerService.class, BackendConnectionsService.class})
+@DependsOn({BackendConnectionsService.class})
 public class BackendRequestService<C extends Connection<? super Operation.Request>> extends DependentService.SimpleDependentService {
 
     public static Module module() {

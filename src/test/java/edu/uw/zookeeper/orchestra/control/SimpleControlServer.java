@@ -1,15 +1,15 @@
 package edu.uw.zookeeper.orchestra.control;
 
-import com.google.common.util.concurrent.AbstractIdleService;
-import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.orchestra.common.ForwardingService;
 import edu.uw.zookeeper.server.SimpleServerConnections;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 
-public class SimpleControlServer extends AbstractIdleService {
+public class SimpleControlServer extends ForwardingService {
 
     public static Module module() {
         return new Module();
@@ -55,36 +55,7 @@ public class SimpleControlServer extends AbstractIdleService {
     }
 
     @Override
-    protected void startUp() throws Exception {
-        connections.addListener(new Listener() {
-
-            @Override
-            public void starting() {
-            }
-
-            @Override
-            public void running() {
-            }
-
-            @Override
-            public void stopping(State from) {
-                stop();
-            }
-
-            @Override
-            public void terminated(State from) {
-                stop();
-            }
-
-            @Override
-            public void failed(State from, Throwable failure) {
-                stop();
-            }}, MoreExecutors.sameThreadExecutor());
-        connections.start().get();
-    }
-
-    @Override
-    protected void shutDown() throws Exception {
-        connections.stop().get();
+    protected Service delegate() {
+        return connections;
     }
 }
