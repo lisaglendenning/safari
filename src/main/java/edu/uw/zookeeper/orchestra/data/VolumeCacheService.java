@@ -19,8 +19,10 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.data.Schema;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
@@ -28,6 +30,9 @@ import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.proto.OpCode;
+import edu.uw.zookeeper.protocol.proto.Records;
 
 public class VolumeCacheService extends AbstractIdleService {
 
@@ -67,15 +72,15 @@ public class VolumeCacheService extends AbstractIdleService {
     protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
-    protected final Materializer<?> client;
+    protected final Materializer<?> materializer;
     protected final VolumeCache cache;
     protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
     
     protected VolumeCacheService(
-            final Materializer<?> client,
+            final Materializer<?> materializer,
             final VolumeCache cache) {
         this.logger = LogManager.getLogger(getClass());
-        this.client = client;
+        this.materializer = materializer;
         this.cache = cache;
         this.lookup = CachedFunction.create(
                 new Function<ZNodeLabel.Path, Volume>() {
@@ -92,14 +97,34 @@ public class VolumeCacheService extends AbstractIdleService {
                             throws Exception {
                         // since we can't hash on an arbitrary path,
                         // we must do a scan
-                        Processor<Object, Optional<Volume>> processor = new Processor<Object, Optional<Volume>>() {
+                        Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>> processor = new Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>>() {
                             @Override
-                            public Optional<Volume> apply(Object input)
+                            public Optional<Volume> apply(Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>> input)
                                     throws Exception {
-                                return Optional.fromNullable(cache.get(path));
+                                Optional<Volume> result = Optional.fromNullable(cache.get(path));
+                                if (!result.isPresent() && input.isPresent()) {
+                                    Records.Request request = input.get().first();
+                                    if (request.getOpcode() == OpCode.GET_DATA) {
+                                        ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
+                                        Schema.SchemaNode schemaNode = ControlSchema.getInstance().get().match(requestPath);
+                                        if (schemaNode == ControlSchema.getInstance().byElement(ControlSchema.Volumes.Entity.Volume.class)) {
+                                            Materializer.MaterializedNode node = materializer.get(requestPath);
+                                            if ((node != null) && (node.get() != null)) {
+                                                VolumeDescriptor v = (VolumeDescriptor) node.get().get();
+                                                if ((v != null) && v.contains(path)) {
+                                                    Identifier id = Identifier.valueOf(((ZNodeLabel.Path) requestPath.head()).tail().toString());
+                                                    Volume volume = Volume.of(id, v);
+                                                    cache.put(volume);
+                                                    result = Optional.of(volume);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                return result;
                             }
                         };
-                        return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, client);
+                        return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, materializer);
                     }
                 });
     }
@@ -146,7 +171,7 @@ public class VolumeCacheService extends AbstractIdleService {
             return;
         }
         
-        Materializer.MaterializedNode node = client.get(path);
+        Materializer.MaterializedNode node = materializer.get(path);
         ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
         if (! VOLUMES_PATH.equals(pointer.get().path())) {
             Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());
@@ -165,9 +190,9 @@ public class VolumeCacheService extends AbstractIdleService {
     
     @Override
     protected void startUp() throws Exception {
-        client.register(this);
+        materializer.register(this);
         
-        Materializer.MaterializedNode volumes = client.get(VOLUMES_PATH);
+        Materializer.MaterializedNode volumes = materializer.get(VOLUMES_PATH);
         if (volumes != null) {
             for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
                 Identifier volumeId = Identifier.valueOf(child.getKey().toString());
@@ -187,6 +212,6 @@ public class VolumeCacheService extends AbstractIdleService {
 
     @Override
     protected void shutDown() throws Exception {
-        client.unregister(this);
+        materializer.unregister(this);
     }
 }

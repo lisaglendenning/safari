@@ -408,7 +408,7 @@ public abstract class Control {
     
         public static <U extends Operation.ProtocolResponse<?>, V> FetchUntil<U,V> newInstance(
                 ZNodeLabel.Path root, 
-                Processor<? super Optional<Pair<Records.Request, ListenableFuture<U>>>, Optional<V>> result, 
+                Processor<? super Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<V>> result, 
                 Materializer<U> materializer) {
             TreeFetcher<U,V> fetcher = TreeFetcher.<U,V>builder()
                     .setResult(result).setClient(materializer).setData(true).setWatch(true).build();
