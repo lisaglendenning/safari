@@ -213,7 +213,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                             }
                         }
                     }, 
-                    SharedLookup.create(
+                    SharedLookup.<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>create(
                             new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
                                 @Override
                                 public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(

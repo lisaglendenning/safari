@@ -369,7 +369,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 final Function<? super Identifier, Identifier> ensembleForPeer,
                 final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
                 final ConcurrentMap<Identifier, BackendSessionExecutor> cache) {
-            super(cache, CachedFunction.create(
+            super(cache, CachedFunction.<Identifier, BackendSessionExecutor>create(
                         new Function<Identifier, BackendSessionExecutor>() {
                              @Override
                              public BackendSessionExecutor apply(Identifier ensemble) {

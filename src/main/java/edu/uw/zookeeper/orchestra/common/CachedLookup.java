@@ -45,7 +45,7 @@ public class CachedLookup<K,V> extends AbstractPair<ConcurrentMap<K,V>, CachedFu
             AsyncFunction<? super K, V> async) {
         return new CachedLookup<K,V>(
                 cache, 
-                CachedFunction.create(
+                CachedFunction.<K,V>create(
                         CacheFunction.create(cache), 
                         async));
     }
