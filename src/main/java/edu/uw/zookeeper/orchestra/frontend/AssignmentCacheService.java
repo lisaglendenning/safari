@@ -157,6 +157,6 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
             }
         }
         
-        logger.info("Volume assignments: {}", cache);
+        logger.info("Volume assignments: {}", cache.asCache());
     }
 }

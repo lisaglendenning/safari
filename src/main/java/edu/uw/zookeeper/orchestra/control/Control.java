@@ -34,6 +34,7 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Schema;
+import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -104,7 +105,7 @@ public abstract class Control {
         }
 
         public static ZNodeLabel.Path path(Object parent, Object element) {
-            return ZNodeLabel.Path.of(path(element), label(element));
+            return ZNodeLabel.Path.of(path(parent), label(element));
         }
 
         public static ZNodeLabel.Path path(Object element) {
@@ -192,8 +193,8 @@ public abstract class Control {
             for (Constructor<?> c: cls.getDeclaredConstructors()) {
                 Class<?>[] parameterTypes = c.getParameterTypes();
                 if ((parameterTypes.length == 2) 
-                        && parameterTypes[0].isAssignableFrom(value.getClass())
-                        && parameterTypes[1].isAssignableFrom(parent.getClass())) {
+                        && ((value == null) || parameterTypes[0].isAssignableFrom(value.getClass()))
+                        && ((parent == null) || parameterTypes[1].isAssignableFrom(parent.getClass()))) {
                     try {
                         return (C) c.newInstance(value, parent);
                     } catch (Exception e) {
@@ -201,7 +202,7 @@ public abstract class Control {
                     }
                 }
             }
-            throw new AssertionError(Arrays.toString(cls.getDeclaredConstructors()));
+            throw new AssertionError(String.format("Unable to construct %s from (%s, %s)", cls, value, parent));
         }
 
         @SuppressWarnings("unchecked")
@@ -215,9 +216,12 @@ public abstract class Control {
                 public Optional<C> call() {
                     Materializer.MaterializedNode node = materializer.get(path);
                     if (node != null) {
-                        T value = (T) node.get();
-                        if (value != null) {
-                            return Optional.of(newInstance(cls, value, parent));
+                        StampedReference<?> stamped = node.get();
+                        if (stamped != null) {
+                            T value = (T) stamped.get();
+                            if (value != null) {
+                                return Optional.of(newInstance(cls, value, parent));
+                            }
                         }
                     }
                     return Optional.absent();
@@ -606,8 +610,12 @@ public abstract class Control {
         }
 
         @Override
-        public ListenableFuture<Optional<T>> apply(Identifier input) throws Exception {
-            return new CreateHashedEntityTask(ValueZNode.newInstance(schema.getEntityType(), input), SettableFuturePromise.<Optional<T>>create());
+        public ListenableFuture<Optional<T>> apply(Identifier input) {
+            CreateHashedEntityTask task = new CreateHashedEntityTask(
+                    ValueZNode.newInstance(schema.getEntityType(), input), 
+                    SettableFuturePromise.<Optional<T>>create());
+            task.run();
+            return task;
         }
 
         protected class CreateHashedEntityTask extends RunnablePromiseTask<T, Optional<T>> {
@@ -646,7 +654,7 @@ public abstract class Control {
                                         task().path()).get())
                                 .add(materializer.operator().create(
                                         path(task(), schema.getValueType()), 
-                                        task()).get())
+                                        CreateEntityTask.this.get()).get())
                                 .build());
                     createFuture.addListener(this, MoreExecutors.sameThreadExecutor());
                     return Optional.absent();
@@ -664,10 +672,14 @@ public abstract class Control {
                     for (Records.MultiOpResponse e: response) {
                         if (e instanceof Operation.Error) {
                             error = (Operation.Error) e;
-                            if (error.getError() != KeeperException.Code.NODEEXISTS) {
+                            switch (error.getError()) {
+                            case OK:
+                            case NODEEXISTS:
+                            case RUNTIMEINCONSISTENCY:
+                                break;
+                            default:
                                 throw KeeperException.create(error.getError());
                             }
-                            break;
                         }
                     }
                     if (error == null) {

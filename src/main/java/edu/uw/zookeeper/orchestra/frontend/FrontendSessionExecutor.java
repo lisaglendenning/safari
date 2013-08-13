@@ -96,7 +96,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     protected final Session session;
     protected final CachedFunction<ZNodeLabel.Path, Volume> volumes;
     protected final CachedFunction<Identifier, Identifier> assignments;
-    protected final BackendLookups backends;
+    protected final BackendLookup backends;
     protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
     // not thread safe
     protected LinkedIterator<FrontendRequestFuture> finger;
@@ -125,7 +125,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
                 assignments.first(),
                 RunnableLookup.create(
                         assignments.second(), this, MoreExecutors.sameThreadExecutor()));
-        this.backends = new BackendLookups(ensembleForPeer, connectionLookup);
+        this.backends = new BackendLookup(ensembleForPeer, connectionLookup);
         this.finger = mailbox.iterator();
     }
     
@@ -172,7 +172,7 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         return assignments;
     }
     
-    protected BackendLookups backends() {
+    protected BackendLookup backends() {
         return backends;
     }
     
@@ -224,14 +224,8 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         }
         backend.handleTransition(event.second());
         
-        if (backend.state() == State.TERMINATED) {
-            // FIXME
-            throw new UnsupportedOperationException();
-        }
-        if ((Connection.State.CONNECTION_CLOSING == event.second().to()) 
-                || (Connection.State.CONNECTION_CLOSED == event.second().to())) {
-            // FIXME
-            throw new UnsupportedOperationException();
+        if (backend.state().compareTo(State.TERMINATED) >= 0) {
+            run();
         }
     }
 
@@ -359,19 +353,19 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
     }
 
     // TODO handle disconnects and reconnects
-    protected class BackendLookups extends CachedLookup<Identifier, BackendSessionExecutor> {
+    protected class BackendLookup extends CachedLookup<Identifier, BackendSessionExecutor> {
     
         protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
         protected final Function<? super Identifier, Identifier> ensembleForPeer;
         
-        public BackendLookups(
+        public BackendLookup(
                 Function<? super Identifier, Identifier> ensembleForPeer,
                 CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup) {
             this(ensembleForPeer, connectionLookup, 
                     new MapMaker().<Identifier, BackendSessionExecutor>makeMap());
         }
         
-        public BackendLookups(
+        public BackendLookup(
                 final Function<? super Identifier, Identifier> ensembleForPeer,
                 final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
                 final ConcurrentMap<Identifier, BackendSessionExecutor> cache) {
