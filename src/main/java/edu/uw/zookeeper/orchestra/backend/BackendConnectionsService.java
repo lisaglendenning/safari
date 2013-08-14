@@ -2,6 +2,9 @@ package edu.uw.zookeeper.orchestra.backend;
 
 import java.util.concurrent.ScheduledExecutorService;
 
+import com.google.common.base.Function;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -24,7 +27,7 @@ import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 
-public class BackendConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<C> {
+public class BackendConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<ListenableFuture<C>>, Function<C,C> {
 
     public static Module module() {
         return new Module();
@@ -87,10 +90,14 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
     }
     
     @Override
-    public C get() {
-        C client = connections.get();
-        ZxidTracker.ZxidListener.create(zxids, client);
-        return client;
+    public ListenableFuture<C> get() {
+        return Futures.transform(connections.get(), this);
+    }
+    
+    @Override
+    public C apply(C input) {
+        ZxidTracker.ZxidListener.create(zxids, input);
+        return input;
     }
     
     @Override

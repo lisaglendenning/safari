@@ -2,6 +2,7 @@ package edu.uw.zookeeper.orchestra.control;
 
 import java.util.concurrent.ScheduledExecutorService;
 
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -27,7 +28,7 @@ import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.protocol.client.PingingClient;
 
-class ControlConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<ClientConnectionExecutor<C>> {
+class ControlConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
 
     public static Module module() {
         return new Module();
@@ -94,7 +95,7 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
     }
 
     @Override
-    public ClientConnectionExecutor<C> get() {
+    public ListenableFuture<ClientConnectionExecutor<C>> get() {
         return factory.get().get();
     }
 

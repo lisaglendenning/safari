@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra.backend;
 
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -13,7 +12,6 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -55,10 +53,8 @@ import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.protocol.client.ConnectTask;
-import edu.uw.zookeeper.protocol.client.PingingClient;
 import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -79,19 +75,17 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             install(BackendConnectionsService.module());
             TypeLiteral<BackendRequestService<?>> generic = new TypeLiteral<BackendRequestService<?>>() {};
             bind(BackendRequestService.class).to(generic);
-            bind(generic).to(new TypeLiteral<BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>() {});
         }
 
         @Provides @Singleton
-        public BackendRequestService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendRequestService(
+        public BackendRequestService<?> getBackendRequestService(
                 ServiceLocator locator,
-                BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections,
+                BackendConnectionsService<?> connections,
                 PeerConnectionsService<?> peers,
                 VolumeCacheService volumes,
-                DependentServiceMonitor monitor,
-                Executor executor) throws Exception {
+                DependentServiceMonitor monitor) throws Exception {
             return monitor.add(BackendRequestService.newInstance(
-                    locator, volumes.asCache(), connections, peers.servers(), executor));
+                    locator, volumes.asCache(), connections, peers.servers()));
         }
     }
     
@@ -99,8 +93,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             ServiceLocator locator,
             final VolumeCache volumes,
             BackendConnectionsService<C> connections,
-            ServerPeerConnections<?> peers,
-            Executor executor) {
+            ServerPeerConnections<?> peers) {
 
         Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
             @Override
@@ -116,7 +109,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                     }
                 });
         BackendRequestService<C> instance = new BackendRequestService<C>(
-                locator, connections, peers, lookup, translator, executor);
+                locator, connections, peers, lookup, translator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
@@ -126,8 +119,6 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendClient> clients;
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
-    protected final ConnectionTask connectionTask;
-    protected final Executor executor;
     protected final ServerPeerConnectionListener listener;
     
     protected BackendRequestService(
@@ -135,16 +126,13 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             BackendConnectionsService<C> connections,
             ServerPeerConnections<?> peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
-            ShardedOperationTranslators translator,
-            Executor executor) {
+            ShardedOperationTranslators translator) {
         super(locator);
         this.connections = connections;
         this.peers = new MapMaker().makeMap();
         this.clients = new MapMaker().makeMap();
         this.lookup = lookup;
         this.translator = translator;
-        this.connectionTask = new ConnectionTask();
-        this.executor = executor;
         this.listener = new ServerPeerConnectionListener(peers);
     }
     
@@ -157,7 +145,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         super.startUp();
         
         ClientConnectionExecutor<C> client = ClientConnectionExecutor.newInstance(
-                ConnectMessage.Request.NewRequest.newInstance(), connectionTask.call());
+                ConnectMessage.Request.NewRequest.newInstance(), connections.get().get());
         Control.createPrefix(Materializer.newInstance(
                 BackendSchema.getInstance().get(), 
                 JacksonModule.getSerializer(), 
@@ -178,22 +166,12 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     
     protected ListenableFuture<ShardedClientConnectionExecutor<C>> connect(
             MessageSessionOpenRequest request) {
-        ListenableFutureTask<C> task = 
-                ListenableFutureTask.create(connectionTask);
         ListenableFuture<ShardedClientConnectionExecutor<C>> future = Futures.transform(
-                task, 
+                connections.get(), 
                 new SessionOpenTask(request));
-        executor.execute(task);
         return future;
     }
-    
-    protected class ConnectionTask implements Callable<C> {
-        @Override
-        public C call() {
-            return connections.get();
-        }
-    }
-    
+
     protected class SessionOpenTask implements Function<C, ShardedClientConnectionExecutor<C>> {
 
         protected final MessageSessionOpenRequest task;

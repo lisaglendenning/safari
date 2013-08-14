@@ -102,6 +102,9 @@ public class VolumeCacheService extends AbstractIdleService {
                             public Optional<Volume> apply(Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>> input)
                                     throws Exception {
                                 Optional<Volume> result = Optional.fromNullable(cache.get(path));
+                                // UNFORTUNATELY...the cache doesn't get updated automagically until after this message is processed
+                                // so we need to dig into the message to see if it is the information we want
+                                // and update the cache ourselves...
                                 if (!result.isPresent() && input.isPresent()) {
                                     Records.Request request = input.get().first();
                                     if (request.getOpcode() == OpCode.GET_DATA) {
