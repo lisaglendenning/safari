@@ -5,8 +5,6 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.EnsembleView;
-import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
@@ -69,10 +67,6 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
     
     public Materializer<Message.ServerResponse<?>> materializer() {
         return materializer;
-    }
-    
-    public EnsembleView<ServerInetAddressView> view() {
-        return factory().view();
     }
 
     public WatchPromiseTrie watches() {

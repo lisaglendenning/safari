@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.control;
+package edu.uw.zookeeper.orchestra.backend;
 
 import java.net.InetSocketAddress;
 
@@ -14,26 +14,26 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 
-public class SimpleControlConnections extends AbstractModule {
+public class SimpleBackendConnections extends AbstractModule {
 
-    public static SimpleControlConnections create() {
-        return new SimpleControlConnections();
+    public static SimpleBackendConnections create() {
+        return new SimpleBackendConnections();
     }
     
-    public SimpleControlConnections() {
+    public SimpleBackendConnections() {
     }
     
     @Override
     protected void configure() {
-        TypeLiteral<ControlConnectionsService<?>> generic = new TypeLiteral<ControlConnectionsService<?>>(){};
-        bind(ControlConnectionsService.class).to(generic);
+        TypeLiteral<BackendConnectionsService<?>> generic = new TypeLiteral<BackendConnectionsService<?>>(){};
+        bind(BackendConnectionsService.class).to(generic);
     }
 
     @Provides @Singleton
-    public ControlConnectionsService<?> getSimpleControlConnectionsService(
-            SimpleControlConfiguration configuration) {
+    public BackendConnectionsService<?> getBackendConnectionsService(
+            SimpleBackendConfiguration configuration) {
         ClientConnectionFactory<ProtocolCodecConnection<Operation.Request,AssignXidCodec,IntraVmConnection<InetSocketAddress>>> clientConnections = 
                 configuration.getServer().getConnections().clients(SimpleClientConnections.<IntraVmConnection<InetSocketAddress>>codecFactory());
-        return ControlConnectionsService.newInstance(configuration, clientConnections);
+        return BackendConnectionsService.newInstance(configuration, clientConnections);
     }
 }

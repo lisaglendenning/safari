@@ -39,11 +39,10 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
             install(BackendConfiguration.module());
             TypeLiteral<BackendConnectionsService<?>> generic = new TypeLiteral<BackendConnectionsService<?>>() {};
             bind(BackendConnectionsService.class).to(generic);
-            bind(generic).to(new TypeLiteral<BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>>>() {});
         }
 
         @Provides @Singleton
-        public BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getBackendConnectionService(
+        public BackendConnectionsService<?> getBackendConnectionService(
                 BackendConfiguration configuration,
                 NettyClientModule clientModule,
                 ScheduledExecutorService executor,
@@ -54,18 +53,20 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
             ClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
                    clientModule.get(codecFactory, pingingFactory).get();
             monitor.addOnStart(connections);
-            ServerViewFactory.FixedClientConnectionFactory<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
-                    ServerViewFactory.FixedClientConnectionFactory.create(configuration.getView().getClientAddress().get(), connections);
             BackendConnectionsService<PingingClient<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    BackendConnectionsService.newInstance(clientConnections);
+                    BackendConnectionsService.newInstance(configuration, connections);
             monitor.addOnStart(instance);
             return instance;
         }
     }
     
     public static <C extends Connection<? super Operation.Request>> BackendConnectionsService<C> newInstance(
-            ServerViewFactory.FixedClientConnectionFactory<C> connections) {
-        return new BackendConnectionsService<C>(connections);
+            BackendConfiguration configuration,
+            ClientConnectionFactory<C> connections) {
+        ServerViewFactory.FixedClientConnectionFactory<C> factory = 
+                ServerViewFactory.FixedClientConnectionFactory.create(
+                        configuration.getView().getClientAddress().get(), connections);
+        return new BackendConnectionsService<C>(factory);
     }
 
     protected final ServerViewFactory.FixedClientConnectionFactory<C> connections;
@@ -77,6 +78,10 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
         this.zxids = ZxidTracker.create();
     }
 
+    public ServerViewFactory.FixedClientConnectionFactory<C> connections() {
+        return connections;
+    }
+    
     public ZxidTracker zxids() {
         return zxids;
     }

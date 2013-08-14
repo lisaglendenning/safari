@@ -42,7 +42,7 @@ import edu.uw.zookeeper.orchestra.control.ControlSchema;
 
 public class BackendConfiguration {
 
-    public static Module module() {
+    public static com.google.inject.Module module() {
         return new Module();
     }
     

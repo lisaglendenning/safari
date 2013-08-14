@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.control;
+package edu.uw.zookeeper.orchestra.backend;
 
 import java.util.concurrent.TimeUnit;
 
@@ -12,7 +12,7 @@ import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.server.SimpleServer;
 
-public class SimpleControlConfiguration extends ControlConfiguration {
+public class SimpleBackendConfiguration extends BackendConfiguration {
 
     public static Module module() {
         return new Module();
@@ -25,31 +25,32 @@ public class SimpleControlConfiguration extends ControlConfiguration {
     
         @Override
         protected void configure() {
-            bind(ControlConfiguration.class).to(SimpleControlConfiguration.class).in(Singleton.class);
+            bind(BackendConfiguration.class).to(SimpleBackendConfiguration.class).in(Singleton.class);
         }
         
         @Provides @Singleton
-        public SimpleControlConfiguration getSimpleControlConfiguration() {
-            return SimpleControlConfiguration.create(SimpleServer.create());
+        public SimpleBackendConfiguration getSimpleBackendConfiguration() {
+            return SimpleBackendConfiguration.create(SimpleServer.create());
         }
     }
     
-    public static SimpleControlConfiguration create(
+    public static SimpleBackendConfiguration create(
             SimpleServer server) {
-        EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(
-                ServerInetAddressView.of(
-                        server.getConnections().connections().listenAddress()));
+        ServerInetAddressView address = ServerInetAddressView.of(
+                server.getConnections().connections().listenAddress());
+        EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
+        BackendView view = BackendView.of(address, ensemble);
         TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, TimeUnit.MILLISECONDS);
-        return new SimpleControlConfiguration(server, ensemble, timeOut);
+        return new SimpleBackendConfiguration(server, view, timeOut);
     }
     
     protected final SimpleServer server;
     
-    protected SimpleControlConfiguration(
+    protected SimpleBackendConfiguration(
             SimpleServer server,
-            EnsembleView<ServerInetAddressView> ensemble,
+            BackendView view, 
             TimeValue timeOut) {
-        super(ensemble, timeOut);
+        super(view, timeOut);
         this.server = server;
     }
 
