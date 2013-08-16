@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.orchestra.control;
 
-import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
@@ -9,6 +8,7 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
@@ -23,13 +23,13 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends DependentModule {
 
         public Module() {}
         
         @Override
         protected void configure() {
-            install(getControlConnectionsModule());
+            super.configure();
             TypeLiteral<ControlMaterializerService<?>> generic = new TypeLiteral<ControlMaterializerService<?>>(){};
             bind(ControlMaterializerService.class).to(generic);
         }
@@ -41,8 +41,10 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
             return monitor.listen(ControlMaterializerService.newInstance(connections));
         }
         
-        protected com.google.inject.Module getControlConnectionsModule() {
-            return ControlConnectionsService.module();
+        @Override
+        protected com.google.inject.Module[] getModules() {
+            com.google.inject.Module[] modules = { ControlConnectionsService.module() };
+            return modules;
         }
     }
     

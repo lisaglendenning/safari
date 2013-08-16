@@ -52,7 +52,6 @@ import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
-import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -204,7 +203,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             return ShardedClientConnectionExecutor.newInstance(
                     translator, 
                     lookup, 
-                    ConnectTask.create(connection, request), 
+                    request, 
                     connection);
         }
     }

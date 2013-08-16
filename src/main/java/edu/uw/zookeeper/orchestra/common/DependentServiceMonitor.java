@@ -69,7 +69,13 @@ public class DependentServiceMonitor implements Reference<ServiceMonitor> {
     
         @Override
         public void running() {
-            add(get());
+            try {
+                add(get());
+            } catch (IllegalStateException e) {
+                if (! DependentServiceMonitor.this.get().isMonitoring(get())) {
+                    get().stop();
+                }
+            }
         }
     
         @Override

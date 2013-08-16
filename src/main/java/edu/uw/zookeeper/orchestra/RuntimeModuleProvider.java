@@ -12,8 +12,9 @@ import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.DefaultRuntimeModule;
+import edu.uw.zookeeper.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.RuntimeModule;
-import edu.uw.zookeeper.AbstractMain.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Publisher;
@@ -23,6 +24,10 @@ import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 
 public class RuntimeModuleProvider extends AbstractModule implements Provider<RuntimeModule> {
 
+    public static RuntimeModuleProvider create() {
+        return create(DefaultRuntimeModule.newInstance());
+    }
+    
     public static RuntimeModuleProvider create(RuntimeModule runtime) {
         return new RuntimeModuleProvider(runtime);
     }
@@ -65,7 +70,7 @@ public class RuntimeModuleProvider extends AbstractModule implements Provider<Ru
     }
 
     @Provides @Singleton
-    public Factory<Publisher> getPublisherFactory(
+    public Factory<? extends Publisher> getPublisherFactory(
             RuntimeModule runtime) {
         return runtime.publisherFactory();
     }

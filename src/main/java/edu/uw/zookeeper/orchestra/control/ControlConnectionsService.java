@@ -6,9 +6,9 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
+import edu.uw.zookeeper.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
-import edu.uw.zookeeper.AbstractMain.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.common.Factory;

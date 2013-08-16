@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.orchestra;
 
-import edu.uw.zookeeper.AbstractMain.ListeningExecutorServiceFactory;
+import edu.uw.zookeeper.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
