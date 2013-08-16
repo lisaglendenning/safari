@@ -20,6 +20,7 @@ import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.client.AssignXidProcessor;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
+import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -29,13 +30,41 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     public static <C extends Connection<? super Message.ClientSession>> ShardedClientConnectionExecutor<C> newInstance(
             ShardedOperationTranslators translator,
             Function<ZNodeLabel.Path, Identifier> lookup,
+            ConnectMessage.Request request,
+            C connection) {
+        return newInstance(
+                translator,
+                lookup,
+                request,
+                AssignXidProcessor.newInstance(),
+                connection);
+    }
+
+    public static <C extends Connection<? super Message.ClientSession>> ShardedClientConnectionExecutor<C> newInstance(
+            ShardedOperationTranslators translator,
+            Function<ZNodeLabel.Path, Identifier> lookup,
+            ConnectMessage.Request request,
+            AssignXidProcessor xids,
+            C connection) {
+        return newInstance(
+                translator,
+                lookup,
+                ConnectTask.create(connection, request),
+                xids,
+                connection);
+    }
+
+    public static <C extends Connection<? super Message.ClientSession>> ShardedClientConnectionExecutor<C> newInstance(
+            ShardedOperationTranslators translator,
+            Function<ZNodeLabel.Path, Identifier> lookup,
             ListenableFuture<ConnectMessage.Response> session,
+            AssignXidProcessor xids,
             C connection) {
         return new ShardedClientConnectionExecutor<C>(
                 lookup,
                 translator,
                 session, 
-                AssignXidProcessor.newInstance(),
+                xids,
                 connection);
     }
 
