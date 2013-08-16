@@ -7,26 +7,34 @@ import java.util.concurrent.ConcurrentMap;
 
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
-import com.google.common.util.concurrent.AbstractIdleService;
+import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.ForwardingService;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 
-public class PeerConnections<C extends Connection<? super MessagePacket>, V extends PeerConnection<Connection<? super MessagePacket>>> extends AbstractIdleService implements ConnectionFactory<V> {
-    
-    protected final ConnectionFactory<C> connections;
+public abstract class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends ForwardingService implements ConnectionFactory<V> {
+
+    protected final Identifier identifier;
+    protected final ConnectionFactory<? extends Connection<? super MessagePacket>> connections;
     protected final ConcurrentMap<Identifier, V> peers;
     
-    public PeerConnections(
-            ConnectionFactory<C> connections) {
+    protected PeerConnections(
+            Identifier identifier,
+            ConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+        this.identifier = identifier;
         this.connections = connections;
         this.peers = new MapMaker().makeMap();
     }
     
-    public ConnectionFactory<C> connections() {
+    public Identifier identifier() {
+        return identifier;
+    }
+    
+    public ConnectionFactory<?> connections() {
         return connections;
     }
 
@@ -66,9 +74,9 @@ public class PeerConnections<C extends Connection<? super MessagePacket>, V exte
         connections.unregister(handler);
     }
     
-    protected V put(Identifier id, V v) {
-        V prev = peers.put(id, v);
-        new RemoveOnClose(id, v);
+    protected V put(V v) {
+        V prev = peers.put(v.remoteAddress().getIdentifier(), v);
+        new RemoveOnClose(v);
         if (prev != null) {
             prev.close();
         }
@@ -76,34 +84,22 @@ public class PeerConnections<C extends Connection<? super MessagePacket>, V exte
         return prev;
     }
 
-    protected V putIfAbsent(Identifier id, V v) {
-        V prev = peers.putIfAbsent(id, v);
+    protected V putIfAbsent(V v) {
+        V prev = peers.putIfAbsent(v.remoteAddress().getIdentifier(), v);
         if (prev != null) {
             v.close();
         } else {
-            new RemoveOnClose(id, v);
+            new RemoveOnClose(v);
             post(v);
         }
         return prev;
     }
-    
-    @Override
-    protected void startUp() throws Exception {
-        connections().start().get();
-    }
-
-    @Override
-    protected void shutDown() throws Exception {
-        connections().stop().get();
-    }
 
     protected class RemoveOnClose {
         
-        protected final Identifier identifier;
         protected final V instance;
         
-        public RemoveOnClose(Identifier identifier, V instance) {
-            this.identifier = identifier;
+        public RemoveOnClose(V instance) {
             this.instance = instance;
             instance.register(this);
         }
@@ -114,8 +110,13 @@ public class PeerConnections<C extends Connection<? super MessagePacket>, V exte
                 try {
                     instance.unregister(this);
                 } catch (IllegalArgumentException e) {}
-                peers.remove(identifier, instance);
+                peers.remove(instance.remoteAddress().getIdentifier(), instance);
             }
         }
+    }
+
+    @Override
+    protected Service delegate() {
+        return connections;
     }
 }

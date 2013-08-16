@@ -10,21 +10,27 @@ import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.RunnablePromiseTask;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.RunnablePromiseTask;
 import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 
-public class ClientPeerConnections<C extends Connection<? super MessagePacket>> extends PeerConnections<C, ClientPeerConnection<Connection<? super MessagePacket>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket>>> {
+public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<Connection<? super MessagePacket>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket>>> {
 
-    protected final Identifier identifier;
+    public static ClientPeerConnections newInstance(
+            Identifier identifier,
+            CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
+            ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+        return new ClientPeerConnections(identifier, lookup, connections);
+    }
+    
     protected final MessagePacket handshake;
     protected final CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> addressLookup;
     protected final CachedLookup<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> lookups;
@@ -32,9 +38,8 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
     public ClientPeerConnections(
             Identifier identifier,
             CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
-            ClientConnectionFactory<C> connections) {
-        super(connections);
-        this.identifier = identifier;
+            ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+        super(identifier, connections);
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
         this.addressLookup = lookup;
         this.lookups = CachedLookup.create(
@@ -57,12 +62,8 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
     }
 
     @Override
-    public ClientConnectionFactory<C> connections() {
-        return (ClientConnectionFactory<C>) connections;
-    }
-
-    public Identifier identifier() {
-        return identifier;
+    public ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections() {
+        return (ClientConnectionFactory<? extends Connection<? super MessagePacket>>) connections;
     }
     
     @Override
@@ -87,32 +88,34 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         return peer.write(handshake);
     }
 
+    @Override
     protected ClientPeerConnection<Connection<? super MessagePacket>> put(ClientPeerConnection<Connection<? super MessagePacket>> v) {
-        ClientPeerConnection<Connection<? super MessagePacket>> prev = put(v.remoteAddress().getIdentifier(), v);
+        ClientPeerConnection<Connection<? super MessagePacket>> prev = super.put(v);
         handshake(v);
         return prev;
     }
 
+    @Override
     protected ClientPeerConnection<Connection<? super MessagePacket>> putIfAbsent(ClientPeerConnection<Connection<? super MessagePacket>> v) {
-        ClientPeerConnection<Connection<? super MessagePacket>> prev = putIfAbsent(v.remoteAddress().getIdentifier(), v);
+        ClientPeerConnection<Connection<? super MessagePacket>> prev = super.putIfAbsent(v);
         if (prev == null) {
             handshake(v);
         }
         return prev;
     }
 
-    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ControlSchema.Peers.Entity.PeerAddress>, C> implements FutureCallback<C> {
+    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ControlSchema.Peers.Entity.PeerAddress>, Connection<? super MessagePacket>> implements FutureCallback<Connection<? super MessagePacket>> {
         
-        protected ListenableFuture<C> future;
+        protected ListenableFuture<? extends Connection<? super MessagePacket>> future;
 
         public ConnectionTask(
                 ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> task) {
-            this(task, PromiseTask.<C>newPromise());
+            this(task, PromiseTask.<Connection<? super MessagePacket>>newPromise());
         }
         
         public ConnectionTask(
                 ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> task, 
-                Promise<C> delegate) {
+                Promise<Connection<? super MessagePacket>> delegate) {
             super(task, delegate);
             this.future = null;
             
@@ -144,7 +147,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         }
         
         @Override
-        public synchronized Optional<C> call() throws Exception {
+        public synchronized Optional<Connection<? super MessagePacket>> call() throws Exception {
             if (task().isDone()) {
                 if (task().isCancelled()) {
                     cancel(true);
@@ -160,7 +163,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         }
 
         @Override
-        public void onSuccess(C result) {
+        public void onSuccess(Connection<? super MessagePacket> result) {
             if (! set(result)) {
                 result.close();
             }
@@ -172,7 +175,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         }
     }
 
-    protected class ConnectTask extends PromiseTask<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> implements FutureCallback<C> {
+    protected class ConnectTask extends PromiseTask<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> implements FutureCallback<Connection<? super MessagePacket>> {
     
         protected final ConnectionTask connection;
         
@@ -217,7 +220,7 @@ public class ClientPeerConnections<C extends Connection<? super MessagePacket>> 
         }
 
         @Override
-        public void onSuccess(C result) {
+        public void onSuccess(Connection<? super MessagePacket> result) {
             try {
                 if (! isDone()) {
                     set(ClientPeerConnection.<Connection<? super MessagePacket>>create(

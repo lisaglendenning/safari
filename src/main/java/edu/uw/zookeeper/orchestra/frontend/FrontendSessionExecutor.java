@@ -36,7 +36,7 @@ import com.google.common.util.concurrent.MoreExecutors;
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.ExecutorActor;
+import edu.uw.zookeeper.common.ExecutedActor;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processors;
@@ -73,7 +73,7 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.server.PingProcessor;
 
-public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher {
+public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher {
     
     public static FrontendSessionExecutor newInstance(
             Session session,
@@ -192,12 +192,14 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
         } else {
             task = new BackendRequestTask(OperationFuture.State.WAITING, request, promise);
         }
-        send(task);
+        if (! send(task)) {
+            task.cancel(true);
+        }
         return task;
     }
     
     @Override
-    public void send(FrontendRequestFuture message) {
+    public boolean send(FrontendRequestFuture message) {
         // short circuit pings
         if (message.getXid() == OpCodeXid.PING.getXid()) {
             try {
@@ -207,9 +209,12 @@ public class FrontendSessionExecutor extends ExecutorActor<FrontendSessionExecut
             }
         } else {
             logger.trace("Submitting {}", message);
-            super.send(message);
+            if (! super.send(message)) {
+                return false;
+            }
             message.addListener(this, MoreExecutors.sameThreadExecutor());
         }
+        return true;
     }
 
     @Subscribe

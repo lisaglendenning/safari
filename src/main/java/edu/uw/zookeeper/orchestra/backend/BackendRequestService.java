@@ -37,10 +37,8 @@ import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCache;
-import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
-import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.ServerPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
@@ -81,37 +79,46 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public BackendRequestService<?> getBackendRequestService(
                 ServiceLocator locator,
                 BackendConnectionsService<?> connections,
-                PeerConnectionsService<?> peers,
-                VolumeCacheService volumes,
+                ServerPeerConnections peers,
+                VolumeCache volumes,
                 DependentServiceMonitor monitor) throws Exception {
             return monitor.add(BackendRequestService.newInstance(
-                    locator, volumes.asCache(), connections, peers.servers()));
+                    locator, volumes, connections, peers));
         }
     }
     
     public static <C extends Connection<? super Operation.Request>> BackendRequestService<C> newInstance(
             ServiceLocator locator,
-            final VolumeCache volumes,
+            VolumeCache volumes,
             BackendConnectionsService<C> connections,
-            ServerPeerConnections<?> peers) {
-
-        Function<ZNodeLabel.Path, Identifier> lookup = new Function<ZNodeLabel.Path, Identifier>() {
+            ServerPeerConnections peers) {
+        BackendRequestService<C> instance = new BackendRequestService<C>(
+                locator, connections, peers, 
+                newVolumePathLookup(volumes), 
+                VolumeShardedOperationTranslators.of(
+                        newVolumeIdLookup(volumes)));
+        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
+        return instance;
+    }
+    
+    public static Function<ZNodeLabel.Path, Identifier> newVolumePathLookup(
+            final VolumeCache volumes) {
+        return new Function<ZNodeLabel.Path, Identifier>() {
             @Override
             public Identifier apply(ZNodeLabel.Path input) {
                 return volumes.get(input).getId();
             }
         };
-        VolumeShardedOperationTranslators translator = new VolumeShardedOperationTranslators(
-                new Function<Identifier, Volume>() {
-                    @Override
-                    public Volume apply(Identifier input) {
-                        return volumes.get(input);
-                    }
-                });
-        BackendRequestService<C> instance = new BackendRequestService<C>(
-                locator, connections, peers, lookup, translator);
-        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
-        return instance;
+    }
+    
+    public static Function<Identifier, Volume> newVolumeIdLookup(
+            final VolumeCache volumes) {
+        return new Function<Identifier, Volume>() {
+            @Override
+            public Volume apply(Identifier input) {
+                return volumes.get(input);
+            }
+        };
     }
 
     protected final BackendConnectionsService<C> connections;
@@ -124,7 +131,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     protected BackendRequestService(
             ServiceLocator locator,
             BackendConnectionsService<C> connections,
-            ServerPeerConnections<?> peers,
+            ServerPeerConnections peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ShardedOperationTranslators translator) {
         super(locator);
@@ -166,10 +173,9 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     
     protected ListenableFuture<ShardedClientConnectionExecutor<C>> connect(
             MessageSessionOpenRequest request) {
-        ListenableFuture<ShardedClientConnectionExecutor<C>> future = Futures.transform(
+        return Futures.transform(
                 connections.get(), 
                 new SessionOpenTask(request));
-        return future;
     }
 
     protected class SessionOpenTask implements Function<C, ShardedClientConnectionExecutor<C>> {
@@ -240,11 +246,11 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
     protected class ServerPeerConnectionListener {
         
-        protected final ServerPeerConnections<?> connections;
+        protected final ServerPeerConnections connections;
         protected final ConcurrentMap<ServerPeerConnection<?>, ServerPeerConnectionDispatcher> dispatchers;
         
         public ServerPeerConnectionListener(
-                ServerPeerConnections<?> connections) {
+                ServerPeerConnections connections) {
             this.connections = connections;
             this.dispatchers = new MapMaker().makeMap();
         }

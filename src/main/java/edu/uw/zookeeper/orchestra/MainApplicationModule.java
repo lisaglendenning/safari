@@ -5,26 +5,22 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
-import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.common.Application;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.ServiceApplication;
-import edu.uw.zookeeper.netty.client.NettyClientModule;
-import edu.uw.zookeeper.netty.server.NettyServerModule;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.RuntimeModuleProvider;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
-import edu.uw.zookeeper.orchestra.netty.NettyModule;
+import edu.uw.zookeeper.orchestra.net.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerService;
 
 public class MainApplicationModule extends AbstractModule {
@@ -54,6 +50,7 @@ public class MainApplicationModule extends AbstractModule {
     @Override
     protected void configure() {
         install(runtime);
+        install(NettyModule.create());
         install(ControlMaterializerService.module());
         install(VolumeCacheService.module());
         install(AssignmentCacheService.module());
@@ -62,21 +59,6 @@ public class MainApplicationModule extends AbstractModule {
         install(FrontendServerService.module());
     }
 
-    @Provides @Singleton
-    public NettyModule getNetModule(RuntimeModule runtime) {
-        return NettyModule.newInstance(runtime);
-    }
-
-    @Provides @Singleton
-    public NettyClientModule getClientModule(NettyModule module) {
-        return module.clients();
-    }
-
-    @Provides @Singleton
-    public NettyServerModule getServerModule(NettyModule module) {
-        return module.servers();
-    }
-    
     @Singleton
     @DependsOn({ControlMaterializerService.class, VolumeCacheService.class, AssignmentCacheService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
     public static class MainService extends DependentService {

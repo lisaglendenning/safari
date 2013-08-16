@@ -13,28 +13,27 @@ import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageType;
 
-public class ServerPeerConnections<C extends Connection<? super MessagePacket>> extends PeerConnections<C, ServerPeerConnection<Connection<? super MessagePacket>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket>>> {
+public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<Connection<? super MessagePacket>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket>>> {
 
-    protected final Identifier identifier;
+    public static ServerPeerConnections newInstance(
+            Identifier identifier,
+            ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+        return new ServerPeerConnections(identifier, connections);
+    }
     
     public ServerPeerConnections(
             Identifier identifier,
-            ServerConnectionFactory<C> connections) {
-        super(connections);
-        this.identifier = identifier;
+            ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+        super(identifier, connections);
     }
-    
-    public Identifier identifier() {
-        return identifier;
-    }
-    
+
     @Override
-    public ServerConnectionFactory<C> connections() {
-        return (ServerConnectionFactory<C>) connections;
+    public ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections() {
+        return (ServerConnectionFactory<? extends Connection<? super MessagePacket>>) connections;
     }
 
     @Subscribe
-    public void handleServerConnection(C connection) {
+    public void handleServerConnection(Connection<? super MessagePacket> connection) {
         if (! (connection instanceof ServerPeerConnection)) {
             new ServerAcceptTask(connection);
         }
@@ -61,19 +60,11 @@ public class ServerPeerConnections<C extends Connection<? super MessagePacket>> 
         super.shutDown();
     }
 
-    protected ServerPeerConnection<Connection<? super MessagePacket>> put(ServerPeerConnection<Connection<? super MessagePacket>> v) {
-        return put(v.remoteAddress().getIdentifier(), v);
-    }
-
-    protected ServerPeerConnection<Connection<? super MessagePacket>> putIfAbsent(ServerPeerConnection<Connection<? super MessagePacket>> v) {
-        return putIfAbsent(v.remoteAddress().getIdentifier(), v);
-    }
-
     protected class ServerAcceptTask {
 
-        protected final C connection;
+        protected final Connection<? super MessagePacket> connection;
         
-        protected ServerAcceptTask(C connection) {
+        protected ServerAcceptTask(Connection<? super MessagePacket> connection) {
             this.connection = connection;
             
             connection.register(this);
@@ -87,7 +78,7 @@ public class ServerPeerConnections<C extends Connection<? super MessagePacket>> 
                 connection.unregister(this);
                 put(peer);
             } else {
-                throw new AssertionError(event.toString());
+                throw new AssertionError(event);
             }
         }
 

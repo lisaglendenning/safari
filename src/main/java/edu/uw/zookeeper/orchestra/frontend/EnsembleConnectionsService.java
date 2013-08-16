@@ -63,7 +63,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 EnsembleConfiguration ensemble,
                 ControlMaterializerService<?> control,
                 PeerToEnsembleLookup peerToEnsemble,
-                ClientPeerConnections<?> peerConnections,
+                ClientPeerConnections peerConnections,
                 ServiceLocator locator,
                 DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
             return monitor.listen(
@@ -81,7 +81,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
             Identifier myId,
             Identifier myEnsemble,
             Function<? super Identifier, Identifier> peerToEnsemble,
-            ClientPeerConnections<?> peerConnections,
+            ClientPeerConnections peerConnections,
             ControlMaterializerService<?> control,
             ServiceLocator locator) {
         CachedLookup<Identifier, Identifier> selectedPeers = 
@@ -97,7 +97,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     }
     
     protected final ControlMaterializerService<?> control;
-    protected final ClientPeerConnections<?> peerConnections;
+    protected final ClientPeerConnections peerConnections;
     protected final CachedLookup<Identifier, Identifier> selectedPeers;
     protected final EnsembleConnections ensembleConnections;
     protected final Function<? super Identifier, Identifier> peerToEnsemble;
@@ -105,7 +105,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     protected EnsembleConnectionsService(
             CachedLookup<Identifier, Identifier> selectedPeers,
             Function<? super Identifier, Identifier> peerToEnsemble,
-            ClientPeerConnections<?> peerConnections,
+            ClientPeerConnections peerConnections,
             ControlMaterializerService<?> control,
             ServiceLocator locator) {
         super(locator);

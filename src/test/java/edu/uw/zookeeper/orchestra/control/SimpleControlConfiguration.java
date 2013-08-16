@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.net.InetSocketAddress;
 import java.util.concurrent.TimeUnit;
 
 import com.google.inject.AbstractModule;
@@ -10,6 +11,7 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
 import edu.uw.zookeeper.server.SimpleServer;
 
 public class SimpleControlConfiguration extends ControlConfiguration {
@@ -29,8 +31,9 @@ public class SimpleControlConfiguration extends ControlConfiguration {
         }
         
         @Provides @Singleton
-        public SimpleControlConfiguration getSimpleControlConfiguration() {
-            return SimpleControlConfiguration.create(SimpleServer.create());
+        public SimpleControlConfiguration getSimpleControlConfiguration(
+                IntraVmNetModule net) {
+            return SimpleControlConfiguration.create(SimpleServer.newInstance(net));
         }
     }
     
@@ -38,7 +41,7 @@ public class SimpleControlConfiguration extends ControlConfiguration {
             SimpleServer server) {
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(
                 ServerInetAddressView.of(
-                        server.getConnections().connections().listenAddress()));
+                        (InetSocketAddress) server.getConnections().connections().listenAddress()));
         TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, TimeUnit.MILLISECONDS);
         return new SimpleControlConfiguration(server, ensemble, timeOut);
     }

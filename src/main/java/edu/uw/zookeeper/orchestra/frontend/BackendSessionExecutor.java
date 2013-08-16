@@ -4,7 +4,6 @@ import static com.google.common.base.Preconditions.checkState;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -20,7 +19,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.ExecutorActor;
+import edu.uw.zookeeper.common.ExecutedActor;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
@@ -39,7 +38,7 @@ import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 
-public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor.BackendRequestFuture> implements TaskExecutor<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> {
+public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor.BackendRequestFuture> implements TaskExecutor<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> {
 
     public static interface BackendRequestFuture extends OperationFuture<ShardedResponseMessage<?>> {
         BackendSessionExecutor executor();
@@ -117,23 +116,26 @@ public class BackendSessionExecutor extends ExecutorActor<BackendSessionExecutor
     }
 
     @Override
-    public synchronized void send(BackendRequestFuture request) {
+    public synchronized boolean send(BackendRequestFuture request) {
         if (state() == State.TERMINATED) {
-            throw new RejectedExecutionException(State.TERMINATED.toString());
+            return false;
         } 
         // synchronized ensures that queue order is same as submit order...
-        super.send(request);
+        if (! super.send(request)) {
+            return false;
+        }
         if (request.state() == OperationFuture.State.WAITING) {
             try {
                 request.call();
             } catch (Exception e) {
                 mailbox.remove(request);
-                throw new RejectedExecutionException(e);
+                return false;
             }
         }
         if (! pending.hasNext()) {
             pending = mailbox.iterator();
         }
+        return true;
     }
     
     @Subscribe

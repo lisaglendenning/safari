@@ -42,7 +42,6 @@ import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
-import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
@@ -111,7 +110,7 @@ public class FrontendServerExecutor extends DependentService {
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
                 PeerToEnsembleLookup peerToEnsemble,
-                PeerConnectionsService<?> peers,
+                ClientPeerConnections peers,
                 EnsembleConnectionsService ensembles,
                 Executor executor,
                 ExpiringSessionTable sessions,
@@ -132,7 +131,7 @@ public class FrontendServerExecutor extends DependentService {
             VolumeCacheService volumes,
             AssignmentCacheService assignments,
             PeerToEnsembleLookup peerToEnsemble,
-            PeerConnectionsService<?> peers,
+            ClientPeerConnections peers,
             EnsembleConnectionsService ensembles,
             Executor executor,
             ExpiringSessionTable sessions,
@@ -140,7 +139,7 @@ public class FrontendServerExecutor extends DependentService {
             ServiceLocator locator) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
         FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
-        return new FrontendServerExecutor(handlers, server, peers.clients(), locator);
+        return new FrontendServerExecutor(handlers, server, peers, locator);
     }
     
     protected final ServiceLocator locator;
@@ -151,7 +150,7 @@ public class FrontendServerExecutor extends DependentService {
     protected FrontendServerExecutor(
             ConcurrentMap<Long, FrontendSessionExecutor> handlers,
             FrontendServerTaskExecutor executor,
-            ClientPeerConnections<?> connections,
+            ClientPeerConnections connections,
             ServiceLocator locator) {
         this.locator = locator;
         this.handlers = handlers;
@@ -382,13 +381,13 @@ public class FrontendServerExecutor extends DependentService {
     
     protected static class ClientPeerConnectionListener {
         
-        protected final ClientPeerConnections<?> connections;
+        protected final ClientPeerConnections connections;
         protected final ConcurrentMap<Long, FrontendSessionExecutor> executors;
         protected final ConcurrentMap<ClientPeerConnection<?>, ClientPeerConnectionDispatcher> dispatchers;
         
         public ClientPeerConnectionListener(
                 ConcurrentMap<Long, FrontendSessionExecutor> executors,
-                ClientPeerConnections<?> connections) {
+                ClientPeerConnections connections) {
             this.executors = executors;
             this.connections = connections;
             this.dispatchers = new MapMaker().makeMap();

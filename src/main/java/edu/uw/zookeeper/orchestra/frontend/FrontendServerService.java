@@ -16,6 +16,7 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
@@ -25,7 +26,6 @@ import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
@@ -56,14 +56,14 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
                 FrontendConfiguration configuration, 
                 ServerTaskExecutor serverExecutor,
                 ServiceLocator locator,
-                NettyModule netModule,
+                NetServerModule servers,
                 DependentServiceMonitor monitor) throws Exception {
             ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
-                    netModule.servers().get(
+                    servers.getServerConnectionFactory(
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
             monitor.get().addOnStart(serverConnections);
-            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
+            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
             monitor.get().addOnStart(server);
             return monitor.add(
                     FrontendServerService.newInstance(server, locator));
@@ -71,7 +71,7 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
     }
     
     public static FrontendServerService newInstance(
-            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
             ServiceLocator locator) {
         FrontendServerService instance = new FrontendServerService(serverConnections, locator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
@@ -114,16 +114,16 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         }
     }
 
-    protected final ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections;
+    protected final ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections;
     
     protected FrontendServerService(
-            ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections,
+            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections,
             ServiceLocator locator) {
         super(locator);
         this.connections = connections;
     }
 
-    public ServerConnectionExecutorsService<Connection<Message.Server>, ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections() {
+    public ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections() {
         return connections;
     }
 

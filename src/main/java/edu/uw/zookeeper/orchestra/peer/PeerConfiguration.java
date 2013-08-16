@@ -20,7 +20,7 @@ import edu.uw.zookeeper.server.ServerApplicationModule;
 
 public class PeerConfiguration {
 
-    public static Module module() {
+    public static com.google.inject.Module module() {
         return new Module();
     }
     

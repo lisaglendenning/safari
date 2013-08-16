@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.common;
+package edu.uw.zookeeper.orchestra;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -18,6 +18,8 @@ import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.orchestra.common.InjectorServiceLocator;
+import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 
 public class RuntimeModuleProvider extends AbstractModule implements Provider<RuntimeModule> {
 

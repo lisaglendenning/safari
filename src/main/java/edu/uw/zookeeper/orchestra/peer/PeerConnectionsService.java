@@ -1,38 +1,38 @@
 package edu.uw.zookeeper.orchestra.peer;
 
-import java.net.InetSocketAddress;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-
 
 import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
-import com.google.common.util.concurrent.AbstractIdleService;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
-import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Publisher;
-import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.net.NetClientModule;
+import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
-import edu.uw.zookeeper.net.intravm.IntraVmConnectionEndpoint;
+import edu.uw.zookeeper.net.intravm.IntraVmEndpoint;
+import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
+import edu.uw.zookeeper.orchestra.common.DependentService;
+import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
+import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.orchestra.netty.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.FramedMessagePacketCodec;
@@ -40,7 +40,8 @@ import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
 
-public class PeerConnectionsService<T> extends AbstractIdleService {
+@DependsOn({ServerPeerConnections.class, ClientPeerConnections.class})
+public class PeerConnectionsService extends DependentService.SimpleDependentService {
 
     public static Module module() {
         return new Module();
@@ -76,118 +77,116 @@ public class PeerConnectionsService<T> extends AbstractIdleService {
         
         @Override
         protected void configure() {
-            TypeLiteral<PeerConnectionsService<?>> generic = new TypeLiteral<PeerConnectionsService<?>>() {};
-            bind(PeerConnectionsService.class).to(generic);
-            bind(generic).to(new TypeLiteral<PeerConnectionsService<Connection<MessagePacket>>>() {});
         }
 
         @Provides @Singleton
-        public PeerConnectionsService<Connection<MessagePacket>> getPeerConnectionsService(
+        public IntraVmEndpointFactory<MessagePacket> getIntraVmEndpointFactory() {
+            return IntraVmEndpointFactory.defaults();
+        }
+        
+        @Provides @Singleton
+        public PeerConnectionsService getPeerConnectionsService(
                 PeerConfiguration configuration,
                 ControlMaterializerService<?> control,
                 ServiceLocator locator,
-                NettyModule netModule,
-                ServiceMonitor monitor,
-                Factory<Publisher> publishers) throws InterruptedException, ExecutionException, KeeperException {
+                NetServerModule servers,
+                NetClientModule clients,
+                IntraVmEndpointFactory<MessagePacket> endpoints,
+                DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
             ServerConnectionFactory<Connection<MessagePacket>> serverConnections = 
-                    netModule.servers().get(
+                    servers.getServerConnectionFactory(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory())
                     .get(configuration.getView().address().get());
-            monitor.addOnStart(serverConnections);
             ClientConnectionFactory<Connection<MessagePacket>> clientConnections =  
-                    netModule.clients().get(
+                    clients.getClientConnectionFactory(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
-            monitor.addOnStart(clientConnections);
-            Pair<IntraVmConnectionEndpoint<InetSocketAddress>, IntraVmConnectionEndpoint<InetSocketAddress>> loopbackEndpoints = Pair.create(
-                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 1), publishers.get(), MoreExecutors.sameThreadExecutor()),
-                    IntraVmConnectionEndpoint.create(InetSocketAddress.createUnresolved("localhost", 2), publishers.get(), MoreExecutors.sameThreadExecutor()));
-            Pair<IntraVmConnection<InetSocketAddress>, IntraVmConnection<InetSocketAddress>> loopback = 
-                    IntraVmConnection.createPair(loopbackEndpoints);
-            PeerConnectionsService<Connection<MessagePacket>> instance = 
-                    PeerConnectionsService.newInstance(
-                            configuration.getView().id(), 
-                            serverConnections, 
-                            clientConnections, 
-                            loopback, 
-                            control.materializer(),
-                            locator);
-            monitor.addOnStart(instance);
+            IntraVmEndpoint<MessagePacket> serverLoopback = endpoints.get();
+            IntraVmEndpoint<MessagePacket> clientLoopback = endpoints.get();
+            PeerConnectionsService instance = monitor.listen(PeerConnectionsService.newInstance(
+                    configuration.getView().id(), 
+                    serverConnections, 
+                    clientConnections,
+                    IntraVmConnection.create(serverLoopback, clientLoopback),
+                    IntraVmConnection.create(clientLoopback, serverLoopback),
+                    control.materializer(),
+                    locator));
             return instance;
         }
 
         @Provides @Singleton
-        public ClientPeerConnections<?> getClientPeerConnections(
-                PeerConnectionsService<?> service) {
+        public ClientPeerConnections getClientPeerConnections(
+                PeerConnectionsService service) {
             return service.clients();
         }
 
         @Provides @Singleton
-        public ServerPeerConnections<?> getServerPeerConnections(
-                PeerConnectionsService<?> service) {
+        public ServerPeerConnections getServerPeerConnections(
+                PeerConnectionsService service) {
             return service.servers();
         }
     }
     
-    public static <C extends Connection<? super MessagePacket>> PeerConnectionsService<C> newInstance(
+    public static PeerConnectionsService newInstance(
             Identifier identifier,
-            ServerConnectionFactory<C> serverConnectionFactory,
-            ClientConnectionFactory<C> clientConnectionFactory,
-            Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
+            ServerConnectionFactory<? extends Connection<? super MessagePacket>> serverConnectionFactory,
+            ClientConnectionFactory<? extends Connection<? super MessagePacket>> clientConnectionFactory,
+            Connection<? super MessagePacket> loopbackServer,
+            Connection<? super MessagePacket> loopbackClient,
             Materializer<?> control,
             ServiceLocator locator) {
-        PeerConnectionsService<C> instance = new PeerConnectionsService<C>(
+        PeerConnectionsService instance = new PeerConnectionsService(
                 identifier, 
                 serverConnectionFactory, 
                 clientConnectionFactory, 
-                loopback, 
-                control);
+                loopbackServer,
+                loopbackClient,
+                control,
+                locator);
         instance.new Advertiser(locator, MoreExecutors.sameThreadExecutor());
         return instance;
     }
 
     protected final Identifier identifier;
-    protected final ServerPeerConnections<?> servers;
-    protected final ClientPeerConnections<?> clients;
+    protected final ServerPeerConnections servers;
+    protected final ClientPeerConnections clients;
     
-    @SuppressWarnings({ "rawtypes", "unchecked" })
     protected PeerConnectionsService(
             Identifier identifier,
-            ServerConnectionFactory<?> serverConnectionFactory,
-            ClientConnectionFactory<?> clientConnectionFactory,
-            Pair<? extends Connection<? super MessagePacket>, ? extends Connection<? super MessagePacket>> loopback,
-            Materializer<?> control) {
+            ServerConnectionFactory<? extends Connection<? super MessagePacket>> serverConnectionFactory,
+            ClientConnectionFactory<? extends Connection<? super MessagePacket>> clientConnectionFactory,
+            Connection<? super MessagePacket> loopbackServer,
+            Connection<? super MessagePacket> loopbackClient,
+            Materializer<?> control,
+            ServiceLocator locator) {
+        super(locator);
         this.identifier = identifier;
         this.servers = new ServerPeerConnections(identifier, serverConnectionFactory);
         this.clients = new ClientPeerConnections(identifier, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
         
-        servers.put(new ServerPeerConnection(identifier, identifier, loopback.first()));
-        clients.put(new ClientPeerConnection(identifier, identifier, loopback.second()));
+        servers.put(ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier, identifier, loopbackServer));
+        clients.put(ClientPeerConnection.<Connection<? super MessagePacket>>create(identifier, identifier, loopbackClient));
     }
     
     public Identifier identifier() {
         return identifier;
     }
     
-    public ClientPeerConnections<?> clients() {
+    public ClientPeerConnections clients() {
         return clients;
     }
 
-    public ServerPeerConnections<?> servers() {
+    public ServerPeerConnections servers() {
         return servers;
     }
     
-    @Override
-    protected void startUp() throws Exception {
-        servers().start().get();
-        clients().start().get();
-    }
-
+    @SuppressWarnings("unchecked")
     @Override
     protected void shutDown() throws Exception {
-        servers().stop().get();
-        clients().stop().get();
+        Futures.allAsList(servers().stop(), clients().stop()).get();
+        
+        super.shutDown();
     }
 
     public class Advertiser implements Service.Listener {
