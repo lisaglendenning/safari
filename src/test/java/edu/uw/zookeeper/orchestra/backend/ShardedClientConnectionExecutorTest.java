@@ -21,9 +21,10 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.GetEvent;
-import edu.uw.zookeeper.client.FixedClientConnectionFactory;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.Hash;
@@ -34,6 +35,10 @@ import edu.uw.zookeeper.orchestra.net.SimpleClient;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.client.AssignXidCodec;
+import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.server.SimpleServer;
 
@@ -66,9 +71,10 @@ public class ShardedClientConnectionExecutorTest {
             volumes.put(Volume.of(Hash.default32().apply(path.toString()).asIdentifier(), VolumeDescriptor.of(path)));
         }
         
-        injector.getInstance(SimpleServer.class).start().get();
-        FixedClientConnectionFactory<? extends Connection<? super Message.ClientSession>> clients = injector.getInstance(Key.get(new TypeLiteral<FixedClientConnectionFactory<? extends Connection<? super Message.ClientSession>>>(){}));
-        clients.second().start().get();
+        ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
+        monitor.add(injector.getInstance(SimpleServer.class));
+        monitor.add(injector.getInstance(ClientConnectionFactory.class));
+        monitor.start().get();
 
         GetEvent<Connection<?>> connectEvent = GetEvent.create(injector.getInstance(SimpleServer.class).getConnections().connections());
         
@@ -76,7 +82,7 @@ public class ShardedClientConnectionExecutorTest {
                 translator, 
                 lookup, 
                 ConnectMessage.Request.NewRequest.newInstance(),
-                clients.get().get());
+                injector.getInstance(Key.get(new TypeLiteral<ListenableFuture<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>>(){})).get());
         
         Connection<?> serverConnection = connectEvent.get();
         
@@ -91,5 +97,9 @@ public class ShardedClientConnectionExecutorTest {
         assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().getRecord()).getPath());
         assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get()).getIdentifier());
 
+
+        client.submit(Records.Requests.getInstance().get(OpCode.CLOSE_SESSION)).get();
+        
+        monitor.stop().get();
     }
 }
