@@ -20,6 +20,7 @@ import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
+import edu.uw.zookeeper.orchestra.net.IntraVmModule;
 import edu.uw.zookeeper.orchestra.net.NettyModule;
 import edu.uw.zookeeper.orchestra.peer.PeerService;
 
@@ -50,6 +51,7 @@ public class MainApplicationModule extends AbstractModule {
     @Override
     protected void configure() {
         install(runtime);
+        install(IntraVmModule.create());
         install(NettyModule.create());
         install(ControlMaterializerService.module());
         install(VolumeCacheService.module());

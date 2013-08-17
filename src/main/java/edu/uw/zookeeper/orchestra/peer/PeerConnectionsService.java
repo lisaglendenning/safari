@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.peer;
 
+import java.net.SocketAddress;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
@@ -15,6 +16,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Publisher;
@@ -78,11 +80,6 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
         @Override
         protected void configure() {
         }
-
-        @Provides @Singleton
-        public IntraVmEndpointFactory<MessagePacket> getIntraVmEndpointFactory() {
-            return IntraVmEndpointFactory.defaults();
-        }
         
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
@@ -91,7 +88,8 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
                 ServiceLocator locator,
                 NetServerModule servers,
                 NetClientModule clients,
-                IntraVmEndpointFactory<MessagePacket> endpoints,
+                Factory<? extends SocketAddress> addresses,
+                Factory<? extends Publisher> publishers,
                 DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
             ServerConnectionFactory<Connection<MessagePacket>> serverConnections = 
                     servers.getServerConnectionFactory(
@@ -102,6 +100,8 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
                     clients.getClientConnectionFactory(
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
+            IntraVmEndpointFactory<MessagePacket> endpoints = IntraVmEndpointFactory.create(
+                    addresses, publishers, IntraVmEndpointFactory.sameThreadExecutors());
             IntraVmEndpoint<MessagePacket> serverLoopback = endpoints.get();
             IntraVmEndpoint<MessagePacket> clientLoopback = endpoints.get();
             PeerConnectionsService instance = monitor.listen(PeerConnectionsService.newInstance(

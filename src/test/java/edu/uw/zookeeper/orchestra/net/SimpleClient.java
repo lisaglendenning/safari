@@ -62,7 +62,7 @@ public class SimpleClient extends ClientConnectionsModule {
     protected Module[] getModules() {
         Module[] modules = { 
                 RuntimeModuleProvider.create(),
-                IntraVmDefaultsModule.create() };
+                IntraVmAsNetModule.create() };
         return modules;
     }
 }
