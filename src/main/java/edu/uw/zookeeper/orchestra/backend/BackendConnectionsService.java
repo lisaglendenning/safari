@@ -35,8 +35,7 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
         @Override
         protected void configure() {
             super.configure();
-            TypeLiteral<BackendConnectionsService<?>> generic = new TypeLiteral<BackendConnectionsService<?>>() {};
-            bind(BackendConnectionsService.class).to(generic);
+            bind(BackendConnectionsService.class).to(new TypeLiteral<BackendConnectionsService<?>>() {});
         }
 
         @Provides @Singleton

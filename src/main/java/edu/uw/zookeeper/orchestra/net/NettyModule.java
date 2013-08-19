@@ -50,7 +50,7 @@ public class NettyModule extends AbstractModule {
     
     @Provides @Singleton
     public NettyServerModule getNettyServerModule(
-            Factory<Publisher> publishers,
+            Factory<? extends Publisher> publishers,
             Factory<? extends EventLoopGroup> eventLoopGroup) {
         ParameterizedFactory<SocketAddress, ServerBootstrap> bootstraps = 
                 NioServerBootstrapFactory.ParameterizedDecorator.newInstance(
@@ -60,7 +60,7 @@ public class NettyModule extends AbstractModule {
     
     @Provides @Singleton
     public NettyClientModule getNettyClientModule(
-            Factory<Publisher> publishers,
+            Factory<? extends Publisher> publishers,
             Factory<? extends EventLoopGroup> eventLoopGroup) {
         Factory<Bootstrap> bootstraps = 
                 NioClientBootstrapFactory.newInstance(eventLoopGroup);  

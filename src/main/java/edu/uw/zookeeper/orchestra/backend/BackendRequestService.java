@@ -14,7 +14,6 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
-import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
@@ -28,6 +27,7 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
@@ -63,13 +63,13 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends DependentModule {
 
         public Module() {}
         
         @Override
         protected void configure() {
-            install(BackendConnectionsService.module());
+            super.configure();
             TypeLiteral<BackendRequestService<?>> generic = new TypeLiteral<BackendRequestService<?>>() {};
             bind(BackendRequestService.class).to(generic);
         }
@@ -83,6 +83,12 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 DependentServiceMonitor monitor) throws Exception {
             return monitor.add(BackendRequestService.newInstance(
                     locator, volumes, connections, peers));
+        }
+
+        @Override
+        protected com.google.inject.Module[] getModules() {
+            com.google.inject.Module[] modules = { BackendConnectionsService.module() };
+            return modules;
         }
     }
     

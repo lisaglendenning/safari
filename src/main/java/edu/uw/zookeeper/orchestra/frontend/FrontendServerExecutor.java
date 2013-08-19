@@ -69,7 +69,7 @@ import edu.uw.zookeeper.server.SessionParametersPolicy;
 import edu.uw.zookeeper.server.SessionTable;
 
 @DependsOn({EnsembleConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
-public class FrontendServerExecutor extends DependentService {
+public class FrontendServerExecutor extends DependentService.SimpleDependentService {
 
     public static Module module() {
         return new Module();
@@ -89,7 +89,7 @@ public class FrontendServerExecutor extends DependentService {
         @Provides @Singleton
         public ExpiringSessionTable getSessionTable(
                 Configuration configuration,
-                Factory<Publisher> publishers,
+                Factory<? extends Publisher> publishers,
                 ScheduledExecutorService executor,
                 ServiceMonitor monitor) {
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(configuration);
@@ -116,8 +116,9 @@ public class FrontendServerExecutor extends DependentService {
                 ExpiringSessionTable sessions,
                 DependentServiceMonitor monitor,
                 Generator<Long> zxids) {
-            return monitor.add(FrontendServerExecutor.newInstance(
-                    volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator));
+            return monitor.listen(
+                    FrontendServerExecutor.newInstance(
+                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator));
         }
 
         @Provides @Singleton
@@ -142,7 +143,6 @@ public class FrontendServerExecutor extends DependentService {
         return new FrontendServerExecutor(handlers, server, peers, locator);
     }
     
-    protected final ServiceLocator locator;
     protected final FrontendServerTaskExecutor executor;
     protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
     protected final ClientPeerConnectionListener connections;
@@ -152,7 +152,7 @@ public class FrontendServerExecutor extends DependentService {
             FrontendServerTaskExecutor executor,
             ClientPeerConnections connections,
             ServiceLocator locator) {
-        this.locator = locator;
+        super(locator);
         this.handlers = handlers;
         this.executor = executor;
         this.connections = new ClientPeerConnectionListener(handlers, connections);
@@ -161,12 +161,7 @@ public class FrontendServerExecutor extends DependentService {
     public FrontendServerTaskExecutor asTaskExecutor() {
         return executor;
     }
-    
-    @Override
-    protected ServiceLocator locator() {
-        return locator;
-    }
-    
+
     @Override
     protected void startUp() throws Exception {
         super.startUp();

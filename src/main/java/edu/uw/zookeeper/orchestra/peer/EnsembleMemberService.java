@@ -14,7 +14,6 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -28,6 +27,7 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
@@ -47,29 +47,30 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends DependentModule {
 
         public Module() {}
-        
-        @Override
-        protected void configure() {
-            install(EnsembleConfiguration.module());
-        }
 
         @Provides @Singleton
         public EnsembleMemberService getEnsembleMember(
                 EnsembleConfiguration ensembleConfiguration,
-                PeerConfiguration conductorConfiguration,
+                PeerConfiguration peerConfiguration,
                 ControlMaterializerService<?> control,
                 ServiceLocator locator,
                 DependentServiceMonitor monitor) {
             ControlSchema.Ensembles.Entity myEnsemble = ControlSchema.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             ControlSchema.Ensembles.Entity.Peers.Member myMember = ControlSchema.Ensembles.Entity.Peers.Member.of(
-                    conductorConfiguration.getView().id(), 
+                    peerConfiguration.getView().id(), 
                     ControlSchema.Ensembles.Entity.Peers.of(myEnsemble));
             EnsembleMemberService instance = 
                     monitor.listen(new EnsembleMemberService(myMember, myEnsemble, control, locator));
             return instance;
+        }
+
+        @Override
+        protected com.google.inject.Module[] getModules() {
+            com.google.inject.Module[] modules = { EnsembleConfiguration.module() };
+            return modules;
         }
     }
     
@@ -114,7 +115,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected final ControlSchema.Ensembles.Entity myEnsemble;
     protected final RoleOverseer role;
     
-    public EnsembleMemberService(
+    protected EnsembleMemberService(
             ControlSchema.Ensembles.Entity.Peers.Member myMember, 
             ControlSchema.Ensembles.Entity myEnsemble,
             ControlMaterializerService<?> control,

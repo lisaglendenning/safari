@@ -10,6 +10,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
 import edu.uw.zookeeper.server.SimpleServer;
@@ -32,8 +33,11 @@ public class SimpleBackendConfiguration extends BackendConfiguration {
         
         @Provides @Singleton
         public SimpleBackendConfiguration getSimpleBackendConfiguration(
+                ServiceMonitor monitor,
                 IntraVmNetModule net) {
-            return SimpleBackendConfiguration.create(SimpleServer.newInstance(net));
+            SimpleServer server = SimpleServer.newInstance(net);
+            monitor.addOnStart(server);
+            return SimpleBackendConfiguration.create(server);
         }
     }
     

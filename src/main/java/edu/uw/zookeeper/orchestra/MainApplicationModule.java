@@ -1,10 +1,11 @@
 package edu.uw.zookeeper.orchestra;
 
 
-import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
+import com.google.inject.Module;
+import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
@@ -22,23 +23,24 @@ import edu.uw.zookeeper.orchestra.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
 import edu.uw.zookeeper.orchestra.net.IntraVmModule;
 import edu.uw.zookeeper.orchestra.net.NettyModule;
-import edu.uw.zookeeper.orchestra.peer.PeerService;
+import edu.uw.zookeeper.orchestra.peer.EnsembleMemberService;
+import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
 
-public class MainApplicationModule extends AbstractModule {
+public class MainApplicationModule extends DependentModule {
 
     public static ParameterizedFactory<RuntimeModule, Application> main() {
         return new ParameterizedFactory<RuntimeModule, Application>() {
             @Override
             public Application get(RuntimeModule runtime) {
-                MainApplicationModule module = new MainApplicationModule(RuntimeModuleProvider.create(runtime));
+                MainApplicationModule module = MainApplicationModule.newInstance(runtime);
                 Injector injector = Guice.createInjector(module);
-                MainService service =
-                    injector.getInstance(DependentServiceMonitor.class).listen(
-                            injector.getInstance(MainService.class));
-                runtime.serviceMonitor().add(service);
-                return ServiceApplication.newInstance(runtime.serviceMonitor());
+                return injector.getInstance(Application.class);
             }            
         };
+    }
+    
+    public static MainApplicationModule newInstance(RuntimeModule runtime) {
+        return new MainApplicationModule(RuntimeModuleProvider.create(runtime));
     }
     
     protected final RuntimeModuleProvider runtime;
@@ -47,34 +49,46 @@ public class MainApplicationModule extends AbstractModule {
             RuntimeModuleProvider runtime) {
         this.runtime = runtime;
     }
+    
+    @Provides @Singleton
+    public Application getApplication(
+            DependentServiceMonitor monitor,
+            MainService main) {
+        monitor.listen(main);
+        monitor.get().add(main);
+        return ServiceApplication.newInstance(monitor.get());
+    }
 
     @Override
-    protected void configure() {
-        install(runtime);
-        install(IntraVmModule.create());
-        install(NettyModule.create());
-        install(ControlMaterializerService.module());
-        install(VolumeCacheService.module());
-        install(AssignmentCacheService.module());
-        install(BackendRequestService.module());
-        install(PeerService.module());
-        install(FrontendServerService.module());
+    protected Module[] getModules() {
+        Module[] modules = { 
+                runtime, 
+                IntraVmModule.create(), 
+                NettyModule.create(), 
+                ControlMaterializerService.module(),
+                VolumeCacheService.module(),
+                AssignmentCacheService.module(),
+                BackendRequestService.module(),
+                PeerConnectionsService.module(),
+                EnsembleMemberService.module(),
+                FrontendServerService.module() };
+        return modules;
     }
 
     @Singleton
-    @DependsOn({ControlMaterializerService.class, VolumeCacheService.class, AssignmentCacheService.class, BackendRequestService.class, PeerService.class, FrontendServerService.class})
-    public static class MainService extends DependentService {
+    @DependsOn({
+        ControlMaterializerService.class, 
+        VolumeCacheService.class, 
+        AssignmentCacheService.class, 
+        BackendRequestService.class, 
+        PeerConnectionsService.class,
+        EnsembleMemberService.class, 
+        FrontendServerService.class})
+    public static class MainService extends DependentService.SimpleDependentService {
 
-        protected final ServiceLocator locator;
-        
         @Inject
         public MainService(ServiceLocator locator) {
-            this.locator = locator;
-        }
-
-        @Override
-        protected ServiceLocator locator() {
-            return locator;
+            super(locator);
         }
     }
 }

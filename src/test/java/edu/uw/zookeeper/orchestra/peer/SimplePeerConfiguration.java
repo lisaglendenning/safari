@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer;
 
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
@@ -10,7 +11,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.net.intravm.IntraVmFactory;
+import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 
@@ -27,10 +28,10 @@ public class SimplePeerConfiguration extends AbstractModule {
     @Provides @Singleton
     public PeerConfiguration getPeerConfiguration(
             ControlMaterializerService<?> controlClient, 
-            IntraVmFactory net) throws InterruptedException, ExecutionException, KeeperException {
-        ServerInetAddressView conductorAddress = 
-                ServerInetAddressView.of((InetSocketAddress) net.addresses().get());
-        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(conductorAddress, controlClient.materializer()).get();
-        return new PeerConfiguration(PeerAddressView.of(entityNode.get(), conductorAddress));
+            Factory<? extends SocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
+        ServerInetAddressView address = 
+                ServerInetAddressView.of((InetSocketAddress) addresses.get());
+        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, controlClient.materializer()).get();
+        return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address));
     }
 }

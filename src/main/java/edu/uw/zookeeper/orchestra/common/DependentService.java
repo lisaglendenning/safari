@@ -26,6 +26,7 @@ public abstract class DependentService extends AbstractIdleService {
             this.locator = locator;
         }
 
+        @Override
         protected ServiceLocator locator() {
             return locator;
         }

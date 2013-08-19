@@ -11,7 +11,6 @@ import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
-import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -28,6 +27,7 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpoint;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
+import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
@@ -49,7 +49,7 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends DependentModule {
 
         public static ParameterizedFactory<Publisher, Pair<Class<MessagePacket>, FramedMessagePacketCodec>> codecFactory(
                 final ObjectMapper mapper) {
@@ -76,11 +76,7 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
         }
         
         public Module() {}
-        
-        @Override
-        protected void configure() {
-        }
-        
+
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
                 PeerConfiguration configuration,
@@ -125,6 +121,12 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
         public ServerPeerConnections getServerPeerConnections(
                 PeerConnectionsService service) {
             return service.servers();
+        }
+
+        @Override
+        protected com.google.inject.Module[] getModules() {
+            com.google.inject.Module[] modules = { PeerConfiguration.module() };
+            return modules;
         }
     }
     

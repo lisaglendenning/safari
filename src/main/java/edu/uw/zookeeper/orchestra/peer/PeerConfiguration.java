@@ -36,10 +36,10 @@ public class PeerConfiguration {
         public PeerConfiguration getPeerConfiguration(
                 ControlMaterializerService<?> controlClient, 
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
-            ServerInetAddressView conductorAddress = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
+            ServerInetAddressView address = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
                             "Peer", "address", "peerAddress", "", 2281).get(configuration);
-            ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(conductorAddress, controlClient.materializer()).get();
-            return new PeerConfiguration(PeerAddressView.of(entityNode.get(), conductorAddress));
+            ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, controlClient.materializer()).get();
+            return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address));
         }
     }
 

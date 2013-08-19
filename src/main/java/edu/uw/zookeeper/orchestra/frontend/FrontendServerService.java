@@ -7,18 +7,20 @@ import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
-import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
-import edu.uw.zookeeper.orchestra.common.DependentService;
+import edu.uw.zookeeper.orchestra.DependentModule;
+import edu.uw.zookeeper.orchestra.common.Dependencies;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
@@ -29,51 +31,66 @@ import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.server.ServerConnectionExecutor;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.server.ServerApplicationModule;
 
 @DependsOn({FrontendServerExecutor.class})
-public class FrontendServerService extends DependentService.SimpleDependentService {
+public class FrontendServerService<T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ServerConnectionExecutorsService<T> {
 
     public static Module module() {
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends DependentModule {
 
         public Module() {}
         
         @Override
         protected void configure() {
-            install(FrontendConfiguration.module());
-            install(FrontendServerExecutor.module());
+            super.configure();
+            bind(FrontendServerService.class).to(new TypeLiteral<FrontendServerService<?>>() {});
         }
 
         @Provides @Singleton
-        public FrontendServerService getFrontendServerService(
+        public FrontendServerService<?> getFrontendServerService(
                 FrontendConfiguration configuration, 
                 ServerTaskExecutor serverExecutor,
                 ServiceLocator locator,
                 NetServerModule servers,
                 DependentServiceMonitor monitor) throws Exception {
-            ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections = 
+            ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections = 
                     servers.getServerConnectionFactory(
                             ServerApplicationModule.codecFactory(),
-                            ServerApplicationModule.connectionFactory()).get(configuration.getAddress().get());
-            monitor.get().addOnStart(serverConnections);
-            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> server = ServerConnectionExecutorsService.newInstance(serverConnections, serverExecutor);
-            monitor.get().addOnStart(server);
-            return monitor.add(
-                    FrontendServerService.newInstance(server, locator));
+                            ServerApplicationModule.connectionFactory())
+                    .get(configuration.getAddress().get());
+            return monitor.listen(
+                    FrontendServerService.newInstance(connections, serverExecutor, locator));
+        }
+
+        @Override
+        protected com.google.inject.Module[] getModules() {
+            com.google.inject.Module[] modules = { 
+                    EnsembleConnectionsService.module(),
+                    FrontendConfiguration.module(),
+                    FrontendServerExecutor.module() };
+            return modules;
         }
     }
     
-    public static FrontendServerService newInstance(
-            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> serverConnections,
+    public static <T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> FrontendServerService<T> newInstance(
+            ServerConnectionFactory<T> connections,
+            ServerTaskExecutor server,
             ServiceLocator locator) {
-        FrontendServerService instance = new FrontendServerService(serverConnections, locator);
+        FrontendServerService<T> instance = new FrontendServerService<T>(
+                connections,             
+                ServerConnectionExecutor.<T>factory(
+                        server.getAnonymousExecutor(), 
+                        server.getConnectExecutor(), 
+                        server.getSessionExecutor()), 
+                locator);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
@@ -114,35 +131,29 @@ public class FrontendServerService extends DependentService.SimpleDependentServi
         }
     }
 
-    protected final ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections;
+    protected final ServiceLocator locator;
     
     protected FrontendServerService(
-            ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections,
+            ServerConnectionFactory<T> connections,
+            ParameterizedFactory<T, ServerConnectionExecutor<T>> factory,
             ServiceLocator locator) {
-        super(locator);
-        this.connections = connections;
+        super(connections, factory);
+        this.locator = locator;
     }
-
-    public ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections() {
-        return connections;
+    
+    protected ServiceLocator locator() {
+        return locator;
     }
 
     @Override
     protected void startUp() throws Exception {
-        super.startUp();
+        Dependencies.startDependenciesAndWait(this, locator());
         
         // global barrier - wait for all volumes to be assigned
         AllVolumesAssigned.call( 
                 locator().getInstance(ControlMaterializerService.class).materializer()).get();
 
-        connections().start().get();
-    }
-
-    @Override
-    protected void shutDown() throws Exception {
-        connections().stop().get();
-        
-        super.shutDown();
+        super.startUp();
     }
 
     public class Advertiser implements Service.Listener {

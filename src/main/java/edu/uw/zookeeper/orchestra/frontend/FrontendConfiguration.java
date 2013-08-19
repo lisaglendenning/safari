@@ -31,8 +31,8 @@ public class FrontendConfiguration {
 
         @Provides @Singleton
         public FrontendConfiguration getFrontendConfiguration(Configuration configuration) {
-            ServerInetAddressView view = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance().get(configuration);
-            return new FrontendConfiguration(view);
+            ServerInetAddressView address = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance().get(configuration);
+            return new FrontendConfiguration(address);
         }
     }
     

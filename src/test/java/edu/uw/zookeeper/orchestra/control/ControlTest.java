@@ -10,8 +10,6 @@ import org.junit.runners.JUnit4;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.Module;
-import com.google.inject.Provides;
-import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependentModule;
@@ -28,14 +26,25 @@ public class ControlTest {
     
     public static class ControlTestModule extends DependentModule {
     
-        public ControlTestModule() {
+        public static Injector injector() {
+            return Guice.createInjector(
+                    RuntimeModuleProvider.create(),
+                    IntraVmAsNetModule.create(),
+                    create());
         }
         
-        public void start(ServiceLocator locator) throws InterruptedException, ExecutionException {
+        public static void start(ServiceLocator locator) throws InterruptedException, ExecutionException {
             locator.getInstance(SimpleControlConfiguration.class).getServer().start().get();
             locator.getInstance(ControlMaterializerService.class).start().get();
         }
-    
+        
+        public static ControlTestModule create() {
+            return new ControlTestModule();
+        }
+        
+        public ControlTestModule() {
+        }
+
         @Override
         protected void configure() {
             super.configure();
@@ -43,24 +52,15 @@ public class ControlTest {
         
         @Override
         protected Module[] getModules() {
-            Module[] modules = {
-                    RuntimeModuleProvider.create(),
-                    IntraVmAsNetModule.create(), 
-                    SimpleControlMaterializer.create()};
+            Module[] modules = { SimpleControlMaterializer.create() };
             return modules;
-        }
-        
-        @Provides @Singleton
-        public ControlTestModule getSelf() {
-            return this;
         }
     }
 
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
-        ControlTestModule module = module();
-        Injector injector = Guice.createInjector(module);
-        module.start(injector.getInstance(ServiceLocator.class));
+        Injector injector = ControlTestModule.injector();
+        ControlTestModule.start(injector.getInstance(ServiceLocator.class));
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.start().get();
         Thread.sleep(500);

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ExecutionException;
+
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
@@ -14,7 +15,6 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -22,6 +22,7 @@ import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.DependentService;
@@ -47,15 +48,9 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends DependentModule {
 
         public Module() {}
-        
-        @Override
-        protected void configure() {
-            install(PeerToEnsembleLookup.module());
-            install(PeerConnectionsService.module());
-        }
 
         @Provides @Singleton
         public EnsembleConnectionsService getEnsemblePeerService(
@@ -74,6 +69,12 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                             peerConnections, 
                             control, 
                             locator));
+        }
+
+        @Override
+        protected com.google.inject.Module[] getModules() {
+            com.google.inject.Module[] modules = { PeerToEnsembleLookup.module() };
+            return modules;
         }
     }
 
