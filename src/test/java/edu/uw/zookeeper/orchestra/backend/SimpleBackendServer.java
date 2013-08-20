@@ -1,7 +1,10 @@
 package edu.uw.zookeeper.orchestra.backend;
 
 import java.net.SocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
 
+import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -17,21 +20,27 @@ import edu.uw.zookeeper.server.SimpleServerExecutor;
 public class SimpleBackendServer extends SimpleServer {
 
     public static SimpleBackendServer newInstance(
-            IntraVmNetModule module) {
-        return newInstance(module.factory().addresses().get(), module);
+            IntraVmNetModule module,
+            ScheduledExecutorService executor) {
+        return newInstance(module.factory().addresses().get(), module, executor);
     }
     
     public static SimpleBackendServer newInstance(
             SocketAddress address,
-            NetServerModule module) {
-        SimpleServerExecutor executor = SimpleServerExecutor.newInstance();
+            NetServerModule module,
+            ScheduledExecutorService executor) {
+        SimpleServerExecutor tasks = SimpleServerExecutor.newInstance();
         ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connectionFactory = 
                 module.getServerConnectionFactory(
                         ServerApplicationModule.codecFactory(),
                         ServerApplicationModule.connectionFactory()).get(address);
         ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections = 
-                ServerConnectionExecutorsService.newInstance(connectionFactory, executor.getTasks());
-        return new SimpleBackendServer(connections, executor);
+                ServerConnectionExecutorsService.newInstance(
+                        connectionFactory, 
+                        TimeValue.create(Session.Parameters.NEVER_TIMEOUT, Session.Parameters.TIMEOUT_UNIT),
+                        executor,
+                        tasks.getTasks());
+        return new SimpleBackendServer(connections, tasks);
     }
 
     public SimpleBackendServer(

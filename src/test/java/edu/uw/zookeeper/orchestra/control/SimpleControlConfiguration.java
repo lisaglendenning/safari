@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra.control;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import com.google.inject.AbstractModule;
@@ -25,8 +26,9 @@ public class SimpleControlConfiguration extends AbstractModule {
 
     @Provides @Singleton
     public SimpleControlServer getSimpleControlServer(
-            IntraVmNetModule net) {
-        return SimpleControlServer.newInstance(net);
+            IntraVmNetModule net,
+            ScheduledExecutorService executor) {
+        return SimpleControlServer.newInstance(net, executor);
     }
     
     @Provides @Singleton

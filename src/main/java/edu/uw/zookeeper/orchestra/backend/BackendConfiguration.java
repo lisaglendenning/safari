@@ -29,7 +29,7 @@ import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
-import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.TimeoutFactory;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Arguments;
 import edu.uw.zookeeper.common.Configuration;
@@ -59,7 +59,7 @@ public class BackendConfiguration {
                 Configuration configuration) throws Exception {
             ServerInetAddressView clientAddress = BackendAddressDiscovery.call(configuration);
             EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(configuration);
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
+            TimeValue timeOut = TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
             return new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
         }
     }

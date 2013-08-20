@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra.net;
 
+import java.util.concurrent.ScheduledExecutorService;
+
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
@@ -65,8 +67,9 @@ public class SimpleClient extends ClientConnectionsModule {
 
     @Provides @Singleton
     public SimpleServer getServer(
-            IntraVmNetModule module) {
-        return SimpleServer.newInstance(module);
+            IntraVmNetModule module,
+            ScheduledExecutorService executor) {
+        return SimpleServer.newInstance(module, executor);
     }
     
     @Override

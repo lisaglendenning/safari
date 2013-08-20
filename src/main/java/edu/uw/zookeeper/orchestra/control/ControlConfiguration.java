@@ -3,8 +3,10 @@ package edu.uw.zookeeper.orchestra.control;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.TimeoutFactory;
 import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
@@ -29,7 +31,7 @@ public class ControlConfiguration {
                     ClientApplicationModule.ConfigurableEnsembleViewFactory.newInstance(
                             CONFIG_PATH, ENSEMBLE_CONFIG_KEY, ENSEMBLE_ARG, DEFAULT_ENSEMBLE_ADDRESS, DEFAULT_ENSEMBLE_PORT)
                         .get(configuration);
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH)
+            TimeValue timeOut = TimeoutFactory.newInstance(CONFIG_PATH)
                         .get(configuration);
             return new ControlConfiguration(ensemble, timeOut);
         }

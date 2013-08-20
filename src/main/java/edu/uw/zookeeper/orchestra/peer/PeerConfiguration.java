@@ -9,7 +9,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.TimeoutFactory;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
@@ -41,7 +41,7 @@ public class PeerConfiguration {
             ServerInetAddressView address = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
                     "peerAddress", "address", CONFIG_PATH, "", 2281).get(configuration);
             ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
-            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
+            TimeValue timeOut = TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
             return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
         }
     }

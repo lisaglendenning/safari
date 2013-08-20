@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
@@ -15,6 +16,7 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processor;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetServerModule;
@@ -57,6 +59,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         public FrontendServerService<?> getFrontendServerService(
                 FrontendConfiguration configuration, 
                 ServerTaskExecutor serverExecutor,
+                ScheduledExecutorService executor,
                 ServiceLocator locator,
                 NetServerModule servers,
                 DependentServiceMonitor monitor) throws Exception {
@@ -65,7 +68,8 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory())
                     .get(configuration.getAddress().get());
-            return FrontendServerService.newInstance(connections, serverExecutor, locator);
+            return FrontendServerService.newInstance(
+                    connections, configuration.getTimeOut(), executor, serverExecutor, locator);
         }
 
         @Override
@@ -80,11 +84,15 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
     
     public static <T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> FrontendServerService<T> newInstance(
             ServerConnectionFactory<T> connections,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             ServerTaskExecutor server,
             ServiceLocator locator) {
         FrontendServerService<T> instance = new FrontendServerService<T>(
                 connections,             
                 ServerConnectionExecutor.<T>factory(
+                        timeOut,
+                        executor,
                         server.getAnonymousExecutor(), 
                         server.getConnectExecutor(), 
                         server.getSessionExecutor()), 

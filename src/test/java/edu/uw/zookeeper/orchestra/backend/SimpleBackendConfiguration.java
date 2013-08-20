@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra.backend;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import com.google.inject.AbstractModule;
@@ -28,8 +29,9 @@ public class SimpleBackendConfiguration extends AbstractModule {
 
     @Provides @Singleton
     public SimpleBackendServer getSimpleBackendServer(
-            IntraVmNetModule net) {
-        return SimpleBackendServer.newInstance(net);
+            IntraVmNetModule net,
+            ScheduledExecutorService executor) {
+        return SimpleBackendServer.newInstance(net, executor);
     }
     
     @Provides @Singleton
