@@ -10,58 +10,36 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
-import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
-import edu.uw.zookeeper.server.SimpleServer;
 
-public class SimpleBackendConfiguration extends BackendConfiguration {
+public class SimpleBackendConfiguration extends AbstractModule {
 
-    public static Module module() {
-        return new Module();
+    public static SimpleBackendConfiguration create() {
+        return new SimpleBackendConfiguration();
     }
     
-    public static class Module extends AbstractModule {
-    
-        public Module() {
-        }
-    
-        @Override
-        protected void configure() {
-            bind(BackendConfiguration.class).to(SimpleBackendConfiguration.class).in(Singleton.class);
-        }
-        
-        @Provides @Singleton
-        public SimpleBackendConfiguration getSimpleBackendConfiguration(
-                ServiceMonitor monitor,
-                IntraVmNetModule net) {
-            SimpleServer server = SimpleServer.newInstance(net);
-            monitor.addOnStart(server);
-            return SimpleBackendConfiguration.create(server);
-        }
+    public SimpleBackendConfiguration() {
+    }
+
+    @Override
+    protected void configure() {
+    }
+
+    @Provides @Singleton
+    public SimpleBackendServer getSimpleBackendServer(
+            IntraVmNetModule net) {
+        return SimpleBackendServer.newInstance(net);
     }
     
-    public static SimpleBackendConfiguration create(
-            SimpleServer server) {
+    @Provides @Singleton
+    public BackendConfiguration getSimpleBackendConfiguration(
+            SimpleBackendServer server) {
         ServerInetAddressView address = ServerInetAddressView.of(
                 (InetSocketAddress) server.getConnections().connections().listenAddress());
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
         BackendView view = BackendView.of(address, ensemble);
         TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, TimeUnit.MILLISECONDS);
-        return new SimpleBackendConfiguration(server, view, timeOut);
-    }
-    
-    protected final SimpleServer server;
-    
-    protected SimpleBackendConfiguration(
-            SimpleServer server,
-            BackendView view, 
-            TimeValue timeOut) {
-        super(view, timeOut);
-        this.server = server;
-    }
-
-    public SimpleServer getServer() {
-        return server;
+        return new BackendConfiguration(view, timeOut);
     }
 }

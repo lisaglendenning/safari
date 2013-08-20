@@ -9,6 +9,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -28,8 +29,6 @@ import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependentModule;
-import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
@@ -57,7 +56,7 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({BackendConnectionsService.class})
-public class BackendRequestService<C extends Connection<? super Operation.Request>> extends DependentService.SimpleDependentService {
+public class BackendRequestService<C extends Connection<? super Operation.Request>> extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -79,10 +78,9 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 ServiceLocator locator,
                 BackendConnectionsService<?> connections,
                 ServerPeerConnections peers,
-                VolumeCache volumes,
-                DependentServiceMonitor monitor) throws Exception {
-            return monitor.add(BackendRequestService.newInstance(
-                    locator, volumes, connections, peers));
+                VolumeCache volumes) throws Exception {
+            return BackendRequestService.newInstance(
+                    locator, volumes, connections, peers);
         }
 
         @Override
@@ -98,11 +96,11 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers) {
         BackendRequestService<C> instance = new BackendRequestService<C>(
-                locator, connections, peers, 
+                connections, peers, 
                 newVolumePathLookup(volumes), 
                 VolumeShardedOperationTranslators.of(
                         newVolumeIdLookup(volumes)));
-        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
+        instance.new Advertiser(locator, MoreExecutors.sameThreadExecutor());
         return instance;
     }
     
@@ -134,12 +132,10 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     protected final ServerPeerConnectionListener listener;
     
     protected BackendRequestService(
-            ServiceLocator locator,
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ShardedOperationTranslators translator) {
-        super(locator);
         this.connections = connections;
         this.peers = new MapMaker().makeMap();
         this.clients = new MapMaker().makeMap();
@@ -154,8 +150,6 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
     @Override
     protected void startUp() throws Exception {
-        super.startUp();
-        
         ClientConnectionExecutor<C> client = ClientConnectionExecutor.newInstance(
                 ConnectMessage.Request.NewRequest.newInstance(), connections.get().get());
         Control.createPrefix(Materializer.newInstance(
@@ -172,8 +166,6 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     @Override
     protected void shutDown() throws Exception {
         listener.stop();
-        
-        super.shutDown();
     }
     
     protected ListenableFuture<ShardedClientConnectionExecutor<C>> connect(
@@ -216,7 +208,10 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
     public class Advertiser implements Service.Listener {
 
-        public Advertiser(Executor executor) {
+        protected final ServiceLocator locator;
+        
+        public Advertiser(ServiceLocator locator, Executor executor) {
+            this.locator = locator;
             addListener(this, executor);
         }
         
@@ -226,9 +221,9 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
 
         @Override
         public void running() {
-            Materializer<?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
-            Identifier myEntity = locator().getInstance(PeerConfiguration.class).getView().id();
-            BackendView view = locator().getInstance(BackendConfiguration.class).getView();
+            Materializer<?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
+            Identifier myEntity = locator.getInstance(PeerConfiguration.class).getView().id();
+            BackendView view = locator.getInstance(BackendConfiguration.class).getView();
             try {
                 BackendConfiguration.advertise(myEntity, view, materializer);
             } catch (Exception e) {

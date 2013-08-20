@@ -9,7 +9,6 @@ import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependentModule;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Message;
@@ -36,9 +35,8 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
 
         @Provides @Singleton
         public ControlMaterializerService<?> getControlClientService(
-                ControlConnectionsService<?> connections,
-                DependentServiceMonitor monitor) {
-            return monitor.listen(ControlMaterializerService.newInstance(connections));
+                ControlConnectionsService<?> connections) {
+            return ControlMaterializerService.newInstance(connections);
         }
         
         @Override

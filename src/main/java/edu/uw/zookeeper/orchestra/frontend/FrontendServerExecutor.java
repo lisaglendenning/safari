@@ -9,6 +9,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
@@ -33,11 +34,8 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.event.SessionStateEvent;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
-import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
@@ -69,7 +67,7 @@ import edu.uw.zookeeper.server.SessionParametersPolicy;
 import edu.uw.zookeeper.server.SessionTable;
 
 @DependsOn({EnsembleConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
-public class FrontendServerExecutor extends DependentService.SimpleDependentService {
+public class FrontendServerExecutor extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -106,7 +104,6 @@ public class FrontendServerExecutor extends DependentService.SimpleDependentServ
 
         @Provides @Singleton
         public FrontendServerExecutor getServerExecutor(
-                ServiceLocator locator,
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
                 PeerToEnsembleLookup peerToEnsemble,
@@ -114,11 +111,9 @@ public class FrontendServerExecutor extends DependentService.SimpleDependentServ
                 EnsembleConnectionsService ensembles,
                 Executor executor,
                 ExpiringSessionTable sessions,
-                DependentServiceMonitor monitor,
                 Generator<Long> zxids) {
-            return monitor.listen(
-                    FrontendServerExecutor.newInstance(
-                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator));
+            return FrontendServerExecutor.newInstance(
+                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids);
         }
 
         @Provides @Singleton
@@ -136,11 +131,10 @@ public class FrontendServerExecutor extends DependentService.SimpleDependentServ
             EnsembleConnectionsService ensembles,
             Executor executor,
             ExpiringSessionTable sessions,
-            Generator<Long> zxids,
-            ServiceLocator locator) {
+            Generator<Long> zxids) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
         FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
-        return new FrontendServerExecutor(handlers, server, peers, locator);
+        return new FrontendServerExecutor(handlers, server, peers);
     }
     
     protected final FrontendServerTaskExecutor executor;
@@ -150,9 +144,7 @@ public class FrontendServerExecutor extends DependentService.SimpleDependentServ
     protected FrontendServerExecutor(
             ConcurrentMap<Long, FrontendSessionExecutor> handlers,
             FrontendServerTaskExecutor executor,
-            ClientPeerConnections connections,
-            ServiceLocator locator) {
-        super(locator);
+            ClientPeerConnections connections) {
         this.handlers = handlers;
         this.executor = executor;
         this.connections = new ClientPeerConnectionListener(handlers, connections);
@@ -164,16 +156,12 @@ public class FrontendServerExecutor extends DependentService.SimpleDependentServ
 
     @Override
     protected void startUp() throws Exception {
-        super.startUp();
-        
         connections.start();
     }
 
     
     @Override
     protected void shutDown() throws Exception {
-        super.shutDown();
-        
         connections.stop();
     }
     

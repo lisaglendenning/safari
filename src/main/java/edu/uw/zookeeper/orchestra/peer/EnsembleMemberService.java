@@ -11,6 +11,7 @@ import org.apache.zookeeper.Watcher;
 import com.google.common.base.Optional;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -28,9 +29,6 @@ import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.orchestra.DependentModule;
-import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
-import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
@@ -40,8 +38,7 @@ import edu.uw.zookeeper.orchestra.control.ControlSchema.Ensembles.Entity;
 import edu.uw.zookeeper.orchestra.data.VolumeDescriptor;
 import edu.uw.zookeeper.protocol.Message;
 
-@DependsOn({ControlMaterializerService.class})
-public class EnsembleMemberService extends DependentService.SimpleDependentService {
+public class EnsembleMemberService extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -56,14 +53,13 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                 EnsembleConfiguration ensembleConfiguration,
                 PeerConfiguration peerConfiguration,
                 ControlMaterializerService<?> control,
-                ServiceLocator locator,
-                DependentServiceMonitor monitor) {
+                ServiceLocator locator) {
             ControlSchema.Ensembles.Entity myEnsemble = ControlSchema.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             ControlSchema.Ensembles.Entity.Peers.Member myMember = ControlSchema.Ensembles.Entity.Peers.Member.of(
                     peerConfiguration.getView().id(), 
                     ControlSchema.Ensembles.Entity.Peers.of(myEnsemble));
             EnsembleMemberService instance = 
-                    monitor.listen(new EnsembleMemberService(myMember, myEnsemble, control, locator));
+                    new EnsembleMemberService(myMember, myEnsemble, control);
             return instance;
         }
 
@@ -118,9 +114,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     protected EnsembleMemberService(
             ControlSchema.Ensembles.Entity.Peers.Member myMember, 
             ControlSchema.Ensembles.Entity myEnsemble,
-            ControlMaterializerService<?> control,
-            ServiceLocator locator) {
-        super(locator);
+            ControlMaterializerService<?> control) {
         this.control = control;
         this.myEnsemble = myEnsemble;
         this.myMember = myMember;
@@ -136,9 +130,7 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
     }
     
     @Override
-    protected void startUp() throws Exception {      
-        super.startUp();
-        
+    protected void startUp() throws Exception {
         Materializer<Message.ServerResponse<?>> materializer = control.materializer();
 
         // Register my identifier
@@ -180,6 +172,10 @@ public class EnsembleMemberService extends DependentService.SimpleDependentServi
                 ControlSchema.Volumes.Entity.Ensemble.create(myEnsemble.get(), v, materializer);
             }
         }        
+    }
+
+    @Override
+    protected void shutDown() throws Exception {
     }
 
     protected class RoleOverseer implements FutureCallback<WatchEvent> {

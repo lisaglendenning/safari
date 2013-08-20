@@ -26,7 +26,7 @@ public class SimpleBackendConnections extends BackendConnectionsService.Module {
 
     @Override
     protected com.google.inject.Module[] getModules() {
-        com.google.inject.Module[] modules = { SimpleBackendConfiguration.module()};
+        com.google.inject.Module[] modules = { SimpleBackendConfiguration.create()};
         return modules;
     }
 }

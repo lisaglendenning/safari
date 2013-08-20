@@ -12,9 +12,9 @@ import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.common.Application;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.ServiceApplication;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
@@ -52,11 +52,10 @@ public class MainApplicationModule extends DependentModule {
     
     @Provides @Singleton
     public Application getApplication(
-            DependentServiceMonitor monitor,
+            ServiceMonitor monitor,
             MainService main) {
-        monitor.listen(main);
-        monitor.get().add(main);
-        return ServiceApplication.newInstance(monitor.get());
+        monitor.add(main);
+        return ServiceApplication.newInstance(monitor);
     }
 
     @Override
@@ -83,9 +82,8 @@ public class MainApplicationModule extends DependentModule {
         BackendRequestService.class, 
         PeerConnectionsService.class,
         EnsembleMemberService.class, 
-        FrontendServerService.class})
-    public static class MainService extends DependentService.SimpleDependentService {
-
+        FrontendServerService.class })
+    public static class MainService extends DependentService {
         @Inject
         public MainService(ServiceLocator locator) {
             super(locator);

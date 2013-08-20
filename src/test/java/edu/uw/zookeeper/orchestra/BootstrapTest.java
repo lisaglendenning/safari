@@ -9,7 +9,6 @@ import org.junit.runners.JUnit4;
 import com.google.inject.Injector;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 
 @RunWith(JUnit4.class)
 public class BootstrapTest {
@@ -17,8 +16,9 @@ public class BootstrapTest {
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = SimpleMain.injector();
-        SimpleMain.start(injector.getInstance(ServiceLocator.class));
+        injector.getInstance(SimpleMain.SimpleMainService.class).start().get();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
+        monitor.start().get();
         Thread.sleep(500);
         monitor.stop().get();
     }

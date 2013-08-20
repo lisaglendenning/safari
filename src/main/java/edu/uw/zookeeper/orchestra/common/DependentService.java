@@ -1,34 +1,35 @@
 package edu.uw.zookeeper.orchestra.common;
 
-import com.google.common.util.concurrent.AbstractIdleService;
+import java.util.concurrent.Executor;
 
+import com.google.common.util.concurrent.AbstractIdleService;
+import com.google.common.util.concurrent.MoreExecutors;
 
 public abstract class DependentService extends AbstractIdleService {
 
-    protected DependentService() {}
+    protected final ServiceLocator locator;
+    
+    protected DependentService(ServiceLocator locator) {
+        this.locator = locator;
+    }
+    
+    protected ServiceLocator locator() {
+        return locator;
+    }
+
+    @Override
+    protected Executor executor() {
+        return MoreExecutors.sameThreadExecutor();
+    }
     
     @Override
     protected void startUp() throws Exception {
-        Dependencies.startDependenciesAndWait(this, locator());
+        locator().getInstance(DependentServiceMonitor.class)
+            .start(getClass().getAnnotation(DependsOn.class))
+            .get();
     }
 
     @Override
     protected void shutDown() throws Exception {
-    }
-    
-    protected abstract ServiceLocator locator();
-    
-    public static abstract class SimpleDependentService extends DependentService {
-
-        private final ServiceLocator locator;
-        
-        protected SimpleDependentService(ServiceLocator locator) {
-            this.locator = locator;
-        }
-
-        @Override
-        protected ServiceLocator locator() {
-            return locator;
-        }
     }
 }

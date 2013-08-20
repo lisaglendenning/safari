@@ -8,7 +8,6 @@ import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Provides;
@@ -29,7 +28,6 @@ import edu.uw.zookeeper.net.intravm.IntraVmEndpoint;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
 import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
@@ -43,7 +41,7 @@ import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
 
 @DependsOn({ServerPeerConnections.class, ClientPeerConnections.class})
-public class PeerConnectionsService extends DependentService.SimpleDependentService {
+public class PeerConnectionsService extends DependentService {
 
     public static Module module() {
         return new Module();
@@ -85,8 +83,7 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
                 NetServerModule servers,
                 NetClientModule clients,
                 Factory<? extends SocketAddress> addresses,
-                Factory<? extends Publisher> publishers,
-                DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
+                Factory<? extends Publisher> publishers) throws InterruptedException, ExecutionException, KeeperException {
             ServerConnectionFactory<Connection<MessagePacket>> serverConnections = 
                     servers.getServerConnectionFactory(
                             codecFactory(JacksonModule.getMapper()), 
@@ -100,14 +97,14 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
                     addresses, publishers, IntraVmEndpointFactory.sameThreadExecutors());
             IntraVmEndpoint<MessagePacket> serverLoopback = endpoints.get();
             IntraVmEndpoint<MessagePacket> clientLoopback = endpoints.get();
-            PeerConnectionsService instance = monitor.listen(PeerConnectionsService.newInstance(
+            PeerConnectionsService instance = PeerConnectionsService.newInstance(
                     configuration.getView().id(), 
                     serverConnections, 
                     clientConnections,
                     IntraVmConnection.create(serverLoopback, clientLoopback),
                     IntraVmConnection.create(clientLoopback, serverLoopback),
                     control.materializer(),
-                    locator));
+                    locator);
             return instance;
         }
 
@@ -146,7 +143,7 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
                 loopbackClient,
                 control,
                 locator);
-        instance.new Advertiser(locator, MoreExecutors.sameThreadExecutor());
+        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
 
@@ -182,23 +179,11 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
     public ServerPeerConnections servers() {
         return servers;
     }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    protected void shutDown() throws Exception {
-        Futures.allAsList(servers().stop(), clients().stop()).get();
-        
-        super.shutDown();
-    }
 
     public class Advertiser implements Service.Listener {
     
-        protected final ServiceLocator locator;
-        
         public Advertiser(
-                ServiceLocator locator,
                 Executor executor) {
-            this.locator = locator;
             addListener(this, executor);
         }
         
@@ -208,7 +193,7 @@ public class PeerConnectionsService extends DependentService.SimpleDependentServ
     
         @Override
         public void running() {
-            Materializer<?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
+            Materializer<?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
             try {
                 PeerConfiguration.advertise(identifier(), materializer);
             } catch (Exception e) {

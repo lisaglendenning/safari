@@ -26,7 +26,7 @@ public class SimpleControlConnections extends ControlConnectionsService.Module {
 
     @Override
     protected com.google.inject.Module[] getModules() {
-        com.google.inject.Module[] modules = { SimpleControlConfiguration.module()};
+        com.google.inject.Module[] modules = { SimpleControlConfiguration.create() };
         return modules;
     }
 }

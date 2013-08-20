@@ -10,57 +10,32 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
-import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
-import edu.uw.zookeeper.server.SimpleServer;
 
-public class SimpleControlConfiguration extends ControlConfiguration {
+public class SimpleControlConfiguration extends AbstractModule {
 
-    public static Module module() {
-        return new Module();
+    public static SimpleControlConfiguration create() {
+        return new SimpleControlConfiguration();
+    }
+
+    @Override
+    protected void configure() {
+    }
+
+    @Provides @Singleton
+    public SimpleControlServer getSimpleControlServer(
+            IntraVmNetModule net) {
+        return SimpleControlServer.newInstance(net);
     }
     
-    public static class Module extends AbstractModule {
-    
-        public Module() {
-        }
-    
-        @Override
-        protected void configure() {
-            bind(ControlConfiguration.class).to(SimpleControlConfiguration.class).in(Singleton.class);
-        }
-        
-        @Provides @Singleton
-        public SimpleControlConfiguration getSimpleControlConfiguration(
-                ServiceMonitor monitor,
-                IntraVmNetModule net) {
-            SimpleServer server = SimpleServer.newInstance(net);
-            monitor.addOnStart(server);
-            return SimpleControlConfiguration.create(server);
-        }
-    }
-    
-    public static SimpleControlConfiguration create(
-            SimpleServer server) {
+    @Provides @Singleton
+    public ControlConfiguration getControlConfiguration(
+            SimpleControlServer server) {
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(
                 ServerInetAddressView.of(
                         (InetSocketAddress) server.getConnections().connections().listenAddress()));
         TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, TimeUnit.MILLISECONDS);
-        return new SimpleControlConfiguration(server, ensemble, timeOut);
-    }
-    
-    protected final SimpleServer server;
-    
-    protected SimpleControlConfiguration(
-            SimpleServer server,
-            EnsembleView<ServerInetAddressView> ensemble,
-            TimeValue timeOut) {
-        super(ensemble, timeOut);
-        this.server = server;
-    }
-
-    public SimpleServer getServer() {
-        return server;
+        return new ControlConfiguration(ensemble, timeOut);
     }
 }

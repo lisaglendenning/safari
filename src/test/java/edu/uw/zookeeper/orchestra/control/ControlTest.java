@@ -2,18 +2,21 @@ package edu.uw.zookeeper.orchestra.control;
 
 
 import java.util.concurrent.ExecutionException;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import com.google.inject.Guice;
+import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Module;
+import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.RuntimeModuleProvider;
+import edu.uw.zookeeper.orchestra.common.DependentService;
+import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.net.IntraVmAsNetModule;
 
@@ -24,6 +27,18 @@ public class ControlTest {
         return new ControlTestModule();
     }
     
+    @Singleton
+    @DependsOn({ 
+        SimpleControlServer.class, 
+        ControlMaterializerService.class})
+    public static class ControlTestService extends DependentService {
+
+        @Inject
+        public ControlTestService(ServiceLocator locator) {
+            super(locator);
+        }
+    }
+    
     public static class ControlTestModule extends DependentModule {
     
         public static Injector injector() {
@@ -32,12 +47,7 @@ public class ControlTest {
                     IntraVmAsNetModule.create(),
                     create());
         }
-        
-        public static void start(ServiceLocator locator) throws InterruptedException, ExecutionException {
-            locator.getInstance(SimpleControlConfiguration.class).getServer().start().get();
-            locator.getInstance(ControlMaterializerService.class).start().get();
-        }
-        
+
         public static ControlTestModule create() {
             return new ControlTestModule();
         }
@@ -60,7 +70,7 @@ public class ControlTest {
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = ControlTestModule.injector();
-        ControlTestModule.start(injector.getInstance(ServiceLocator.class));
+        injector.getInstance(ControlTestService.class).start().get();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.start().get();
         Thread.sleep(500);

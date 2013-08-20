@@ -20,7 +20,6 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.DependentModule;
-import edu.uw.zookeeper.orchestra.common.Dependencies;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
@@ -66,8 +65,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
                             ServerApplicationModule.codecFactory(),
                             ServerApplicationModule.connectionFactory())
                     .get(configuration.getAddress().get());
-            return monitor.listen(
-                    FrontendServerService.newInstance(connections, serverExecutor, locator));
+            return FrontendServerService.newInstance(connections, serverExecutor, locator);
         }
 
         @Override
@@ -147,8 +145,6 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
 
     @Override
     protected void startUp() throws Exception {
-        Dependencies.startDependenciesAndWait(this, locator());
-        
         // global barrier - wait for all volumes to be assigned
         AllVolumesAssigned.call( 
                 locator().getInstance(ControlMaterializerService.class).materializer()).get();

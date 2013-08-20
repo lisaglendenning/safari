@@ -3,15 +3,12 @@ package edu.uw.zookeeper.orchestra.frontend;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.concurrent.ExecutionException;
-
 import javax.annotation.Nullable;
-
-import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -25,11 +22,8 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.CachedLookup;
-import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -42,7 +36,7 @@ import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({PeerToEnsembleLookup.class, PeerConnectionsService.class})
-public class EnsembleConnectionsService extends DependentService.SimpleDependentService {
+public class EnsembleConnectionsService extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -53,22 +47,18 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         public Module() {}
 
         @Provides @Singleton
-        public EnsembleConnectionsService getEnsemblePeerService(
+        public EnsembleConnectionsService getEnsembleConnectionsService(
                 PeerConfiguration peer,
                 EnsembleConfiguration ensemble,
                 ControlMaterializerService<?> control,
                 PeerToEnsembleLookup peerToEnsemble,
-                ClientPeerConnections peerConnections,
-                ServiceLocator locator,
-                DependentServiceMonitor monitor) throws InterruptedException, ExecutionException, KeeperException {
-            return monitor.listen(
-                    EnsembleConnectionsService.newInstance(
+                ClientPeerConnections peerConnections) {
+            return EnsembleConnectionsService.newInstance(
                             peer.getView().id(),
                             ensemble.getEnsemble(),
                             peerToEnsemble.get().asLookup().first(),
                             peerConnections, 
-                            control, 
-                            locator));
+                            control);
         }
 
         @Override
@@ -83,8 +73,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
             Identifier myEnsemble,
             Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections peerConnections,
-            ControlMaterializerService<?> control,
-            ServiceLocator locator) {
+            ControlMaterializerService<?> control) {
         CachedLookup<Identifier, Identifier> selectedPeers = 
                 CachedLookup.create(
                         SelectSelfTask.create(
@@ -93,8 +82,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
                 selectedPeers,
                 peerToEnsemble,
                 peerConnections,
-                control,
-                locator);
+                control);
     }
     
     protected final ControlMaterializerService<?> control;
@@ -107,9 +95,7 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
             CachedLookup<Identifier, Identifier> selectedPeers,
             Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections peerConnections,
-            ControlMaterializerService<?> control,
-            ServiceLocator locator) {
-        super(locator);
+            ControlMaterializerService<?> control) {
         this.control = control;
         this.peerToEnsemble = peerToEnsemble;
         this.peerConnections = peerConnections;
@@ -137,8 +123,6 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
         for (ClientPeerConnection<?> c: peerConnections) {
             handleClientPeerConnection(c);
         }
-        
-        super.startUp();
 
         // establish a peer connection per ensemble
         Futures.transform(
@@ -160,7 +144,6 @@ public class EnsembleConnectionsService extends DependentService.SimpleDependent
     
     @Override
     protected void shutDown() throws Exception {
-        super.shutDown();
     }
     
     protected class UnselectOnClose {

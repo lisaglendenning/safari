@@ -27,11 +27,11 @@ public class SimplePeerConfiguration extends AbstractModule {
 
     @Provides @Singleton
     public PeerConfiguration getPeerConfiguration(
-            ControlMaterializerService<?> controlClient, 
+            ControlMaterializerService<?> control, 
             Factory<? extends SocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
         ServerInetAddressView address = 
                 ServerInetAddressView.of((InetSocketAddress) addresses.get());
-        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, controlClient.materializer()).get();
+        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
         return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address));
     }
 }
