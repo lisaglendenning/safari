@@ -8,7 +8,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 
-@MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_OPEN_RESPONSE)
+@MessageBodyType(MessageType.MESSAGE_TYPE_SESSION_OPEN_RESPONSE)
 public class MessageSessionOpenResponse extends OpenSessionMessage<ConnectMessage.Response> {
 
     public static MessageSessionOpenResponse of(

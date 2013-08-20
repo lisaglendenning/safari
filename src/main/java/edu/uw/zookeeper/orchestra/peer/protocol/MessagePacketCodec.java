@@ -20,6 +20,7 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
     static {
         for (Class<? extends MessageBody> cls: ImmutableList.of(
                 MessageHandshake.class,
+                MessageHeartbeat.class,
                 MessageSessionOpenRequest.class,
                 MessageSessionOpenResponse.class,
                 MessageSessionRequest.class,

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 
-@MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_REQUEST)
+@MessageBodyType(MessageType.MESSAGE_TYPE_SESSION_REQUEST)
 public class MessageSessionRequest extends SessionMessage<ShardedRequestMessage<?>> {
 
     public static MessageSessionRequest of(

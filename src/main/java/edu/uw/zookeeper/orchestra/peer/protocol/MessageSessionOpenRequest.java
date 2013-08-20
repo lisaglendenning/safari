@@ -9,7 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.protocol.ConnectMessage;
 
-@MessageBodyType(type=MessageType.MESSAGE_TYPE_SESSION_OPEN_REQUEST)
+@MessageBodyType(MessageType.MESSAGE_TYPE_SESSION_OPEN_REQUEST)
 public class MessageSessionOpenRequest extends OpenSessionMessage<ConnectMessage.Request> {
 
     public static MessageSessionOpenRequest of(

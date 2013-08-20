@@ -15,7 +15,7 @@ public abstract class MessageTypes {
     public static Class<? extends MessageBody> register(Class<? extends MessageBody> cls) {
         MessageBodyType annotation = cls.getAnnotation(MessageBodyType.class);
         checkArgument(annotation != null, cls);
-        return types.put(annotation.type(), cls);
+        return types.put(annotation.value(), cls);
     }
     
     public static Class<? extends MessageBody> registerType(MessageType type, Class<? extends MessageBody> cls) {

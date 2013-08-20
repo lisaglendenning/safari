@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.orchestra.common.Identifier;
 
-@MessageBodyType(type=MessageType.MESSAGE_TYPE_HANDSHAKE)
+@MessageBodyType(MessageType.MESSAGE_TYPE_HANDSHAKE)
 public class MessageHandshake extends IdentifierMessage<Identifier> {
 
     public static MessageHandshake of(Identifier id) {

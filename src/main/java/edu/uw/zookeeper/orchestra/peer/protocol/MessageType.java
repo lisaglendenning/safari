@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra.peer.protocol;
 public enum MessageType {
     MESSAGE_TYPE_NONE,
     MESSAGE_TYPE_HANDSHAKE,
+    MESSAGE_TYPE_HEARTBEAT,
     MESSAGE_TYPE_SESSION_OPEN_REQUEST,
     MESSAGE_TYPE_SESSION_OPEN_RESPONSE,
     MESSAGE_TYPE_SESSION_REQUEST,

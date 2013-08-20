@@ -6,5 +6,5 @@ import java.lang.annotation.*;
 @Inherited
 @Retention(RetentionPolicy.RUNTIME)
 public @interface MessageBodyType {
-    MessageType type();
+    MessageType value();
 }
