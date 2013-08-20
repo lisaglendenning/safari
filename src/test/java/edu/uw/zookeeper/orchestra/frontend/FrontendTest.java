@@ -54,6 +54,7 @@ public class FrontendTest {
                     ControlTest.module(),
                     PeerTest.module(),
                     SimpleBackendConfiguration.create(),
+                    EnsembleConfiguration.module(),
                     create());
         }
 
@@ -69,7 +70,6 @@ public class FrontendTest {
             Module[] modules = {
                     VolumeCacheService.module(),
                     AssignmentCacheService.module(),
-                    EnsembleConfiguration.module(),
                     SimpleFrontend.create() };
             return modules;
         }

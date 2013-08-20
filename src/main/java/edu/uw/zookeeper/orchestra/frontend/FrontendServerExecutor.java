@@ -9,7 +9,6 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
-import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
@@ -28,14 +27,15 @@ import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.Reference;
-import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.event.SessionStateEvent;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
+import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
@@ -66,8 +66,8 @@ import edu.uw.zookeeper.server.ExpiringSessionTable;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
 import edu.uw.zookeeper.server.SessionTable;
 
-@DependsOn({EnsembleConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
-public class FrontendServerExecutor extends AbstractIdleService {
+@DependsOn({EnsembleConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class, ExpiringSessionService.class })
+public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {
         return new Module();
@@ -87,14 +87,17 @@ public class FrontendServerExecutor extends AbstractIdleService {
         @Provides @Singleton
         public ExpiringSessionTable getSessionTable(
                 Configuration configuration,
-                Factory<? extends Publisher> publishers,
-                ScheduledExecutorService executor,
-                ServiceMonitor monitor) {
+                Factory<? extends Publisher> publishers) {
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(configuration);
-            ExpiringSessionTable sessions = ExpiringSessionTable.newInstance(publishers.get(), policy);
-            ExpiringSessionService expires = ExpiringSessionService.newInstance(sessions, executor, configuration);   
-            monitor.add(expires);
-            return sessions;
+            return ExpiringSessionTable.newInstance(publishers.get(), policy);
+        }
+
+        @Provides @Singleton
+        public ExpiringSessionService getExpiringSessionService(
+                Configuration configuration,
+                ScheduledExecutorService executor,
+                ExpiringSessionTable sessions) {
+            return ExpiringSessionService.newInstance(sessions, executor, configuration);
         }
         
         @Provides @Singleton
@@ -104,6 +107,7 @@ public class FrontendServerExecutor extends AbstractIdleService {
 
         @Provides @Singleton
         public FrontendServerExecutor getServerExecutor(
+                ServiceLocator locator,
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
                 PeerToEnsembleLookup peerToEnsemble,
@@ -113,7 +117,7 @@ public class FrontendServerExecutor extends AbstractIdleService {
                 ExpiringSessionTable sessions,
                 Generator<Long> zxids) {
             return FrontendServerExecutor.newInstance(
-                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids);
+                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator);
         }
 
         @Provides @Singleton
@@ -131,10 +135,11 @@ public class FrontendServerExecutor extends AbstractIdleService {
             EnsembleConnectionsService ensembles,
             Executor executor,
             ExpiringSessionTable sessions,
-            Generator<Long> zxids) {
+            Generator<Long> zxids,
+            ServiceLocator locator) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
         FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
-        return new FrontendServerExecutor(handlers, server, peers);
+        return new FrontendServerExecutor(handlers, server, peers, locator);
     }
     
     protected final FrontendServerTaskExecutor executor;
@@ -144,7 +149,9 @@ public class FrontendServerExecutor extends AbstractIdleService {
     protected FrontendServerExecutor(
             ConcurrentMap<Long, FrontendSessionExecutor> handlers,
             FrontendServerTaskExecutor executor,
-            ClientPeerConnections connections) {
+            ClientPeerConnections connections,
+            ServiceLocator locator) {
+        super(locator);
         this.handlers = handlers;
         this.executor = executor;
         this.connections = new ClientPeerConnectionListener(handlers, connections);
@@ -156,12 +163,14 @@ public class FrontendServerExecutor extends AbstractIdleService {
 
     @Override
     protected void startUp() throws Exception {
+        super.startUp();
         connections.start();
     }
 
     
     @Override
     protected void shutDown() throws Exception {
+        super.shutDown();
         connections.stop();
     }
     

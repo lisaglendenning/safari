@@ -38,6 +38,7 @@ public class SimpleMain extends DependentModule {
                 ControlTest.module(),
                 PeerTest.module(),
                 BackendTest.module(),
+                EnsembleMemberService.module(),
                 FrontendTest.module() };
         return modules;
     }
