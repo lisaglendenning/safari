@@ -24,7 +24,6 @@ import edu.uw.zookeeper.GetEvent;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.Hash;
@@ -47,6 +46,14 @@ public class ShardedClientConnectionExecutorTest {
     
     public static class Module extends SimpleClient {
         
+        public static Injector injector() {
+            return Guice.createInjector(create());
+        }
+        
+        public static Module create() {
+            return new Module();
+        }
+
         @Provides @Singleton
         public VolumeCache getVolumes() {
             return VolumeCache.newInstance();
@@ -55,7 +62,7 @@ public class ShardedClientConnectionExecutorTest {
     
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
-        Injector injector = Guice.createInjector(new Module());
+        Injector injector = Module.injector();
         VolumeCache volumes = injector.getInstance(VolumeCache.class);
         
         Function<ZNodeLabel.Path, Identifier> lookup = BackendRequestService.newVolumePathLookup(volumes);
@@ -71,9 +78,8 @@ public class ShardedClientConnectionExecutorTest {
             volumes.put(Volume.of(Hash.default32().apply(path.toString()).asIdentifier(), VolumeDescriptor.of(path)));
         }
         
+        injector.getInstance(Module.SimpleClientService.class).start().get();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
-        monitor.add(injector.getInstance(SimpleServer.class));
-        monitor.add(injector.getInstance(ClientConnectionFactory.class));
         monitor.start().get();
 
         GetEvent<Connection<?>> connectEvent = GetEvent.create(injector.getInstance(SimpleServer.class).getConnections().connections());
