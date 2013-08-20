@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import java.util.SortedSet;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -88,7 +89,8 @@ public class ShardedClientConnectionExecutorTest {
                 translator, 
                 lookup, 
                 ConnectMessage.Request.NewRequest.newInstance(),
-                injector.getInstance(Key.get(new TypeLiteral<ListenableFuture<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>>(){})).get());
+                injector.getInstance(Key.get(new TypeLiteral<ListenableFuture<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>>(){})).get(),
+                injector.getInstance(ScheduledExecutorService.class));
         
         Connection<?> serverConnection = connectEvent.get();
         

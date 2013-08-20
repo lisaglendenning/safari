@@ -7,16 +7,16 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
+import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutorService;
 
 @DependsOn(ControlConnectionsService.class)
-public class ControlMaterializerService<C extends Connection<? super Operation.Request>> extends ClientConnectionExecutorService<C> {
+public class ControlMaterializerService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ClientConnectionExecutorService<C> {
 
     public static Module module() {
         return new Module();
@@ -46,7 +46,7 @@ public class ControlMaterializerService<C extends Connection<? super Operation.R
         }
     }
     
-    public static <C extends Connection<? super Operation.Request>> ControlMaterializerService<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ControlMaterializerService<C> newInstance(
             ControlConnectionsService<C> connections) {
         return new ControlMaterializerService<C>(connections);
     }

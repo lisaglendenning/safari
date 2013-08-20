@@ -1,13 +1,16 @@
 package edu.uw.zookeeper.orchestra.backend;
 
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
 import com.google.common.base.Function;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedOperation;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequest;
@@ -16,6 +19,8 @@ import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
+import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.client.AssignXidProcessor;
@@ -25,47 +30,56 @@ import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 
-public class ShardedClientConnectionExecutor<C extends Connection<? super Message.ClientSession>> extends ClientConnectionExecutor<C> {
+public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ClientConnectionExecutor<C> {
 
-    public static <C extends Connection<? super Message.ClientSession>> ShardedClientConnectionExecutor<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ShardedClientConnectionExecutor<C> newInstance(
             ShardedOperationTranslators translator,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ConnectMessage.Request request,
-            C connection) {
+            C connection,
+            ScheduledExecutorService executor) {
         return newInstance(
                 translator,
                 lookup,
                 request,
                 AssignXidProcessor.newInstance(),
-                connection);
+                connection,
+                executor);
     }
 
-    public static <C extends Connection<? super Message.ClientSession>> ShardedClientConnectionExecutor<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ShardedClientConnectionExecutor<C> newInstance(
             ShardedOperationTranslators translator,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ConnectMessage.Request request,
             AssignXidProcessor xids,
-            C connection) {
+            C connection,
+            ScheduledExecutorService executor) {
         return newInstance(
                 translator,
                 lookup,
                 ConnectTask.create(connection, request),
                 xids,
-                connection);
+                connection,
+                TimeValue.create(Long.valueOf(request.getTimeOut()), TimeUnit.MILLISECONDS),
+                executor);
     }
 
-    public static <C extends Connection<? super Message.ClientSession>> ShardedClientConnectionExecutor<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ShardedClientConnectionExecutor<C> newInstance(
             ShardedOperationTranslators translator,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ListenableFuture<ConnectMessage.Response> session,
             AssignXidProcessor xids,
-            C connection) {
+            C connection,
+            TimeValue timeOut,
+            ScheduledExecutorService executor) {
         return new ShardedClientConnectionExecutor<C>(
                 lookup,
                 translator,
                 session, 
                 xids,
-                connection);
+                connection,
+                timeOut,
+                executor);
     }
 
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
@@ -76,8 +90,10 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
             ShardedOperationTranslators translator,
             ListenableFuture<ConnectMessage.Response> session,
             AssignXidProcessor xids,
-            C connection) {
-        super(session, xids, connection);
+            C connection,
+            TimeValue timeOut,
+            ScheduledExecutorService executor) {
+        super(session, xids, connection, timeOut, executor);
         this.lookup = lookup;
         this.translator = translator;
     }
@@ -119,6 +135,7 @@ public class ShardedClientConnectionExecutor<C extends Connection<? super Messag
     @Subscribe
     public void handleResponse(Message.ServerResponse<?> message) {
         if ((state() != State.TERMINATED) && !(message instanceof ShardedOperation)) {
+            timeOut.send(message);
             int xid = message.getXid();
             if (xid != OpCodeXid.PING.getXid()) {
                 ShardedResponseMessage<?> unshardedResponse;

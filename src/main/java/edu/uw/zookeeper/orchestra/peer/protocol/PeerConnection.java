@@ -131,7 +131,7 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
         @Override
         protected void doRun() {
             if (parameters.remaining() <= 0) {
-                PeerConnection.this.close();
+                close();
             }
         }
     }

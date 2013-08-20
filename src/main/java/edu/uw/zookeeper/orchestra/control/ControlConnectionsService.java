@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.util.concurrent.ScheduledExecutorService;
+
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Provides;
@@ -17,12 +19,14 @@ import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.orchestra.ClientConnectionsModule;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 
-class ControlConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
+class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
 
     public static Module module() {
         return new Module();
@@ -43,11 +47,12 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
         public ControlConnectionsService<?> getControlConnectionsService(
                 ControlConfiguration configuration,
                 ListeningExecutorServiceFactory executors,
-                NetClientModule clients) {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
+                NetClientModule clients,
+                ScheduledExecutorService executor) {
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
                     getClientConnectionFactory(configuration.getTimeOut(), executors, clients);
             ControlConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    ControlConnectionsService.newInstance(configuration, clientConnections);
+                    ControlConnectionsService.newInstance(configuration, connections, executor);
             return instance;
         }
 
@@ -58,15 +63,17 @@ class ControlConnectionsService<C extends Connection<? super Operation.Request>>
         }
     }
     
-    public static <C extends Connection<? super Operation.Request>> ControlConnectionsService<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ControlConnectionsService<C> newInstance(
             ControlConfiguration configuration,
-            ClientConnectionFactory<C> connections) {
+            ClientConnectionFactory<C> connections,
+            ScheduledExecutorService executor) {
         EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory = 
                 EnsembleViewFactory.newInstance(
                         connections,
                         ServerInetAddressView.class, 
                         configuration.getEnsemble(), 
-                        configuration.getTimeOut());
+                        configuration.getTimeOut(),
+                        executor);
         return new ControlConnectionsService<C>(connections, factory);
     }
 

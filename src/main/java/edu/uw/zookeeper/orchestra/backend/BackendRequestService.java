@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra.backend;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.base.Function;
@@ -49,13 +50,15 @@ import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ServerPeerConnect
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
+import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({BackendConnectionsService.class})
-public class BackendRequestService<C extends Connection<? super Operation.Request>> extends AbstractIdleService {
+public class BackendRequestService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -77,9 +80,10 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                 ServiceLocator locator,
                 BackendConnectionsService<?> connections,
                 ServerPeerConnections peers,
-                VolumeCache volumes) throws Exception {
+                VolumeCache volumes,
+                ScheduledExecutorService executor) throws Exception {
             return BackendRequestService.newInstance(
-                    locator, volumes, connections, peers);
+                    locator, volumes, connections, peers, executor);
         }
 
         @Override
@@ -89,16 +93,19 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
     }
     
-    public static <C extends Connection<? super Operation.Request>> BackendRequestService<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> BackendRequestService<C> newInstance(
             ServiceLocator locator,
             VolumeCache volumes,
             BackendConnectionsService<C> connections,
-            ServerPeerConnections peers) {
+            ServerPeerConnections peers,
+            ScheduledExecutorService executor) {
         BackendRequestService<C> instance = new BackendRequestService<C>(
-                connections, peers, 
+                connections, 
+                peers, 
                 newVolumePathLookup(volumes), 
                 VolumeShardedOperationTranslators.of(
-                        newVolumeIdLookup(volumes)));
+                        newVolumeIdLookup(volumes)),
+                executor);
         instance.new Advertiser(locator, MoreExecutors.sameThreadExecutor());
         return instance;
     }
@@ -129,17 +136,20 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     protected final ShardedOperationTranslators translator;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     protected final ServerPeerConnectionListener listener;
+    protected final ScheduledExecutorService executor;
     
     protected BackendRequestService(
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
-            ShardedOperationTranslators translator) {
+            ShardedOperationTranslators translator,
+            ScheduledExecutorService executor) {
         this.connections = connections;
-        this.peers = new MapMaker().makeMap();
-        this.clients = new MapMaker().makeMap();
         this.lookup = lookup;
         this.translator = translator;
+        this.executor = executor;
+        this.peers = new MapMaker().makeMap();
+        this.clients = new MapMaker().makeMap();
         this.listener = new ServerPeerConnectionListener(peers);
     }
     
@@ -150,7 +160,9 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
     @Override
     protected void startUp() throws Exception {
         ClientConnectionExecutor<C> client = ClientConnectionExecutor.newInstance(
-                ConnectMessage.Request.NewRequest.newInstance(), connections.get().get());
+                ConnectMessage.Request.NewRequest.newInstance(), 
+                connections.get().get(),
+                executor);
         Control.createPrefix(Materializer.newInstance(
                 BackendSchema.getInstance().get(), 
                 JacksonModule.getSerializer(), 
@@ -201,7 +213,8 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
                     translator, 
                     lookup, 
                     request, 
-                    connection);
+                    connection,
+                    executor);
         }
     }
 
@@ -408,9 +421,9 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         }
     } 
     
-    protected static class SessionOpenResponseTask<C extends Connection<? super Operation.Request>> extends PromiseTask<MessageSessionOpenRequest, MessagePacket> implements Runnable, FutureCallback<MessagePacket> {
+    protected static class SessionOpenResponseTask<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends PromiseTask<MessageSessionOpenRequest, MessagePacket> implements Runnable, FutureCallback<MessagePacket> {
         
-        public static <C extends Connection<? super Operation.Request>>
+        public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>>
         SessionOpenResponseTask<C> create(
                 MessageSessionOpenRequest request,
                 Connection<MessagePacket> connection,

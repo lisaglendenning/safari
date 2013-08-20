@@ -17,12 +17,14 @@ import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.orchestra.ClientConnectionsModule;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 
-public class BackendConnectionsService<C extends Connection<? super Operation.Request>> extends ForwardingService implements Factory<ListenableFuture<C>>, Function<C,C> {
+public class BackendConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<C>>, Function<C,C> {
 
     public static Module module() {
         return new Module();
@@ -59,7 +61,7 @@ public class BackendConnectionsService<C extends Connection<? super Operation.Re
         }
     }
     
-    public static <C extends Connection<? super Operation.Request>> BackendConnectionsService<C> newInstance(
+    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> BackendConnectionsService<C> newInstance(
             BackendConfiguration configuration,
             ClientConnectionFactory<C> connections) {
         FixedClientConnectionFactory<C> factory = 
