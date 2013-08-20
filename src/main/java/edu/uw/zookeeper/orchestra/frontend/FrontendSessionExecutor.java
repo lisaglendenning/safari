@@ -141,6 +141,11 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     }
 
     @Override
+    protected Logger logger() {
+        return logger;
+    }
+
+    @Override
     public void register(Object handler) {
         publisher.register(handler);
     }

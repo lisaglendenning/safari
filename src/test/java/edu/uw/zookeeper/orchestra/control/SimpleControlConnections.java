@@ -21,7 +21,7 @@ public class SimpleControlConnections extends ControlConnectionsService.Module {
     @Override
     protected <I extends Operation.Request, T extends ProtocolCodec<?, ?>, C extends Connection<? super Operation.Request>> ParameterizedFactory<Pair<Pair<Class<I>, T>, C>, ? extends ProtocolCodecConnection<I,T,C>> getConnectionFactory(
             TimeValue timeOut, ListeningExecutorServiceFactory executors) { 
-        return protocolCodecConnectionFactory();
+        return ProtocolCodecConnection.factory();
     }
 
     @Override

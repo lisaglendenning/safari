@@ -207,6 +207,11 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
     }
 
     @Override
+    protected Logger logger() {
+        return logger;
+    }
+
+    @Override
     protected synchronized void doRun() throws ExecutionException {
         finger = mailbox.iterator();
         BackendRequestFuture next;

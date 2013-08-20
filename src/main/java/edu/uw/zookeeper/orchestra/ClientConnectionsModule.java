@@ -17,17 +17,6 @@ import edu.uw.zookeeper.protocol.client.PingingClient;
 
 public abstract class ClientConnectionsModule extends DependentModule {
     
-    public static <I extends Operation.Request, T extends ProtocolCodec<?, ?>, C extends Connection<? super Operation.Request>> ParameterizedFactory<Pair<Pair<Class<I>, T>, C>, ? extends ProtocolCodecConnection<I,T,C>> protocolCodecConnectionFactory() { 
-        return new ParameterizedFactory<Pair<Pair<Class<I>, T>, C>, ProtocolCodecConnection<I,T,C>>() {
-            @Override
-            public ProtocolCodecConnection<I,T,C> get(Pair<Pair<Class<I>, T>, C> value) {
-                return ProtocolCodecConnection.newInstance(
-                        value.first().second(),
-                        value.second());
-            }
-        };    
-    }
-    
     protected ParameterizedFactory<Publisher, Pair<Class<Operation.Request>, AssignXidCodec>> getCodecFactory() {
         return ClientApplicationModule.codecFactory();
     }
@@ -50,6 +39,6 @@ public abstract class ClientConnectionsModule extends DependentModule {
             NetClientModule clients) {
         return clients.getClientConnectionFactory(
                     getCodecFactory(), 
-                    ClientConnectionsModule.<Operation.Request,AssignXidCodec,Connection<Operation.Request>>protocolCodecConnectionFactory()).get();
+                    ProtocolCodecConnection.<Operation.Request,AssignXidCodec,Connection<Operation.Request>>factory()).get();
     }
 }
