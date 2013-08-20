@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra.frontend;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+
 import javax.annotation.Nullable;
 
 import com.google.common.base.Function;
@@ -27,12 +28,12 @@ import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.orchestra.peer.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.EnsembleConfiguration;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.PeerConnectionsService;
+import edu.uw.zookeeper.orchestra.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({PeerToEnsembleLookup.class, PeerConnectionsService.class})

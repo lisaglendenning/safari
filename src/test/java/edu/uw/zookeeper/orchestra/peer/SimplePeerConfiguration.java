@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra.peer;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.zookeeper.KeeperException;
 
@@ -12,6 +13,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 
@@ -32,6 +34,7 @@ public class SimplePeerConfiguration extends AbstractModule {
         ServerInetAddressView address = 
                 ServerInetAddressView.of((InetSocketAddress) addresses.get());
         ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
-        return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address));
+        TimeValue timeOut = TimeValue.create(0L, TimeUnit.MILLISECONDS);
+        return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
     }
 }

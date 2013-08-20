@@ -9,8 +9,10 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.client.ClientApplicationModule;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Configuration;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
@@ -37,9 +39,10 @@ public class PeerConfiguration {
                 ControlMaterializerService<?> control, 
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
             ServerInetAddressView address = ServerApplicationModule.ConfigurableServerAddressViewFactory.newInstance(
-                            "Peer", "address", "peerAddress", "", 2281).get(configuration);
+                    "peerAddress", "address", CONFIG_PATH, "", 2281).get(configuration);
             ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
-            return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address));
+            TimeValue timeOut = ClientApplicationModule.TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
+            return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
         }
     }
 
@@ -48,14 +51,24 @@ public class PeerConfiguration {
         Operation.ProtocolResponse<?> result = entity.presence().create(materializer).get();
         Operations.unlessError(result.getRecord());
     }
+
+    public static final String CONFIG_PATH = "Peer";
     
     private final PeerAddressView address;
+    private final TimeValue timeOut;
     
-    public PeerConfiguration(PeerAddressView address) {
+    public PeerConfiguration(
+            PeerAddressView address,
+            TimeValue timeOut) {
         this.address = address;
+        this.timeOut = timeOut;
     }
     
     public PeerAddressView getView() {
         return address;
+    }
+    
+    public TimeValue getTimeOut() {
+        return timeOut;
     }
 }

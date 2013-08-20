@@ -31,11 +31,11 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.LinkedIterator;
 import edu.uw.zookeeper.orchestra.common.LinkedQueue;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 
 public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor.BackendRequestFuture> implements TaskExecutor<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> {

@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
+
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
@@ -56,10 +57,10 @@ import edu.uw.zookeeper.orchestra.common.LinkedIterator;
 import edu.uw.zookeeper.orchestra.common.LinkedQueue;
 import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.data.Volume;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Ping;

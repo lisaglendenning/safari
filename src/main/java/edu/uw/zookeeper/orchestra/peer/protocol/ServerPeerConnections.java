@@ -1,30 +1,34 @@
-package edu.uw.zookeeper.orchestra.peer;
+package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import java.net.SocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.eventbus.Subscribe;
 
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageType;
+import edu.uw.zookeeper.orchestra.peer.IdentifierSocketAddress;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ServerPeerConnection;
 
 public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<Connection<? super MessagePacket>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket>>> {
 
     public static ServerPeerConnections newInstance(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
-        return new ServerPeerConnections(identifier, connections);
+        return new ServerPeerConnections(identifier, timeOut, executor, connections);
     }
     
     public ServerPeerConnections(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
-        super(identifier, connections);
+        super(identifier, timeOut, executor, connections);
     }
 
     @Override
@@ -74,7 +78,7 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
         public void handleMessage(MessagePacket event) {
             if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.first().type()) {
                 MessageHandshake body = event.getBody(MessageHandshake.class);
-                ServerPeerConnection<Connection<? super MessagePacket>> peer = ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier(), body.getIdentifier(), connection);
+                ServerPeerConnection<Connection<? super MessagePacket>> peer = ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier(), body.getIdentifier(), connection, timeOut, executor);
                 connection.unregister(this);
                 put(peer);
             } else {

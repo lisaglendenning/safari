@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra.peer;
 import java.net.SocketAddress;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.zookeeper.KeeperException;
 
@@ -18,6 +19,7 @@ import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Publisher;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
@@ -33,12 +35,14 @@ import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
+import edu.uw.zookeeper.orchestra.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.protocol.FramedMessagePacketCodec;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacketCodec;
+import edu.uw.zookeeper.orchestra.peer.protocol.ServerPeerConnections;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ServerPeerConnection;
 
 @DependsOn({ServerPeerConnections.class, ClientPeerConnections.class})
 public class PeerConnectionsService extends DependentService {
@@ -78,6 +82,7 @@ public class PeerConnectionsService extends DependentService {
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
                 PeerConfiguration configuration,
+                ScheduledExecutorService executor,
                 ControlMaterializerService<?> control,
                 ServiceLocator locator,
                 NetServerModule servers,
@@ -99,6 +104,8 @@ public class PeerConnectionsService extends DependentService {
             IntraVmEndpoint<MessagePacket> clientLoopback = endpoints.get();
             PeerConnectionsService instance = PeerConnectionsService.newInstance(
                     configuration.getView().id(), 
+                    configuration.getTimeOut(),
+                    executor,
                     serverConnections, 
                     clientConnections,
                     IntraVmConnection.create(serverLoopback, clientLoopback),
@@ -129,6 +136,8 @@ public class PeerConnectionsService extends DependentService {
     
     public static PeerConnectionsService newInstance(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             ServerConnectionFactory<? extends Connection<? super MessagePacket>> serverConnectionFactory,
             ClientConnectionFactory<? extends Connection<? super MessagePacket>> clientConnectionFactory,
             Connection<? super MessagePacket> loopbackServer,
@@ -137,6 +146,8 @@ public class PeerConnectionsService extends DependentService {
             ServiceLocator locator) {
         PeerConnectionsService instance = new PeerConnectionsService(
                 identifier, 
+                timeOut,
+                executor,
                 serverConnectionFactory, 
                 clientConnectionFactory, 
                 loopbackServer,
@@ -153,6 +164,8 @@ public class PeerConnectionsService extends DependentService {
     
     protected PeerConnectionsService(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             ServerConnectionFactory<? extends Connection<? super MessagePacket>> serverConnectionFactory,
             ClientConnectionFactory<? extends Connection<? super MessagePacket>> clientConnectionFactory,
             Connection<? super MessagePacket> loopbackServer,
@@ -161,11 +174,11 @@ public class PeerConnectionsService extends DependentService {
             ServiceLocator locator) {
         super(locator);
         this.identifier = identifier;
-        this.servers = new ServerPeerConnections(identifier, serverConnectionFactory);
-        this.clients = new ClientPeerConnections(identifier, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
+        this.servers = new ServerPeerConnections(identifier, timeOut, executor, serverConnectionFactory);
+        this.clients = new ClientPeerConnections(identifier, timeOut, executor, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
         
-        servers.put(ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier, identifier, loopbackServer));
-        clients.put(ClientPeerConnection.<Connection<? super MessagePacket>>create(identifier, identifier, loopbackClient));
+        servers.put(ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier, identifier, loopbackServer, timeOut, executor));
+        clients.put(ClientPeerConnection.<Connection<? super MessagePacket>>create(identifier, identifier, loopbackClient, timeOut, executor));
     }
     
     public Identifier identifier() {

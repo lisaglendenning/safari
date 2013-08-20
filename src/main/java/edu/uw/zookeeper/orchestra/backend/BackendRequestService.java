@@ -37,16 +37,15 @@ import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCache;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ServerPeerConnection;
-import edu.uw.zookeeper.orchestra.peer.ServerPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionOpenResponse;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionResponse;
+import edu.uw.zookeeper.orchestra.peer.protocol.ServerPeerConnections;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ServerPeerConnection;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
@@ -297,7 +296,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
         public void handlePeerMessage(MessagePacket message) {
             switch (message.first().type()) {
             case MESSAGE_TYPE_HANDSHAKE:
-                handleMessageHandshake(message.getBody(MessageHandshake.class));
+            case MESSAGE_TYPE_HEARTBEAT:
                 break;
             case MESSAGE_TYPE_SESSION_OPEN_REQUEST:
                 handleMessageSessionOpen(message.getBody(MessageSessionOpenRequest.class));
@@ -310,11 +309,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             }
         }
         
-        public void handleMessageHandshake(MessageHandshake second) {
-            assert(second.getIdentifier() == get().localAddress().getIdentifier());
-        }
-
-        public void handleMessageSessionOpen(MessageSessionOpenRequest message) {
+        protected void handleMessageSessionOpen(MessageSessionOpenRequest message) {
             long sessionId = message.getIdentifier();
             BackendClient client = clients.get(sessionId);
             if (client == null) {
@@ -328,7 +323,7 @@ public class BackendRequestService<C extends Connection<? super Operation.Reques
             SessionOpenResponseTask.create(message, get(), client.getClient());
         }
 
-        public void handleMessageSessionRequest(MessageSessionRequest message) {
+        protected void handleMessageSessionRequest(MessageSessionRequest message) {
             BackendClient client = clients.get(message.getIdentifier());
             if (client != null) {
                 ListenableFuture<Message.ServerResponse<?>> future;

@@ -1,6 +1,8 @@
-package edu.uw.zookeeper.orchestra.peer;
+package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import java.net.SocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
+
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
@@ -11,6 +13,7 @@ import com.google.common.util.concurrent.MoreExecutors;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
@@ -18,17 +21,18 @@ import edu.uw.zookeeper.orchestra.common.CachedLookup;
 import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.SharedLookup;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
-import edu.uw.zookeeper.orchestra.peer.PeerConnection.ClientPeerConnection;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessageHandshake;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
+import edu.uw.zookeeper.orchestra.peer.IdentifierSocketAddress;
+import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
 
 public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<Connection<? super MessagePacket>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket>>> {
 
     public static ClientPeerConnections newInstance(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
             ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
-        return new ClientPeerConnections(identifier, lookup, connections);
+        return new ClientPeerConnections(identifier, timeOut, executor, lookup, connections);
     }
     
     protected final MessagePacket handshake;
@@ -37,9 +41,11 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
     
     public ClientPeerConnections(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
             ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
-        super(identifier, connections);
+        super(identifier, timeOut, executor, connections);
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
         this.addressLookup = lookup;
         this.lookups = CachedLookup.create(
@@ -89,14 +95,14 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
     }
 
     @Override
-    protected ClientPeerConnection<Connection<? super MessagePacket>> put(ClientPeerConnection<Connection<? super MessagePacket>> v) {
+    public ClientPeerConnection<Connection<? super MessagePacket>> put(ClientPeerConnection<Connection<? super MessagePacket>> v) {
         ClientPeerConnection<Connection<? super MessagePacket>> prev = super.put(v);
         handshake(v);
         return prev;
     }
 
     @Override
-    protected ClientPeerConnection<Connection<? super MessagePacket>> putIfAbsent(ClientPeerConnection<Connection<? super MessagePacket>> v) {
+    public ClientPeerConnection<Connection<? super MessagePacket>> putIfAbsent(ClientPeerConnection<Connection<? super MessagePacket>> v) {
         ClientPeerConnection<Connection<? super MessagePacket>> prev = super.putIfAbsent(v);
         if (prev == null) {
             handshake(v);
@@ -224,7 +230,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             try {
                 if (! isDone()) {
                     set(ClientPeerConnection.<Connection<? super MessagePacket>>create(
-                            identifier(), task(), result));
+                            identifier(), task(), result, timeOut, executor));
                 } else {
                     result.close();
                 }

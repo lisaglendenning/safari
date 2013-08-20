@@ -1,9 +1,10 @@
-package edu.uw.zookeeper.orchestra.peer;
+package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
@@ -11,21 +12,27 @@ import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ForwardingService;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
 
 public abstract class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends ForwardingService implements ConnectionFactory<V> {
 
     protected final Identifier identifier;
+    protected final TimeValue timeOut;
+    protected final ScheduledExecutorService executor;
     protected final ConnectionFactory<? extends Connection<? super MessagePacket>> connections;
     protected final ConcurrentMap<Identifier, V> peers;
     
     protected PeerConnections(
             Identifier identifier,
+            TimeValue timeOut,
+            ScheduledExecutorService executor,
             ConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
         this.identifier = identifier;
+        this.timeOut = timeOut;
+        this.executor = executor;
         this.connections = connections;
         this.peers = new MapMaker().makeMap();
     }
@@ -74,7 +81,7 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
         connections.unregister(handler);
     }
     
-    protected V put(V v) {
+    public V put(V v) {
         V prev = peers.put(v.remoteAddress().getIdentifier(), v);
         new RemoveOnClose(v);
         if (prev != null) {
@@ -84,7 +91,7 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
         return prev;
     }
 
-    protected V putIfAbsent(V v) {
+    public V putIfAbsent(V v) {
         V prev = peers.putIfAbsent(v.remoteAddress().getIdentifier(), v);
         if (prev != null) {
             v.close();
