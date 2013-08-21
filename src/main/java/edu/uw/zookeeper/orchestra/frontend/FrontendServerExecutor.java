@@ -78,7 +78,6 @@ public class FrontendServerExecutor extends DependentService {
         @Override
         protected void configure() {
             bind(ServerTaskExecutor.class).to(FrontendServerTaskExecutor.class).in(Singleton.class);
-            bind(ZxidEpochIncrementer.class).in(Singleton.class);
             bind(ZxidGenerator.class).to(ZxidEpochIncrementer.class).in(Singleton.class);
             bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
         }
