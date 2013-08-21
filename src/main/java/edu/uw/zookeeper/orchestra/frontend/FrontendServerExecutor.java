@@ -14,19 +14,15 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
-import com.google.inject.TypeLiteral;
-
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Factory;
-import edu.uw.zookeeper.common.Generator;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Publisher;
-import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.event.SessionStateEvent;
@@ -56,6 +52,8 @@ import edu.uw.zookeeper.protocol.server.ConnectTableProcessor;
 import edu.uw.zookeeper.protocol.server.FourLetterRequestProcessor;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
+import edu.uw.zookeeper.protocol.server.ZxidGenerator;
+import edu.uw.zookeeper.protocol.server.ZxidReference;
 import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
@@ -80,8 +78,9 @@ public class FrontendServerExecutor extends DependentService {
         @Override
         protected void configure() {
             bind(ServerTaskExecutor.class).to(FrontendServerTaskExecutor.class).in(Singleton.class);
-            bind(new TypeLiteral<Generator<Long>>() {}).to(ZxidEpochIncrementer.class).in(Singleton.class);
-            bind(new TypeLiteral<Reference<Long>>() {}).to(ZxidEpochIncrementer.class).in(Singleton.class);
+            bind(ZxidEpochIncrementer.class).in(Singleton.class);
+            bind(ZxidGenerator.class).to(ZxidEpochIncrementer.class).in(Singleton.class);
+            bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
         }
 
         @Provides @Singleton
@@ -115,7 +114,7 @@ public class FrontendServerExecutor extends DependentService {
                 EnsembleConnectionsService ensembles,
                 Executor executor,
                 ExpiringSessionTable sessions,
-                Generator<Long> zxids) {
+                ZxidGenerator zxids) {
             return FrontendServerExecutor.newInstance(
                             volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator);
         }
@@ -135,7 +134,7 @@ public class FrontendServerExecutor extends DependentService {
             EnsembleConnectionsService ensembles,
             Executor executor,
             ExpiringSessionTable sessions,
-            Generator<Long> zxids,
+            ZxidGenerator zxids,
             ServiceLocator locator) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
         FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
@@ -179,7 +178,7 @@ public class FrontendServerExecutor extends DependentService {
         public static ResponseProcessor create(
                 ConcurrentMap<Long, FrontendSessionExecutor> handlers,
                 SessionTable sessions,
-                Generator<Long> zxids) {
+                ZxidGenerator zxids) {
             return new ResponseProcessor(handlers, sessions, zxids);
         }
         
@@ -191,7 +190,7 @@ public class FrontendServerExecutor extends DependentService {
         public ResponseProcessor(
                 Map<Long, ?> handlers,
                 SessionTable sessions,
-                Generator<Long> zxids) {
+                ZxidGenerator zxids) {
             this(handlers, sessions, AssignZxidProcessor.newInstance(zxids));
         }
         
@@ -241,7 +240,7 @@ public class FrontendServerExecutor extends DependentService {
                 EnsembleConnectionsService connections,
                 Executor executor,
                 ExpiringSessionTable sessions,
-                Generator<Long> zxids) {
+                ZxidGenerator zxids) {
             TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor = 
                     ServerTaskExecutor.ProcessorExecutor.of(
                             FourLetterRequestProcessor.newInstance());
