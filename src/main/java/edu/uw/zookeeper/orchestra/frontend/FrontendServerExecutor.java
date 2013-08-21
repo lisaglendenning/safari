@@ -44,12 +44,12 @@ import edu.uw.zookeeper.orchestra.peer.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.ConnectMessage;
+import edu.uw.zookeeper.protocol.FourLetterRequest;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.SessionOperation;
-import edu.uw.zookeeper.protocol.FourLetterRequest;
 import edu.uw.zookeeper.protocol.FourLetterResponse;
 import edu.uw.zookeeper.protocol.server.AssignZxidProcessor;
 import edu.uw.zookeeper.protocol.server.ConnectTableProcessor;
@@ -244,7 +244,7 @@ public class FrontendServerExecutor extends DependentService {
                 Generator<Long> zxids) {
             TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor = 
                     ServerTaskExecutor.ProcessorExecutor.of(
-                            FourLetterRequestProcessor.getInstance());
+                            FourLetterRequestProcessor.newInstance());
             TaskExecutor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> connectExecutor = 
                     ServerTaskExecutor.ProcessorExecutor.of(
                             new ConnectProcessor(
