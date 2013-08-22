@@ -74,13 +74,8 @@ public class ControlMaterializerService<C extends ProtocolCodecConnection<? supe
     }
     
     @Override
-    protected ControlConnectionsService<C> factory() {
-        return (ControlConnectionsService<C>) factory;
-    }
-
-    @Override
     protected void startUp() throws Exception {
-        factory().start().get();
+        ((ControlConnectionsService<C>) factory).start().get();
         
         super.startUp();
 

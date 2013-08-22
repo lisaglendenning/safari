@@ -404,31 +404,31 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<U extends Operation.ProtocolResponse<?>, V> extends PromiseTask<TreeFetcher<U, V>, V> implements FutureCallback<Optional<V>> {
+    public static class FetchUntil<V> extends PromiseTask<TreeFetcher<V>, V> implements FutureCallback<Optional<V>> {
     
-        public static <U extends Operation.ProtocolResponse<?>, V> FetchUntil<U,V> newInstance(
+        public static <V> FetchUntil<V> newInstance(
                 ZNodeLabel.Path root, 
                 Processor<? super Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<V>> result, 
-                Materializer<U> materializer) {
-            TreeFetcher<U,V> fetcher = TreeFetcher.<U,V>builder()
+                Materializer<?> materializer) {
+            TreeFetcher<V> fetcher = TreeFetcher.<V>builder()
                     .setResult(result).setClient(materializer).setData(true).setWatch(true).build();
             Promise<V> promise = newPromise();
             return newInstance(root, materializer, fetcher, promise);
         }
     
-        public static <U extends Operation.ProtocolResponse<?>, V> FetchUntil<U,V> newInstance(
-                ZNodeLabel.Path root, Materializer<U> materializer, TreeFetcher<U,V> fetcher, Promise<V> promise) {
-            return new FetchUntil<U,V>(
+        public static <V> FetchUntil<V> newInstance(
+                ZNodeLabel.Path root, Materializer<?> materializer, TreeFetcher<V> fetcher, Promise<V> promise) {
+            return new FetchUntil<V>(
                     root, materializer, fetcher, promise);
         }
     
         protected final ZNodeLabel.Path root;
-        protected final Materializer<U> materializer;
+        protected final Materializer<?> materializer;
         
         public FetchUntil(
                 ZNodeLabel.Path root, 
-                Materializer<U> materializer, 
-                TreeFetcher<U,V> fetcher,
+                Materializer<?> materializer, 
+                TreeFetcher<V> fetcher,
                 Promise<V> promise) {
             super(fetcher, promise);
             this.root = root;
