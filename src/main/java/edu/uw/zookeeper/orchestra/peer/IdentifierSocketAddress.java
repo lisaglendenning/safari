@@ -4,7 +4,7 @@ import java.net.SocketAddress;
 
 import com.google.common.base.Objects;
 
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 
 public class IdentifierSocketAddress extends SocketAddress {
 

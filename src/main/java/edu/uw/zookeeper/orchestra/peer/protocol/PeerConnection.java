@@ -11,7 +11,7 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ForwardingConnection;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.peer.IdentifierSocketAddress;
 import edu.uw.zookeeper.protocol.TimeOutActor;
 import edu.uw.zookeeper.protocol.TimeOutParameters;

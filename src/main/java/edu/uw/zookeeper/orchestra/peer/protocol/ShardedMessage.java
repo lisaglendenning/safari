@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.orchestra.peer.protocol;
 
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Encodable;
 
 public abstract class ShardedMessage<T extends Encodable> extends EncodableMessage<Identifier, T> {

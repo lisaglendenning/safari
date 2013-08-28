@@ -28,7 +28,7 @@ import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.net.Connection;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.LinkedIterator;
 import edu.uw.zookeeper.orchestra.common.LinkedQueue;
 import edu.uw.zookeeper.orchestra.peer.protocol.MessagePacket;
@@ -143,8 +143,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         if (state() == State.TERMINATED) {
             return;
         }
-        int xid = message.getXid();
-        if (xid == OpCodeXid.NOTIFICATION.getXid()) {
+        int xid = message.xid();
+        if (xid == OpCodeXid.NOTIFICATION.xid()) {
             while (pending.hasNext() && pending.peekNext().isDone()) {
                 pending.next();
             }
@@ -153,8 +153,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
             BackendResponseTask task = null;
             OperationFuture<ShardedResponseMessage<?>> next;
             while ((next = pending.peekNext()) != null) {
-                int nextXid = next.getXid();
-                if (nextXid == OpCodeXid.NOTIFICATION.getXid()) {
+                int nextXid = next.xid();
+                if (nextXid == OpCodeXid.NOTIFICATION.xid()) {
                     pending.next();
                 } else if (nextXid == xid) {
                     task = (BackendResponseTask) pending.next();
@@ -268,7 +268,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         public BackendNotification(
                 State state,
                 ShardedResponseMessage<?> message) {
-            checkState(OpCodeXid.NOTIFICATION.getXid() == message.getXid());
+            checkState(OpCodeXid.NOTIFICATION.xid() == message.xid());
             this.state = new AtomicReference<State>(state);
             this.message = message;
         }
@@ -279,8 +279,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         }
         
         @Override
-        public int getXid() {
-            return OpCodeXid.NOTIFICATION.getXid();
+        public int xid() {
+            return OpCodeXid.NOTIFICATION.xid();
         }
         @Override
         public State state() {
@@ -381,8 +381,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         }
         
         @Override
-        public int getXid() {
-            return task().second().getXid();
+        public int xid() {
+            return task().second().xid();
         }
 
         @Override
@@ -423,7 +423,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         
         @Override
         public boolean set(ShardedResponseMessage<?> result) {
-            if (result.getXid() != getXid()) {
+            if (result.xid() != xid()) {
                 throw new IllegalArgumentException(result.toString());
             }
             boolean set = super.set(result);

@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
@@ -41,7 +42,8 @@ import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Hash;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
@@ -81,10 +83,10 @@ public abstract class Control {
         while (iterator.hasNext()) {
             Schema.SchemaNode node = iterator.next();
             Operation.ProtocolResponse<?> result = materializer.operator().exists(node.path()).submit().get();
-            Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
+            Optional<Operation.Error> error = Operations.maybeError(result.record(), KeeperException.Code.NONODE, result.toString());
             if (error.isPresent()) {
                 result = materializer.operator().create(node.path()).submit().get();
-                error = Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS, result.toString());
+                error = Operations.maybeError(result.record(), KeeperException.Code.NODEEXISTS, result.toString());
             }
         }
     }
@@ -241,7 +243,7 @@ public abstract class Control {
                         @Override
                         public @Nullable
                         ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws Exception {
-                            Operations.unlessError(input.getRecord());
+                            Operations.unlessError(input.record());
                             Optional<C> result = creator.call();               
                             if (result.isPresent()) {
                                 return Futures.immediateFuture(result.get());
@@ -266,7 +268,7 @@ public abstract class Control {
                         @Override
                         public @Nullable
                         ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
-                            Optional<Operation.Error> error = Operations.maybeError(input.getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
+                            Optional<Operation.Error> error = Operations.maybeError(input.record(), KeeperException.Code.NODEEXISTS, input.toString());
                             if (error.isPresent()) {
                                 return get(cls, parent, materializer);
                             } else {
@@ -335,7 +337,7 @@ public abstract class Control {
                         @Override
                         public @Nullable
                         ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws Exception {
-                            Operations.unlessError(input.getRecord());
+                            Operations.unlessError(input.record());
                             Optional<C> result = creator.call();               
                             if (result.isPresent()) {
                                 return Futures.immediateFuture(result.get());
@@ -360,7 +362,7 @@ public abstract class Control {
                         @Override
                         public @Nullable
                         ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
-                            Optional<Operation.Error> error = Operations.maybeError(input.getRecord(), KeeperException.Code.NODEEXISTS, input.toString());
+                            Optional<Operation.Error> error = Operations.maybeError(input.record(), KeeperException.Code.NODEEXISTS, input.toString());
                             if (error.isPresent()) {
                                 return get(cls, parent, materializer);
                             } else {
@@ -441,8 +443,8 @@ public abstract class Control {
     
         @Subscribe
         public void handleReply(Operation.ProtocolResponse<?> message) {
-            if (OpCodeXid.NOTIFICATION.getXid() == message.getXid()) {
-                WatchEvent event = WatchEvent.fromRecord((IWatcherEvent) message.getRecord());
+            if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
+                WatchEvent event = WatchEvent.fromRecord((IWatcherEvent) message.record());
                 ZNodeLabel.Path path = event.getPath();
                 if (root.prefixOf(path)) {
                     new Updater(path);
@@ -667,18 +669,18 @@ public abstract class Control {
                 }
         
                 if (valueFuture == null) {
-                    IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().getRecord());
+                    IMultiResponse response = (IMultiResponse) Operations.unlessError(createFuture.get().record());
                     Operation.Error error = null;
                     for (Records.MultiOpResponse e: response) {
                         if (e instanceof Operation.Error) {
                             error = (Operation.Error) e;
-                            switch (error.getError()) {
+                            switch (error.error()) {
                             case OK:
                             case NODEEXISTS:
                             case RUNTIMEINCONSISTENCY:
                                 break;
                             default:
-                                throw KeeperException.create(error.getError());
+                                throw KeeperException.create(error.error());
                             }
                         }
                     }

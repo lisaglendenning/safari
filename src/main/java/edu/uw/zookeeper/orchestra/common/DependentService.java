@@ -5,6 +5,8 @@ import java.util.concurrent.Executor;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import edu.uw.zookeeper.clients.common.ServiceLocator;
+
 public abstract class DependentService extends AbstractIdleService {
 
     protected final ServiceLocator locator;
@@ -25,8 +27,7 @@ public abstract class DependentService extends AbstractIdleService {
     @Override
     protected void startUp() throws Exception {
         locator().getInstance(DependentServiceMonitor.class)
-            .start(getClass().getAnnotation(DependsOn.class))
-            .get();
+            .start(getClass().getAnnotation(DependsOn.class));
     }
 
     @Override

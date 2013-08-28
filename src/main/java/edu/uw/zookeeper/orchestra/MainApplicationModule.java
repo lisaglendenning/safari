@@ -9,14 +9,16 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.RuntimeModule;
+import edu.uw.zookeeper.clients.common.RuntimeModuleProvider;
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Application;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.ServiceApplication;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.frontend.AssignmentCacheService;

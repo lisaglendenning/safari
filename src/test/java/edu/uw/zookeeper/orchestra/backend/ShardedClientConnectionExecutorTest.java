@@ -26,8 +26,8 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
-import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.control.Hash;
+import edu.uw.zookeeper.orchestra.Hash;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCache;
 import edu.uw.zookeeper.orchestra.data.VolumeDescriptor;
@@ -96,13 +96,13 @@ public class ShardedClientConnectionExecutorTest {
         
         GetEvent<Message.ClientRequest<?>> requestEvent = GetEvent.create(serverConnection);
         ListenableFuture<Message.ServerResponse<?>> clientFuture = client.submit(Operations.Requests.getChildren().setPath(volume.getDescriptor().getRoot()).build());
-        assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().getRecord()).getPath());
+        assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().record()).getPath());
         assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get()).getIdentifier());
         
         volume = volumes.get(ZNodeLabel.Path.of("/v1"));
         requestEvent = GetEvent.create(serverConnection);
         clientFuture = client.submit(Operations.Requests.create().setPath(volume.getDescriptor().getRoot()).build());
-        assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().getRecord()).getPath());
+        assertEquals(VolumeShardedOperationTranslators.rootOf(volume.getId()).toString(), ((Records.PathGetter) requestEvent.get().record()).getPath());
         assertEquals(volume.getId(), ((ShardedResponseMessage<?>) clientFuture.get()).getIdentifier());
 
 

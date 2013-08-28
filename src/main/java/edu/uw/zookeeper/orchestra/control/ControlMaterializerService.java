@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import com.google.common.util.concurrent.Service;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
@@ -7,7 +8,7 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
-import edu.uw.zookeeper.orchestra.DependentModule;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Message;
@@ -75,7 +76,19 @@ public class ControlMaterializerService<C extends ProtocolCodecConnection<? supe
     
     @Override
     protected void startUp() throws Exception {
-        ((ControlConnectionsService<C>) factory).start().get();
+        Service factory = (Service) this.factory;
+        switch (factory.state()) {
+        case NEW:
+            factory.startAsync();
+        case STARTING:
+            factory.awaitRunning();
+        case RUNNING:
+            break;
+        case TERMINATED:
+        case STOPPING:
+        case FAILED:
+            throw new IllegalStateException();
+        }
         
         super.startUp();
 

@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.orchestra.peer.protocol;
 
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Operation;
 
 public interface ShardedOperation extends Operation {

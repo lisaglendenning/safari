@@ -4,10 +4,11 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.DefaultMain;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.TimeoutFactory;
 import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
 
@@ -28,20 +29,27 @@ public class ControlConfiguration {
         @Provides @Singleton
         public ControlConfiguration getControlConfiguration(Configuration configuration) {
             EnsembleView<ServerInetAddressView> ensemble = 
-                    ClientApplicationModule.ConfigurableEnsembleViewFactory.newInstance(
-                            CONFIG_PATH, ENSEMBLE_CONFIG_KEY, ENSEMBLE_ARG, DEFAULT_ENSEMBLE_ADDRESS, DEFAULT_ENSEMBLE_PORT)
-                        .get(configuration);
-            TimeValue timeOut = TimeoutFactory.newInstance(CONFIG_PATH)
-                        .get(configuration);
+                    ConfigurableEnsembleView.get(configuration);
+            TimeValue timeOut = ConfigurableTimeout.get(configuration);
             return new ControlConfiguration(ensemble, timeOut);
         }
     }
 
-    public static final String CONFIG_PATH = "Control";
-    public static final String ENSEMBLE_ARG = "control";
-    public static final String ENSEMBLE_CONFIG_KEY = "Ensemble";
-    public static final String DEFAULT_ENSEMBLE_ADDRESS = "localhost";
-    public static final int DEFAULT_ENSEMBLE_PORT = 2381;
+    @Configurable(path="Control", key="Ensemble", arg="control", value="localhost:2381", help="Address:Port,...")
+    public static class ConfigurableEnsembleView extends ClientApplicationModule.ConfigurableEnsembleView {
+
+        public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
+            return new ConfigurableEnsembleView().apply(configuration);
+        }
+    }
+
+    @Configurable(path="Control", key="Timeout", value="30 seconds", help="Time")
+    public static class ConfigurableTimeout extends DefaultMain.ConfigurableTimeout {
+
+        public static TimeValue get(Configuration configuration) {
+            return new ConfigurableTimeout().apply(configuration);
+        }
+    }
     
     protected final EnsembleView<ServerInetAddressView> ensemble;
     protected final TimeValue timeOut;

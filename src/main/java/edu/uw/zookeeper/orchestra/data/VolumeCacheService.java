@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra.data;
 
 import java.util.Map;
+
 import javax.annotation.Nullable;
 
 import org.apache.logging.log4j.LogManager;
@@ -25,8 +26,8 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Schema;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
-import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -107,7 +108,7 @@ public class VolumeCacheService extends AbstractIdleService {
                                 // and update the cache ourselves...
                                 if (!result.isPresent() && input.isPresent()) {
                                     Records.Request request = input.get().first();
-                                    if (request.getOpcode() == OpCode.GET_DATA) {
+                                    if (request.opcode() == OpCode.GET_DATA) {
                                         ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
                                         Schema.SchemaNode schemaNode = ControlSchema.getInstance().get().match(requestPath);
                                         if (schemaNode == ControlSchema.getInstance().byElement(ControlSchema.Volumes.Entity.Volume.class)) {

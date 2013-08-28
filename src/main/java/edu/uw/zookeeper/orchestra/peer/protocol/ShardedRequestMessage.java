@@ -8,7 +8,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -40,12 +40,12 @@ public class ShardedRequestMessage<V extends Records.Request> extends ShardedMes
     }
 
     @Override
-    public int getXid() {
-        return getValue().getXid();
+    public int xid() {
+        return getValue().xid();
     }
 
     @Override
-    public V getRecord() {
-        return getValue().getRecord();
+    public V record() {
+        return getValue().record();
     }
 }

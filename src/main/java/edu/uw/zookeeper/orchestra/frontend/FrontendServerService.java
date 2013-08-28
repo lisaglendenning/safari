@@ -14,6 +14,7 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.TimeValue;
@@ -21,11 +22,10 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
-import edu.uw.zookeeper.orchestra.DependentModule;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -160,14 +160,10 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         super.startUp();
     }
 
-    public class Advertiser implements Service.Listener {
+    public class Advertiser extends Service.Listener {
 
         public Advertiser(Executor executor) {
             addListener(this, executor);
-        }
-        
-        @Override
-        public void starting() {
         }
 
         @Override
@@ -180,18 +176,6 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             }
-        }
-
-        @Override
-        public void stopping(State from) {
-        }
-
-        @Override
-        public void terminated(State from) {
-        }
-
-        @Override
-        public void failed(State from, Throwable failure) {
         }
     }
 }

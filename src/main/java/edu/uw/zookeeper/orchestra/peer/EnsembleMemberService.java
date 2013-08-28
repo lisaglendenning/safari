@@ -28,9 +28,8 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.DependentModule;
-import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
@@ -52,8 +51,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         public EnsembleMemberService getEnsembleMember(
                 EnsembleConfiguration ensembleConfiguration,
                 PeerConfiguration peerConfiguration,
-                ControlMaterializerService<?> control,
-                ServiceLocator locator) {
+                ControlMaterializerService<?> control) {
             ControlSchema.Ensembles.Entity myEnsemble = ControlSchema.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             ControlSchema.Ensembles.Entity.Peers.Member myMember = ControlSchema.Ensembles.Entity.Peers.Member.of(
                     peerConfiguration.getView().id(), 
@@ -135,9 +133,9 @@ public class EnsembleMemberService extends AbstractIdleService {
 
         // Register my identifier
         Message.ServerResponse<?> result = materializer.operator().create(Control.path(myMember.parent())).submit().get();
-        Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
+        Operations.maybeError(result.record(), KeeperException.Code.NODEEXISTS);
         result = materializer.operator().create(myMember.path()).submit().get();
-        Operations.maybeError(result.getRecord(), KeeperException.Code.NODEEXISTS);
+        Operations.maybeError(result.record(), KeeperException.Code.NODEEXISTS);
 
         // Propose myself as leader
         EnsembleRole role = this.role.elect();

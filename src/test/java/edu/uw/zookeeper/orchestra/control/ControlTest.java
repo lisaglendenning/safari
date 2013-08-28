@@ -2,6 +2,7 @@ package edu.uw.zookeeper.orchestra.control;
 
 
 import java.util.concurrent.ExecutionException;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -12,12 +13,12 @@ import com.google.inject.Injector;
 import com.google.inject.Module;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.clients.common.RuntimeModuleProvider;
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.orchestra.DependentModule;
-import edu.uw.zookeeper.orchestra.RuntimeModuleProvider;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.net.IntraVmAsNetModule;
 
 @RunWith(JUnit4.class)
@@ -70,10 +71,10 @@ public class ControlTest {
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = ControlTestModule.injector();
-        injector.getInstance(ControlTestService.class).start().get();
+        injector.getInstance(ControlTestService.class).startAsync().awaitRunning();;
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
-        monitor.start().get();
+        monitor.startAsync().awaitRunning();
         Thread.sleep(500);
-        monitor.stop().get();
+        monitor.stopAsync().awaitTerminated();
     }
 }

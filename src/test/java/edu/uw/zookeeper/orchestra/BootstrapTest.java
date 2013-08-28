@@ -16,10 +16,10 @@ public class BootstrapTest {
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = SimpleMain.injector();
-        injector.getInstance(SimpleMain.SimpleMainService.class).start().get();
+        injector.getInstance(SimpleMain.SimpleMainService.class).startAsync().awaitRunning();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
-        monitor.start().get();
+        monitor.startAsync().awaitRunning();
         Thread.sleep(500);
-        monitor.stop().get();
+        monitor.stopAsync().awaitTerminated();
     }
 }

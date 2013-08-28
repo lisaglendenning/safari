@@ -2,8 +2,6 @@ package edu.uw.zookeeper.orchestra.backend;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.AbstractMap;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
@@ -25,19 +23,19 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.typesafe.config.Config;
 
+import edu.uw.zookeeper.DefaultMain;
 import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
-import edu.uw.zookeeper.TimeoutFactory;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.common.Arguments;
+import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.DefaultsFactory;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
 import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 
 public class BackendConfiguration {
@@ -58,8 +56,8 @@ public class BackendConfiguration {
         public BackendConfiguration getBackendConfiguration(
                 Configuration configuration) throws Exception {
             ServerInetAddressView clientAddress = BackendAddressDiscovery.call(configuration);
-            EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance().get(configuration);
-            TimeValue timeOut = TimeoutFactory.newInstance(CONFIG_PATH).get(configuration);
+            EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance(configuration);
+            TimeValue timeOut = ConfigurableTimeout.get(configuration);
             return new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
         }
     }
@@ -71,8 +69,6 @@ public class BackendConfiguration {
             throw new IllegalStateException(String.valueOf(valueNode.get()));
         }
     }
-    
-    public static final String CONFIG_PATH = "Backend";
     
     private final BackendView view;
     private final TimeValue timeOut;
@@ -89,12 +85,68 @@ public class BackendConfiguration {
     public TimeValue getTimeOut() {
         return timeOut;
     }
+    
+    protected static abstract class OptionalConfiguration implements Function<Configuration, String> {
+
+        @Override
+        public String apply(Configuration configuration) {
+            Configurable configurable = getClass().getAnnotation(Configurable.class);
+            Config config = configuration.withConfigurable(configurable)
+                    .getConfigOrEmpty(configurable.path());
+            if (config.hasPath(configurable.key())) {
+                return config.getString(configurable.key());
+            } else {
+                return null;
+            }     
+        }
+    }
+
+    @Configurable(path="Backend", key="Timeout", value="30 seconds", help="Time")
+    public static class ConfigurableTimeout extends DefaultMain.ConfigurableTimeout {
+
+        public static TimeValue get(Configuration configuration) {
+            return new ConfigurableTimeout().apply(configuration);
+        }
+    }
+    
+    @Configurable(path="Backend", key="ClientAddress", arg="backend", help="Address:Port")
+    public static class ConfigurableAddressView extends OptionalConfiguration {
+    
+        public static String get(Configuration configuration) {
+            return new ConfigurableAddressView().apply(configuration);
+        }
+    }
+
+    @Configurable(path="Backend", key="Ensemble", arg="ensemble", help="Address:Port,...")
+    public static class ConfigurableEnsembleView extends OptionalConfiguration {
+    
+        public static String get(Configuration configuration) {
+            return new ConfigurableEnsembleView().apply(configuration);
+        }
+    }
 
     public static class BackendAddressDiscovery implements Callable<ServerInetAddressView> {
         
         public static ServerInetAddressView call(Configuration configuration) throws Exception {
             BackendAddressDiscovery instance = new BackendAddressDiscovery(configuration);
             return instance.call();
+        }
+        
+        public static ServerInetAddressView query() throws IOException {
+            DefaultsFactory<String, JMXServiceURL> urlFactory = SunAttachQueryJmx.getInstance();
+            JMXServiceURL url = urlFactory.get();
+            JMXConnector connector = null;
+            try {
+                connector = JMXConnectorFactory.connect(url);
+                MBeanServerConnection mbeans = connector.getMBeanServerConnection();
+                return ServerViewJmxQuery.addressViewOf(mbeans);
+            } catch (Exception e) {
+                throw Throwables.propagate(e);
+            } finally {
+                if (connector != null) {
+                    connector.close();
+                }
+            }
         }
         
         protected final Logger logger = LogManager.getLogger();
@@ -106,13 +158,17 @@ public class BackendConfiguration {
         
         @Override
         public ServerInetAddressView call() throws Exception {
+            String configured = ConfigurableAddressView.get(configuration);
+            if (configured != null) {
+                return ServerInetAddressView.fromString(configured);
+            }
             // If the backend server is not actively serving (i.e. in leader election),
             // then it doesn't advertise it's clientAddress over JMX
             // So poll until I can discover the backend client address
             ServerInetAddressView backend = null;
             long backoff = 1000;
             while (backend == null) {
-                backend = BackendAddressViewFactory.getInstance().get(configuration);
+                backend = query();
                 if (backend == null) {
                     logger.debug("Querying backend failed; retrying in {} ms", backoff);
                     try {
@@ -125,69 +181,13 @@ public class BackendConfiguration {
             }
             return backend;
         }
-        
     }
 
-    public static enum BackendAddressViewFactory implements DefaultsFactory<Configuration, ServerInetAddressView> {
-        INSTANCE;
-        
-        public static BackendAddressViewFactory getInstance() {
-            return INSTANCE;
-        }
-    
-        public static final String ARG = "backend";
-        public static final String CONFIG_KEY = "ClientAddress";
-        
-        @Override
-        public ServerInetAddressView get() {
-            DefaultsFactory<String, JMXServiceURL> urlFactory = SunAttachQueryJmx.getInstance();
-            JMXServiceURL url = urlFactory.get();
-            JMXConnector connector = null;
-            try {
-                connector = JMXConnectorFactory.connect(url);
-                MBeanServerConnection mbeans = connector.getMBeanServerConnection();
-                return ServerViewJmxQuery.addressViewOf(mbeans);
-            } catch (Exception e) {
-                throw Throwables.propagate(e);
-            } finally {
-                try {
-                    if (connector != null) {
-                        connector.close();
-                    }
-                } catch (IOException e) {
-                    throw Throwables.propagate(e);
-                }
-            }
-        }
-    
-        @Override
-        public ServerInetAddressView get(Configuration value) {
-            Arguments arguments = value.asArguments();
-            if (! arguments.has(ARG)) {
-                arguments.add(arguments.newOption(ARG, "Address"));
-            }
-            arguments.parse();
-            Map.Entry<String, String> args = new AbstractMap.SimpleImmutableEntry<String,String>(ARG, CONFIG_KEY);
-            @SuppressWarnings("unchecked")
-            Config config = value.withArguments(CONFIG_PATH, args);
-            if (config.hasPath(CONFIG_KEY)) {
-                String input = config.getString(CONFIG_KEY);
-                return ServerInetAddressView.fromString(input);
-            } else {
-                return get();
-            }
-        }
-    }
+    public static class BackendEnsembleViewFactory implements DefaultsFactory<Configuration, EnsembleView<ServerInetAddressView>> {
 
-    public static enum BackendEnsembleViewFactory implements DefaultsFactory<Configuration, EnsembleView<ServerInetAddressView>> {
-        INSTANCE;
-        
-        public static BackendEnsembleViewFactory getInstance() {
-            return INSTANCE;
+        public static EnsembleView<ServerInetAddressView> getInstance(Configuration configuration) {
+            return new BackendEnsembleViewFactory().get(configuration);
         }
-        
-        public static final String ARG = "ensemble";
-        public static final String CONFIG_KEY = "Ensemble";
         
         @Override
         public EnsembleView<ServerInetAddressView> get() {        
@@ -223,16 +223,9 @@ public class BackendConfiguration {
         @SuppressWarnings("unchecked")
         @Override
         public EnsembleView<ServerInetAddressView> get(Configuration value) {
-            Arguments arguments = value.asArguments();
-            if (! arguments.has(ARG)) {
-                arguments.add(arguments.newOption(ARG, "Ensemble"));
-            }
-            arguments.parse();
-            Map.Entry<String, String> args = new AbstractMap.SimpleImmutableEntry<String,String>(ARG, CONFIG_KEY);
-            Config config = value.withArguments(CONFIG_PATH, args);
-            if (config.hasPath(CONFIG_KEY)) {
-                String input = config.getString(CONFIG_KEY);
-                return EnsembleView.fromString(input);
+            String configured = ConfigurableEnsembleView.get(value);
+            if (configured != null) {
+                return EnsembleView.fromString(configured);
             } else {
                 return get();
             }

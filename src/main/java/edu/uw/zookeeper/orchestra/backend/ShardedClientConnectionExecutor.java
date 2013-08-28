@@ -11,7 +11,7 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedOperation;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequest;
 import edu.uw.zookeeper.orchestra.peer.protocol.ShardedRequestMessage;
@@ -102,7 +102,7 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
         Records.Request record = 
                 (Records.Request) ((request instanceof Records.Request) ?
                  request :
-                ((Operation.RecordHolder<?>) request).getRecord());
+                ((Operation.RecordHolder<?>) request).record());
         Identifier shard = Identifier.zero();
         if (request instanceof ShardedOperation) {
             shard = ((ShardedOperation) request).getIdentifier();
@@ -126,7 +126,7 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
             sharded = ShardedRequestMessage.of(
                     shard,
                     ProtocolRequestMessage.of(
-                        ((Operation.ProtocolRequest<?>) request).getXid(), record));
+                        ((Operation.ProtocolRequest<?>) request).xid(), record));
         }
         return sharded;
     }
@@ -136,14 +136,14 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
     public void handleResponse(Message.ServerResponse<?> message) {
         if ((state() != State.TERMINATED) && !(message instanceof ShardedOperation)) {
             timeOut.send(message);
-            int xid = message.getXid();
-            if (xid != OpCodeXid.PING.getXid()) {
+            int xid = message.xid();
+            if (xid != OpCodeXid.PING.xid()) {
                 ShardedResponseMessage<?> unshardedResponse;
                 PendingResponseTask next = pending.peek();
                 if ((next != null) && (next.getXid() == xid)) {
                     pending.remove(next);
                     Identifier id = ((ShardedRequestTask) next.delegate()).getIdentifier();
-                    Records.Response record = message.getRecord();
+                    Records.Response record = message.record();
                     Records.Response translated = translator.get(id).apply(record);
                     if (translated == record) {
                         unshardedResponse = ShardedResponseMessage.of(id, message);
@@ -151,18 +151,18 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
                         unshardedResponse = ShardedResponseMessage.of(
                                 id,
                                 ProtocolResponseMessage.of(
-                                        xid, message.getZxid(), translated));
+                                        xid, message.zxid(), translated));
                     }
                     
                     next.set(unshardedResponse);
                 } else {
-                    if (xid != OpCodeXid.NOTIFICATION.getXid()) {
+                    if (xid != OpCodeXid.NOTIFICATION.xid()) {
                         // FIXME is this an error?
                         logger.warn("{} != {} ({})", next, message, this);
                     }
                     
                     Identifier id = Identifier.zero();
-                    Records.Response record = message.getRecord();
+                    Records.Response record = message.record();
                     if (record instanceof Records.PathGetter) {
                         id = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) record).getPath()));
                     }
@@ -174,7 +174,7 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
                             unshardedResponse = ShardedResponseMessage.of(
                                     id,
                                     ProtocolResponseMessage.of(
-                                            xid, message.getZxid(), translated));
+                                            xid, message.zxid(), translated));
                         }
                     } else {
                         unshardedResponse = ShardedResponseMessage.of(id, message);

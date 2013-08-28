@@ -15,6 +15,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
@@ -28,11 +29,10 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpoint;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
-import edu.uw.zookeeper.orchestra.DependentModule;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.protocol.ClientPeerConnections;
@@ -193,15 +193,11 @@ public class PeerConnectionsService extends DependentService {
         return servers;
     }
 
-    public class Advertiser implements Service.Listener {
+    public class Advertiser extends Service.Listener {
     
         public Advertiser(
                 Executor executor) {
             addListener(this, executor);
-        }
-        
-        @Override
-        public void starting() {
         }
     
         @Override
@@ -212,18 +208,6 @@ public class PeerConnectionsService extends DependentService {
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             }
-        }
-    
-        @Override
-        public void stopping(State from) {
-        }
-    
-        @Override
-        public void terminated(State from) {
-        }
-    
-        @Override
-        public void failed(State from, Throwable failure) {
         }
     }
 }

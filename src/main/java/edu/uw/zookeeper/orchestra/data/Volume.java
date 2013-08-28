@@ -6,7 +6,7 @@ import com.google.common.base.Objects;
 
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Reference;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 
 public class Volume extends AbstractPair<Identifier, VolumeDescriptor> {
 

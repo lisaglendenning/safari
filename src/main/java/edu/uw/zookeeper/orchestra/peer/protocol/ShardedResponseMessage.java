@@ -8,7 +8,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.proto.OpCode;
@@ -41,21 +41,21 @@ public class ShardedResponseMessage<V extends Records.Response> extends ShardedM
     }
     
     @Override
-    public int getXid() {
-        return getValue().getXid();
+    public int xid() {
+        return getValue().xid();
     }
 
     @Override
-    public long getZxid() {
-        return getValue().getZxid();
+    public long zxid() {
+        return getValue().zxid();
     }
 
     @Override
-    public V getRecord() {
-        return getValue().getRecord();
+    public V record() {
+        return getValue().record();
     }
 
     public int getOpCode() {
-        return getRecord().getOpcode().intValue();
+        return record().opcode().intValue();
     }
 }

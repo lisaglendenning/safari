@@ -7,7 +7,7 @@ import com.google.common.collect.Maps;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.orchestra.common.Identifier;
+import edu.uw.zookeeper.orchestra.Identifier;
 
 public class ShardedOperationTranslators {
 

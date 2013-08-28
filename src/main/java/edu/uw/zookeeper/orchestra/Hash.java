@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra.control;
+package edu.uw.zookeeper.orchestra;
 
 import com.google.common.base.Function;
 import com.google.common.hash.HashCode;
@@ -8,7 +8,6 @@ import com.google.common.primitives.Ints;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Reference;
-import edu.uw.zookeeper.orchestra.common.Identifier;
 
 public enum Hash implements Function<String, Hash.Hashed>, Reference<HashFunction> {
     MURMUR3_32(Hashing.murmur3_32());
@@ -45,7 +44,7 @@ public enum Hash implements Function<String, Hash.Hashed>, Reference<HashFunctio
     
     @Override
     public Hashed apply(String input) {
-        return new Hashed(input, get().hashString(input));
+        return new Hashed(input, get().hashUnencodedChars(input));
     }
 
     @Override

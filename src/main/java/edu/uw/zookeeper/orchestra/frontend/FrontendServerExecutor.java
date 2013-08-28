@@ -16,6 +16,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factories;
@@ -27,11 +28,10 @@ import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.data.Volume;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.peer.protocol.ClientPeerConnections;
@@ -209,15 +209,15 @@ public class FrontendServerExecutor extends DependentService {
             Records.Response response = input.second().second();
             int xid;
             if (response instanceof Operation.RequestId) {
-                xid = ((Operation.RequestId) response).getXid();
+                xid = ((Operation.RequestId) response).xid();
             } else {
-                xid = request.get().getXid();
+                xid = request.get().xid();
             }
             OpCode opcode;
             if (OpCodeXid.has(xid)) {
-                opcode = OpCodeXid.of(xid).getOpcode();
+                opcode = OpCodeXid.of(xid).opcode();
             } else {
-                opcode = request.get().getRecord().getOpcode();
+                opcode = request.get().record().opcode();
             }
             long zxid = zxids.apply(opcode);
             if ((opcode == OpCode.CLOSE_SESSION) && !(response instanceof Operation.Error)) {
@@ -296,7 +296,7 @@ public class FrontendServerExecutor extends DependentService {
             long sessionId = request.getSessionId();
             sessions.touch(sessionId);
             FrontendSessionExecutor executor = handlers.get(sessionId);
-            return executor.submit(ProtocolRequestMessage.of(request.getXid(), request.getRecord()));
+            return executor.submit(ProtocolRequestMessage.of(request.xid(), request.record()));
         }
 
         @Subscribe

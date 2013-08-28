@@ -3,6 +3,7 @@ package edu.uw.zookeeper.orchestra.control;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.util.List;
+
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
@@ -30,9 +31,10 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.Schema.LabelType;
+import edu.uw.zookeeper.orchestra.Hash;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.backend.BackendView;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
-import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.control.Control.CreateEntityTask;
 import edu.uw.zookeeper.orchestra.data.VolumeDescriptor;
 import edu.uw.zookeeper.protocol.Operation;
@@ -163,7 +165,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
 
                     @Override
                     public Boolean apply(Operation.ProtocolResponse<?> input) {
-                        return ! (input.getRecord() instanceof Operation.Error);
+                        return ! (input.record() instanceof Operation.Error);
                     }
                 }
                 
@@ -256,7 +258,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                                         @Override
                                         public @Nullable PeerAddress apply(Operation.ProtocolResponse<?> input) {
                                             try {
-                                                Operations.maybeError(input.getRecord(), KeeperException.Code.NONODE);
+                                                Operations.maybeError(input.record(), KeeperException.Code.NONODE);
                                             } catch (KeeperException e) {
                                                 return null;
                                             }
@@ -329,7 +331,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     new AsyncFunction<Operation.ProtocolResponse<?>, List<Ensembles.Entity>>() {
                         @Override
                         public ListenableFuture<List<Ensembles.Entity>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
-                            Records.ChildrenGetter response = (Records.ChildrenGetter) Operations.unlessError(input.getRecord());
+                            Records.ChildrenGetter response = (Records.ChildrenGetter) Operations.unlessError(input.record());
                             List<Ensembles.Entity> result = Lists.newArrayListWithCapacity(response.getChildren().size());
                             for (String child: response.getChildren()) {
                                 result.add(Ensembles.Entity.of(Identifier.valueOf(child)));
@@ -491,7 +493,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                                         @Override
                                         @Nullable
                                         public ListenableFuture<List<Member>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
-                                            Operations.unlessError(input.getRecord());
+                                            Operations.unlessError(input.record());
                                             return Futures.immediateFuture(peers.get(materializer));
                                         }
                                     });
@@ -600,7 +602,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                         }
                         if (future.isDone()) {
                             O result = future.get();
-                            Optional<Operation.Error> error = Operations.maybeError(result.getRecord(), KeeperException.Code.NONODE, result.toString());
+                            Optional<Operation.Error> error = Operations.maybeError(result.record(), KeeperException.Code.NONODE, result.toString());
                             if (! error.isPresent()) {
                                 Materializer.MaterializedNode node = materializer.get(task().path());
                                 if (node != null) {

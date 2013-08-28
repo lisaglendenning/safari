@@ -21,6 +21,7 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Promise;
@@ -29,10 +30,9 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
-import edu.uw.zookeeper.orchestra.DependentModule;
+import edu.uw.zookeeper.orchestra.Identifier;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.Identifier;
-import edu.uw.zookeeper.orchestra.common.ServiceLocator;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.data.Volume;
@@ -218,7 +218,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         }
     }
 
-    public class Advertiser implements Service.Listener {
+    public class Advertiser extends Service.Listener {
 
         protected final ServiceLocator locator;
         
@@ -227,10 +227,6 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             addListener(this, executor);
         }
         
-        @Override
-        public void starting() {
-        }
-
         @Override
         public void running() {
             Materializer<?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
@@ -241,18 +237,6 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             }
-        }
-
-        @Override
-        public void stopping(State from) {
-        }
-
-        @Override
-        public void terminated(State from) {
-        }
-
-        @Override
-        public void failed(State from, Throwable failure) {
         }
     }
 
@@ -345,7 +329,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 } catch (Exception e) {
                     throw Throwables.propagate(e);
                 }
-                if (message.getValue().getRecord().getOpcode() == OpCode.CLOSE_SESSION) {
+                if (message.getValue().record().opcode() == OpCode.CLOSE_SESSION) {
                     future.addListener(client.new RemoveTask(), MoreExecutors.sameThreadExecutor());
                 }
             } else {

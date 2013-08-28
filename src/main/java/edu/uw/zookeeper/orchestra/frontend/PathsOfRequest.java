@@ -16,7 +16,7 @@ public enum PathsOfRequest implements Function<Records.Request, ZNodeLabel.Path[
     @Override
     public ZNodeLabel.Path[] apply(Records.Request input) {
         ZNodeLabel.Path[] paths;
-        switch (input.getOpcode()) {
+        switch (input.opcode()) {
         case CREATE:
         case CREATE2:
         case DELETE:

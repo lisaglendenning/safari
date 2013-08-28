@@ -50,9 +50,9 @@ import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.CachedFunction;
 import edu.uw.zookeeper.orchestra.common.CachedLookup;
-import edu.uw.zookeeper.orchestra.common.Identifier;
 import edu.uw.zookeeper.orchestra.common.LinkedIterator;
 import edu.uw.zookeeper.orchestra.common.LinkedQueue;
 import edu.uw.zookeeper.orchestra.common.SharedLookup;
@@ -158,7 +158,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     @Override
     public void post(Object event) {
         if (event instanceof ShardedResponseMessage<?>) {
-            Records.Response response = ((ShardedResponseMessage<?>) event).getRecord();
+            Records.Response response = ((ShardedResponseMessage<?>) event).record();
             event = processor().apply(
                     Pair.create(session().id(),
                             Pair.create(Optional.<Operation.ProtocolRequest<?>>absent(), response)));
@@ -193,7 +193,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 LoggingPromise.create(logger, 
                         SettableFuturePromise.<Message.ServerResponse<?>>create());
         FrontendRequestFuture task; 
-        if (request.getXid() == OpCodeXid.PING.getXid()) {
+        if (request.xid() == OpCodeXid.PING.xid()) {
             task = new LocalRequestTask(OperationFuture.State.SUBMITTING, request, promise);
         } else {
             task = new BackendRequestTask(OperationFuture.State.WAITING, request, promise);
@@ -207,7 +207,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     @Override
     public boolean send(FrontendRequestFuture message) {
         // short circuit pings
-        if (message.getXid() == OpCodeXid.PING.getXid()) {
+        if (message.xid() == OpCodeXid.PING.xid()) {
             try {
                 while (message.call() != OperationFuture.State.PUBLISHED) {}
             } catch (Exception e) {
@@ -453,8 +453,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
         
         @Override
-        public int getXid() {
-            return task().getXid();
+        public int xid() {
+            return task().xid();
         }
 
         @Override
@@ -471,8 +471,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         
         @Override
         public boolean set(Message.ServerResponse<?> result) {
-            if ((result.getRecord().getOpcode() != task().getRecord().getOpcode())
-                    && (! (result.getRecord() instanceof Operation.Error))) {
+            if ((result.record().opcode() != task().record().opcode())
+                    && (! (result.record() instanceof Operation.Error))) {
                 throw new IllegalArgumentException(result.toString());
             }
             
@@ -515,7 +515,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         protected ListenableFuture<Message.ServerResponse<?>> complete() throws InterruptedException, ExecutionException {
             if (state() == OperationFuture.State.SUBMITTING) {
                 Records.Response result = null;
-                switch (task().getRecord().getOpcode()) {
+                switch (task().record().opcode()) {
                 case CLOSE_SESSION:
                 {
                     result = Records.newInstance(IDisconnectResponse.class);
@@ -523,7 +523,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 }
                 case PING:
                 {
-                    result = PingProcessor.getInstance().apply((Ping.Request) task().getRecord());
+                    result = PingProcessor.getInstance().apply((Ping.Request) task().record());
                     break;
                 }
                 default:
@@ -603,7 +603,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 Message.ClientRequest<?> task,
                 Promise<Message.ServerResponse<?>> delegate) {
             super(state, task, delegate);
-            this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.getRecord()));
+            this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.record()));
             this.volumes = Maps.<ZNodeLabel.Path, Volume>newHashMap();
             this.shards = Maps.<Volume, ShardedRequestMessage<?>>newHashMap();
             this.submitted = Maps.<Volume, Set<BackendSessionExecutor.BackendRequestFuture>>newHashMap();
@@ -611,8 +611,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
         
         @Override
-        public int getXid() {
-            return task().getXid();
+        public int xid() {
+            return task().xid();
         }
 
         @Override
@@ -723,10 +723,10 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             ImmutableSet<Volume> uniqueVolumes = getUniqueVolumes(volumes.values());
             Sets.SetView<Volume> difference = Sets.difference(uniqueVolumes, shards.keySet());
             if (! difference.isEmpty()) {
-                if ((OpCode.MULTI == task().getRecord().getOpcode())
+                if ((OpCode.MULTI == task().record().opcode())
                         && ! ImmutableSet.of(Volume.none()).equals(uniqueVolumes)) {
                     Map<Volume, List<Records.MultiOpRequest>> byShardOps = Maps.newHashMapWithExpectedSize(difference.size());
-                    for (Records.MultiOpRequest op: (IMultiRequest) task().getRecord()) {
+                    for (Records.MultiOpRequest op: (IMultiRequest) task().record()) {
                         ZNodeLabel.Path[] paths = PathsOfRequest.getPathsOfRequest(op);
                         assert (paths.length > 0);
                         for (ZNodeLabel.Path path: paths) {
@@ -749,12 +749,12 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                 ShardedRequestMessage.of(
                                         e.getKey().getId(),
                                         ProtocolRequestMessage.of(
-                                                task().getXid(),
+                                                task().xid(),
                                                 new IMultiRequest(e.getValue()))));
                     }
                 } else {
                     for (Volume v: difference) {
-                        validate(v, task().getRecord());
+                        validate(v, task().record());
                         shards.put(v, ShardedRequestMessage.of(v.getId(), task()));
                     }
                 }
@@ -764,7 +764,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
         
         protected <T extends Records.Request> T validate(Volume volume, T request) throws KeeperException {
-            switch (request.getOpcode()) {
+            switch (request.opcode()) {
             case CREATE:
             case CREATE2:
             {
@@ -904,7 +904,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             }
 
             Records.Response result = null;
-            if (OpCode.MULTI == task().getRecord().getOpcode()) {
+            if (OpCode.MULTI == task().record().opcode()) {
                 Map<Volume, ListIterator<Records.MultiOpResponse>> responses = Maps.newHashMapWithExpectedSize(shards.size());
                 for (Map.Entry<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> e: submitted.entrySet()) {
                     BackendSessionExecutor.BackendRequestFuture request = Iterables.getOnlyElement(e.getValue());
@@ -913,7 +913,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     } else {
                         responses.put(
                                 e.getKey(), 
-                                ((IMultiResponse) request.get().getRecord()).listIterator());
+                                ((IMultiResponse) request.get().record()).listIterator());
                     }
                 }
                 if (Sets.difference(shards.keySet(), responses.keySet()).isEmpty()) {
@@ -921,9 +921,9 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     for (Map.Entry<Volume, ShardedRequestMessage<?>> e: shards.entrySet()) {
                         requests.put(
                                 e.getKey(), 
-                                ((IMultiRequest) e.getValue().getRecord()).listIterator());
+                                ((IMultiRequest) e.getValue().record()).listIterator());
                     }
-                    IMultiRequest multi = (IMultiRequest) task().getRecord();
+                    IMultiRequest multi = (IMultiRequest) task().record();
                     List<Records.MultiOpResponse> ops = Lists.newArrayListWithCapacity(multi.size());
                     for (Records.MultiOpRequest op: multi) {
                         Pair<Volume, Records.MultiOpResponse> response = null;
@@ -969,8 +969,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                             if (selected == null) {
                                selected = Pair.create(v, request);
                             } else {
-                               if ((selected.second().get().getRecord() instanceof Operation.Error) || (response.getRecord() instanceof Operation.Error)) {
-                                   if (task().getRecord().getOpcode() != OpCode.CLOSE_SESSION) {
+                               if ((selected.second().get().record() instanceof Operation.Error) || (response.record() instanceof Operation.Error)) {
+                                   if (task().record().opcode() != OpCode.CLOSE_SESSION) {
                                        throw new UnsupportedOperationException();
                                    }
                                } else {
@@ -987,7 +987,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     }
                 }
                 assert (selected != null);
-                result = selected.second().get().getRecord();
+                result = selected.second().get().record();
             }
             assert (result != null);
             super.complete(result);

@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.common;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Module;
