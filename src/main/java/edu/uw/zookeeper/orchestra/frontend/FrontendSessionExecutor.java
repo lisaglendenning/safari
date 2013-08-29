@@ -63,7 +63,6 @@ import edu.uw.zookeeper.orchestra.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.orchestra.peer.protocol.PeerConnection.ClientPeerConnection;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.Ping;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.proto.IDisconnectResponse;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
@@ -523,7 +522,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 }
                 case PING:
                 {
-                    result = PingProcessor.getInstance().apply((Ping.Request) task().record());
+                    result = PingProcessor.getInstance().apply(task().record());
                     break;
                 }
                 default:
