@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.orchestra;
+package edu.uw.zookeeper.orchestra.net;
 
 import java.util.concurrent.ScheduledExecutorService;
 

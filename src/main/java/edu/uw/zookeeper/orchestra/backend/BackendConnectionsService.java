@@ -11,15 +11,17 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
+import edu.uw.zookeeper.client.ClientConnectionFactoryBuilder;
 import edu.uw.zookeeper.client.FixedClientConnectionFactory;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ForwardingService;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
+import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
-import edu.uw.zookeeper.orchestra.ClientConnectionsModule;
+import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodec;
@@ -33,7 +35,7 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
         return new Module();
     }
     
-    public static class Module extends ClientConnectionsModule {
+    public static class Module extends DependentModule {
 
         public Module() {}
         
@@ -45,14 +47,18 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
 
         @Provides @Singleton
         public BackendConnectionsService<?> getBackendConnectionService(
+                RuntimeModule runtime,
                 BackendConfiguration configuration,
-                NetClientModule clients,
+                NetClientModule clientModule,
                 ListeningExecutorServiceFactory executors,
                 ServiceMonitor monitor) throws Exception {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> clientConnections = 
-                    getClientConnectionFactory(configuration.getTimeOut(), executors, clients);
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = ClientConnectionFactoryBuilder.defaults()
+                .setClientModule(clientModule)
+                .setTimeOut(configuration.getTimeOut())
+                .setRuntimeModule(runtime)
+                .build();
             BackendConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
-                    BackendConnectionsService.newInstance(configuration, clientConnections);
+                    BackendConnectionsService.newInstance(configuration, connections);
             monitor.addOnStart(instance);
             return instance;
         }

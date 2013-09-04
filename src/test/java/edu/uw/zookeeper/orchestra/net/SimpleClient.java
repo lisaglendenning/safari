@@ -17,7 +17,6 @@ import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
-import edu.uw.zookeeper.orchestra.ClientConnectionsModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.common.GuiceRuntimeModule;
