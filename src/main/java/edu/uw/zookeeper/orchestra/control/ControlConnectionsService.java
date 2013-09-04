@@ -1,20 +1,21 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.ListeningExecutorServiceFactory;
-import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ForwardingService;
+import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
@@ -57,9 +58,8 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
         }
 
         @Override
-        protected com.google.inject.Module[] getModules() {
-            com.google.inject.Module[] modules = { ControlConfiguration.module()};
-            return modules;
+        protected List<com.google.inject.Module> getDependentModules() {
+            return ImmutableList.<com.google.inject.Module>of(ControlConfiguration.module());
         }
     }
     
@@ -67,10 +67,9 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
             ControlConfiguration configuration,
             ClientConnectionFactory<C> connections,
             ScheduledExecutorService executor) {
-        EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory = 
-                EnsembleViewFactory.newInstance(
+        EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory = 
+                EnsembleViewFactory.fromSession(
                         connections,
-                        ServerInetAddressView.class, 
                         configuration.getEnsemble(), 
                         configuration.getTimeOut(),
                         executor);
@@ -78,11 +77,11 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
     }
 
     protected final ClientConnectionFactory<C> connections;
-    protected final EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory;
+    protected final EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory;
     
     protected ControlConnectionsService(
             ClientConnectionFactory<C> connections,
-            EnsembleViewFactory<ServerInetAddressView, ServerViewFactory<Session, ServerInetAddressView, C>> factory) {
+            EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory) {
         this.connections = connections;
         this.factory = factory;
     }

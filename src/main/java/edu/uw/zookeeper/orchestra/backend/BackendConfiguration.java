@@ -23,11 +23,11 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.typesafe.config.Config;
 
-import edu.uw.zookeeper.DefaultMain;
 import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
+import edu.uw.zookeeper.ZooKeeperApplication;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
@@ -102,7 +102,7 @@ public class BackendConfiguration {
     }
 
     @Configurable(path="Backend", key="Timeout", value="30 seconds", help="Time")
-    public static class ConfigurableTimeout extends DefaultMain.ConfigurableTimeout {
+    public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {
             return new ConfigurableTimeout().apply(configuration);
@@ -220,7 +220,6 @@ public class BackendConfiguration {
             }
         }
     
-        @SuppressWarnings("unchecked")
         @Override
         public EnsembleView<ServerInetAddressView> get(Configuration value) {
             String configured = ConfigurableEnsembleView.get(value);

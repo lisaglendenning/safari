@@ -46,7 +46,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
 
         @Provides @Singleton
         public AssignmentCacheService getVolumeAssignmentService(
-                ControlMaterializerService<?> control,
+                ControlMaterializerService control,
                 ServiceMonitor monitor) {
             return monitor.addOnStart(
                     AssignmentCacheService.newInstance(

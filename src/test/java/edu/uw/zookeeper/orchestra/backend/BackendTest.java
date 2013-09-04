@@ -12,13 +12,13 @@ import com.google.inject.Injector;
 import com.google.inject.Module;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.clients.common.RuntimeModuleProvider;
 import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependentModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
+import edu.uw.zookeeper.orchestra.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.orchestra.control.ControlTest;
 import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
 import edu.uw.zookeeper.orchestra.net.IntraVmAsNetModule;
@@ -51,7 +51,7 @@ public class BackendTest {
 
         public static Injector injector() {
             return Guice.createInjector(
-                    RuntimeModuleProvider.create(),
+                    GuiceRuntimeModule.create(),
                     IntraVmAsNetModule.create(),
                     ControlTest.module(),
                     PeerTest.module(),

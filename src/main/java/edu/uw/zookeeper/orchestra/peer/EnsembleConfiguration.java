@@ -32,7 +32,7 @@ public class EnsembleConfiguration {
         @Provides @Singleton
         public EnsembleConfiguration getEnsembleConfiguration(
                 BackendConfiguration backendConfiguration,
-                ControlMaterializerService<?> controlClient) throws InterruptedException, ExecutionException, KeeperException {
+                ControlMaterializerService controlClient) throws InterruptedException, ExecutionException, KeeperException {
             // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
             ControlSchema.Ensembles.Entity ensembleNode = ControlSchema.Ensembles.Entity.create(

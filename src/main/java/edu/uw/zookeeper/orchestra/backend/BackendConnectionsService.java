@@ -1,6 +1,9 @@
 package edu.uw.zookeeper.orchestra.backend;
 
+import java.util.List;
+
 import com.google.common.base.Function;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
@@ -8,10 +11,10 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.client.FixedClientConnectionFactory;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ForwardingService;
+import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -55,9 +58,8 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
         }
 
         @Override
-        protected com.google.inject.Module[] getModules() {
-            com.google.inject.Module[] modules = { BackendConfiguration.module() };
-            return modules;
+        protected List<com.google.inject.Module> getDependentModules() {
+            return ImmutableList.<com.google.inject.Module>of(BackendConfiguration.module());
         }
     }
     

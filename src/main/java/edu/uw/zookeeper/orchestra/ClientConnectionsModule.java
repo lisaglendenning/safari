@@ -1,6 +1,8 @@
 package edu.uw.zookeeper.orchestra;
 
-import edu.uw.zookeeper.ListeningExecutorServiceFactory;
+import java.util.concurrent.ScheduledExecutorService;
+
+import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Publisher;
@@ -23,7 +25,7 @@ public abstract class ClientConnectionsModule extends DependentModule {
 
     protected <I extends Operation.Request, T extends ProtocolCodec<?, ?>, C extends Connection<? super Operation.Request>> ParameterizedFactory<Pair<Pair<Class<I>, T>, C>, ? extends ProtocolCodecConnection<I,T,C>> getConnectionFactory(
             TimeValue timeOut, ListeningExecutorServiceFactory executors) { 
-        return PingingClient.factory(timeOut, executors.asListeningScheduledExecutorServiceFactory().get());
+        return PingingClient.factory(timeOut, executors.get(ScheduledExecutorService.class));
     }
     
     protected ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getClientConnectionFactory(

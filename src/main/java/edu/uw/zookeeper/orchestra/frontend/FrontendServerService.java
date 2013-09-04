@@ -1,10 +1,12 @@
 package edu.uw.zookeeper.orchestra.frontend;
 
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
@@ -17,6 +19,7 @@ import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processor;
+import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
@@ -24,19 +27,19 @@ import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.DependentModule;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.orchestra.peer.PeerConfiguration;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Message.Server;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutor;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
-import edu.uw.zookeeper.server.ServerApplicationModule;
+import edu.uw.zookeeper.server.ServerConnectionFactoryBuilder;
 
 @DependsOn({FrontendServerExecutor.class})
 public class FrontendServerService<T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ServerConnectionExecutorsService<T> {
@@ -57,28 +60,28 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
 
         @Provides @Singleton
         public FrontendServerService<?> getFrontendServerService(
+                RuntimeModule runtime,
                 FrontendConfiguration configuration, 
                 ServerTaskExecutor serverExecutor,
                 ScheduledExecutorService executor,
                 ServiceLocator locator,
-                NetServerModule servers,
-                DependentServiceMonitor monitor) throws Exception {
-            ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections = 
-                    servers.getServerConnectionFactory(
-                            ServerApplicationModule.codecFactory(),
-                            ServerApplicationModule.connectionFactory())
-                    .get(configuration.getAddress().get());
+                NetServerModule serverModule) throws Exception {
+            ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = ServerConnectionFactoryBuilder.defaults()
+                .setAddress(configuration.getAddress())
+                .setServerModule(serverModule)
+                .setTimeOut(configuration.getTimeOut())
+                .setRuntimeModule(runtime)
+                .build();
             return FrontendServerService.newInstance(
                     connections, configuration.getTimeOut(), executor, serverExecutor, locator);
         }
 
         @Override
-        protected com.google.inject.Module[] getModules() {
-            com.google.inject.Module[] modules = { 
+        protected List<com.google.inject.Module> getDependentModules() {
+            return ImmutableList.<com.google.inject.Module>of(
                     EnsembleConnectionsService.module(),
                     FrontendConfiguration.module(),
-                    FrontendServerExecutor.module() };
-            return modules;
+                    FrontendServerExecutor.module());
         }
     }
     

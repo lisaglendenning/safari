@@ -11,10 +11,10 @@ import com.google.inject.Singleton;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.EventLoopGroup;
-import edu.uw.zookeeper.RuntimeModule;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Publisher;
+import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.netty.DaemonThreadFactory;
@@ -42,10 +42,10 @@ public class NettyModule extends AbstractModule {
     public Factory<? extends EventLoopGroup> getEventLoopGroup(
             RuntimeModule runtime) {
         ThreadFactory threads = DaemonThreadFactory.getInstance().get(
-                runtime.threadFactory().get());
+                runtime.getThreadFactory().get());
         return EventLoopGroupService.factory(
                 NioEventLoopGroupFactory.DEFAULT,
-                runtime.serviceMonitor()).get(threads);
+                runtime.getServiceMonitor()).get(threads);
     }
     
     @Provides @Singleton

@@ -8,8 +8,8 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.DefaultMain;
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.ZooKeeperApplication;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
@@ -19,7 +19,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.control.ControlSchema;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.server.ServerApplicationModule;
+import edu.uw.zookeeper.server.ServerBuilder;
 
 public class PeerConfiguration {
 
@@ -37,7 +37,7 @@ public class PeerConfiguration {
 
         @Provides @Singleton
         public PeerConfiguration getPeerConfiguration(
-                ControlMaterializerService<?> control, 
+                ControlMaterializerService control, 
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
             ServerInetAddressView address = ConfigurableServerAddressView.get(configuration);
             ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
@@ -47,7 +47,7 @@ public class PeerConfiguration {
     }
     
     @Configurable(arg="peerAddress", path="Peer", key="PeerAddress", value=":2281", help="Address:Port")
-    public static class ConfigurableServerAddressView extends ServerApplicationModule.ConfigurableServerAddressView {
+    public static class ConfigurableServerAddressView extends ServerBuilder.ConfigurableServerAddressView {
 
         public static ServerInetAddressView get(Configuration configuration) {
             return new ConfigurableServerAddressView().apply(configuration);
@@ -55,7 +55,7 @@ public class PeerConfiguration {
     }
 
     @Configurable(path="Peer", key="Timeout", value="30 seconds", help="Time")
-    public static class ConfigurableTimeout extends DefaultMain.ConfigurableTimeout {
+    public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {
             return new ConfigurableTimeout().apply(configuration);

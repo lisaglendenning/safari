@@ -40,7 +40,7 @@ import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.server.SimpleServer;
+import edu.uw.zookeeper.server.SimpleServerBuilder;
 
 @RunWith(JUnit4.class)
 public class ShardedClientConnectionExecutorTest {
@@ -83,7 +83,7 @@ public class ShardedClientConnectionExecutorTest {
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.start().get();
 
-        GetEvent<Connection<?>> connectEvent = GetEvent.create(injector.getInstance(SimpleServer.class).getConnections().connections());
+        GetEvent<Connection<?>> connectEvent = GetEvent.create(injector.getInstance(SimpleServerBuilder.class).getConnections().connections());
         
         ShardedClientConnectionExecutor<?> client = ShardedClientConnectionExecutor.newInstance(
                 translator, 

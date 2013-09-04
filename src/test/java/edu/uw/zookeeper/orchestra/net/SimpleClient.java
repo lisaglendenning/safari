@@ -12,7 +12,6 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.FixedClientConnectionFactory;
-import edu.uw.zookeeper.clients.common.RuntimeModuleProvider;
 import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -21,10 +20,11 @@ import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
 import edu.uw.zookeeper.orchestra.ClientConnectionsModule;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
+import edu.uw.zookeeper.orchestra.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
-import edu.uw.zookeeper.server.SimpleServer;
+import edu.uw.zookeeper.server.SimpleServerBuilder;
 
 public class SimpleClient extends ClientConnectionsModule {
     
@@ -52,7 +52,7 @@ public class SimpleClient extends ClientConnectionsModule {
     
     @Provides @Singleton
     public FixedClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getFixedClientConnectionFactory(
-            SimpleServer server,
+            SimpleServerBuilder server,
             ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections) {
         return FixedClientConnectionFactory.create(
                 server.getConnections().connections().listenAddress(), 
@@ -66,21 +66,21 @@ public class SimpleClient extends ClientConnectionsModule {
     }
 
     @Provides @Singleton
-    public SimpleServer getServer(
+    public SimpleServerBuilder getServer(
             IntraVmNetModule module,
             ScheduledExecutorService executor) {
-        return SimpleServer.newInstance(module, executor);
+        return SimpleServerBuilder.newInstance(module, executor);
     }
     
     @Override
     protected Module[] getModules() {
         Module[] modules = { 
-                RuntimeModuleProvider.create(),
+                GuiceRuntimeModule.create(),
                 IntraVmAsNetModule.create() };
         return modules;
     }
     
-    @DependsOn({ SimpleServer.class, ClientConnectionFactory.class })
+    @DependsOn({ SimpleServerBuilder.class, ClientConnectionFactory.class })
     public static class SimpleClientService extends DependentService {
 
         @Inject

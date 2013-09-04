@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer;
 
 import java.net.SocketAddress;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
@@ -9,6 +10,7 @@ import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Provides;
@@ -83,7 +85,7 @@ public class PeerConnectionsService extends DependentService {
         public PeerConnectionsService getPeerConnectionsService(
                 PeerConfiguration configuration,
                 ScheduledExecutorService executor,
-                ControlMaterializerService<?> control,
+                ControlMaterializerService control,
                 ServiceLocator locator,
                 NetServerModule servers,
                 NetClientModule clients,
@@ -128,9 +130,8 @@ public class PeerConnectionsService extends DependentService {
         }
 
         @Override
-        protected com.google.inject.Module[] getModules() {
-            com.google.inject.Module[] modules = { PeerConfiguration.module() };
-            return modules;
+        protected List<com.google.inject.Module> getDependentModules() {
+            return ImmutableList.<com.google.inject.Module>of(PeerConfiguration.module());
         }
     }
     

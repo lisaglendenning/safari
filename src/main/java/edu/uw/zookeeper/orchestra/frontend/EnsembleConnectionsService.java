@@ -7,6 +7,7 @@ import java.util.Random;
 import javax.annotation.Nullable;
 
 import com.google.common.base.Function;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
@@ -51,7 +52,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         public EnsembleConnectionsService getEnsembleConnectionsService(
                 PeerConfiguration peer,
                 EnsembleConfiguration ensemble,
-                ControlMaterializerService<?> control,
+                ControlMaterializerService control,
                 PeerToEnsembleLookup peerToEnsemble,
                 ClientPeerConnections peerConnections) {
             return EnsembleConnectionsService.newInstance(
@@ -63,9 +64,8 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         }
 
         @Override
-        protected com.google.inject.Module[] getModules() {
-            com.google.inject.Module[] modules = { PeerToEnsembleLookup.module() };
-            return modules;
+        protected List<com.google.inject.Module> getDependentModules() {
+            return ImmutableList.<com.google.inject.Module>of(PeerToEnsembleLookup.module());
         }
     }
 
@@ -74,7 +74,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
             Identifier myEnsemble,
             Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections peerConnections,
-            ControlMaterializerService<?> control) {
+            ControlMaterializerService control) {
         CachedLookup<Identifier, Identifier> selectedPeers = 
                 CachedLookup.create(
                         SelectSelfTask.create(
@@ -86,7 +86,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
                 control);
     }
     
-    protected final ControlMaterializerService<?> control;
+    protected final ControlMaterializerService control;
     protected final ClientPeerConnections peerConnections;
     protected final CachedLookup<Identifier, Identifier> selectedPeers;
     protected final EnsembleConnections ensembleConnections;
@@ -96,7 +96,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
             CachedLookup<Identifier, Identifier> selectedPeers,
             Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections peerConnections,
-            ControlMaterializerService<?> control) {
+            ControlMaterializerService control) {
         this.control = control;
         this.peerToEnsemble = peerToEnsemble;
         this.peerConnections = peerConnections;

@@ -65,7 +65,7 @@
         <dependency>
 		    <groupId>com.google.inject</groupId>
 		    <artifactId>guice</artifactId>
-		    <version>RELEASE</version>
+		    <version>LATEST</version>
 		</dependency>
         <dependency>
           <groupId>com.fasterxml.jackson.core</groupId>

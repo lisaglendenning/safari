@@ -13,11 +13,11 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
-import edu.uw.zookeeper.server.ServerApplicationModule;
-import edu.uw.zookeeper.server.SimpleServer;
+import edu.uw.zookeeper.server.ServerBuilder;
+import edu.uw.zookeeper.server.SimpleServerBuilder;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 
-public class SimpleControlServer extends SimpleServer {
+public class SimpleControlServer extends SimpleServerBuilder {
 
     public static SimpleControlServer newInstance(
             IntraVmNetModule module,
@@ -32,8 +32,8 @@ public class SimpleControlServer extends SimpleServer {
         SimpleServerExecutor tasks = SimpleServerExecutor.newInstance();
         ServerConnectionFactory<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connectionFactory = 
                 module.getServerConnectionFactory(
-                        ServerApplicationModule.codecFactory(),
-                        ServerApplicationModule.connectionFactory()).get(address);
+                        ServerBuilder.codecFactory(),
+                        ServerBuilder.connectionFactory()).get(address);
         ServerConnectionExecutorsService<ProtocolCodecConnection<Message.Server, ServerProtocolCodec, Connection<Message.Server>>> connections = 
                 ServerConnectionExecutorsService.newInstance(
                         connectionFactory, 

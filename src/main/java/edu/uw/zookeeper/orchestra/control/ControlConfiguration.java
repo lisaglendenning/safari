@@ -4,10 +4,10 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.DefaultMain;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.client.ClientApplicationModule;
+import edu.uw.zookeeper.ZooKeeperApplication;
+import edu.uw.zookeeper.client.ClientBuilder;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
@@ -36,7 +36,7 @@ public class ControlConfiguration {
     }
 
     @Configurable(path="Control", key="Ensemble", arg="control", value="localhost:2381", help="Address:Port,...")
-    public static class ConfigurableEnsembleView extends ClientApplicationModule.ConfigurableEnsembleView {
+    public static class ConfigurableEnsembleView extends ClientBuilder.ConfigurableEnsembleView {
 
         public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
             return new ConfigurableEnsembleView().apply(configuration);
@@ -44,7 +44,7 @@ public class ControlConfiguration {
     }
 
     @Configurable(path="Control", key="Timeout", value="30 seconds", help="Time")
-    public static class ConfigurableTimeout extends DefaultMain.ConfigurableTimeout {
+    public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {
             return new ConfigurableTimeout().apply(configuration);

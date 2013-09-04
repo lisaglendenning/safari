@@ -9,6 +9,7 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
@@ -51,7 +52,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         public EnsembleMemberService getEnsembleMember(
                 EnsembleConfiguration ensembleConfiguration,
                 PeerConfiguration peerConfiguration,
-                ControlMaterializerService<?> control) {
+                ControlMaterializerService control) {
             ControlSchema.Ensembles.Entity myEnsemble = ControlSchema.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
             ControlSchema.Ensembles.Entity.Peers.Member myMember = ControlSchema.Ensembles.Entity.Peers.Member.of(
                     peerConfiguration.getView().id(), 
@@ -62,9 +63,8 @@ public class EnsembleMemberService extends AbstractIdleService {
         }
 
         @Override
-        protected com.google.inject.Module[] getModules() {
-            com.google.inject.Module[] modules = { EnsembleConfiguration.module() };
-            return modules;
+        protected List<com.google.inject.Module> getDependentModules() {
+            return ImmutableList.<com.google.inject.Module>of(EnsembleConfiguration.module());
         }
     }
     
@@ -104,7 +104,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         }
     }
 
-    protected final ControlMaterializerService<?> control;
+    protected final ControlMaterializerService control;
     protected final ControlSchema.Ensembles.Entity.Peers.Member myMember;
     protected final ControlSchema.Ensembles.Entity myEnsemble;
     protected final RoleOverseer role;
@@ -112,7 +112,7 @@ public class EnsembleMemberService extends AbstractIdleService {
     protected EnsembleMemberService(
             ControlSchema.Ensembles.Entity.Peers.Member myMember, 
             ControlSchema.Ensembles.Entity myEnsemble,
-            ControlMaterializerService<?> control) {
+            ControlMaterializerService control) {
         this.control = control;
         this.myEnsemble = myEnsemble;
         this.myMember = myMember;

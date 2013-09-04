@@ -37,7 +37,7 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
 
         @Provides @Singleton
         public PeerToEnsembleLookup getPeerToEnsembleLookup(
-                ControlMaterializerService<?> control) {
+                ControlMaterializerService control) {
             return PeerToEnsembleLookup.newInstance(control.materializer());
         }
     }

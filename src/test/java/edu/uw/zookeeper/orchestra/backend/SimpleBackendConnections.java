@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.orchestra.backend;
 
-import edu.uw.zookeeper.ListeningExecutorServiceFactory;
+import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.TimeValue;

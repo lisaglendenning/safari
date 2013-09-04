@@ -52,7 +52,7 @@ public class VolumeCacheService extends AbstractIdleService {
         @Provides @Singleton
         public VolumeCacheService getVolumeLookupService(
                 VolumeCache cache,
-                ControlMaterializerService<?> controlClient,
+                ControlMaterializerService controlClient,
                 ServiceMonitor monitor) {
             return monitor.addOnStart(
                     newInstance(controlClient.materializer(), cache));
