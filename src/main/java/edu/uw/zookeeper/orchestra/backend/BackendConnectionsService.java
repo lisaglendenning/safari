@@ -17,7 +17,6 @@ import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ForwardingService;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.RuntimeModule;
-import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
@@ -50,12 +49,10 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
                 RuntimeModule runtime,
                 BackendConfiguration configuration,
                 NetClientModule clientModule,
-                ListeningExecutorServiceFactory executors,
-                ServiceMonitor monitor) throws Exception {
+                ListeningExecutorServiceFactory executors) throws Exception {
             ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = getClientConnectionFactory(runtime, configuration, clientModule);
             BackendConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
                     BackendConnectionsService.newInstance(configuration, connections);
-            monitor.addOnStart(instance);
             return instance;
         }
 

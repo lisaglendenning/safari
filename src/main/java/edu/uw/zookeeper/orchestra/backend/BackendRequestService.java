@@ -12,7 +12,6 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
-import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -34,6 +33,7 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.DependentModule;
+import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
@@ -60,7 +60,7 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 
 @DependsOn({BackendConnectionsService.class})
-public class BackendRequestService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends AbstractIdleService {
+public class BackendRequestService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends DependentService {
 
     public static Module module() {
         return new Module();
@@ -101,6 +101,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             ServerPeerConnections peers,
             ScheduledExecutorService executor) {
         BackendRequestService<C> instance = new BackendRequestService<C>(
+                injector,
                 connections, 
                 peers, 
                 newVolumePathLookup(volumes), 
@@ -140,11 +141,13 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
     protected final ScheduledExecutorService executor;
     
     protected BackendRequestService(
+            Injector injector,
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
             ShardedOperationTranslators translator,
             ScheduledExecutorService executor) {
+        super(injector);
         this.connections = connections;
         this.lookup = lookup;
         this.translator = translator;
@@ -160,6 +163,8 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
 
     @Override
     protected void startUp() throws Exception {
+        super.startUp();
+        
         ClientConnectionExecutor<C> client = ClientConnectionExecutor.newInstance(
                 ConnectMessage.Request.NewRequest.newInstance(), 
                 connections.get().get(),
@@ -178,6 +183,8 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
     @Override
     protected void shutDown() throws Exception {
         listener.stop();
+        
+        super.shutDown();
     }
     
     protected ListenableFuture<ShardedClientConnectionExecutor<C>> connect(

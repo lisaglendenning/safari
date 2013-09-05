@@ -35,7 +35,7 @@ public class PeerTest {
         }
     }
 
-    @Test//(timeout=5000)
+    @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = injector();
         injector.getInstance(ControlMaterializerService.class).startAsync().awaitRunning();
