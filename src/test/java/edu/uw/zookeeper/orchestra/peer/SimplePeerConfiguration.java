@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.concurrent.ExecutionException;
@@ -29,8 +31,9 @@ public class SimplePeerConfiguration extends AbstractModule {
 
     @Provides @Singleton
     public PeerConfiguration getPeerConfiguration(
-            ControlMaterializerService<?> control, 
+            ControlMaterializerService control, 
             Factory<? extends SocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
+        checkState(control.isRunning());
         ServerInetAddressView address = 
                 ServerInetAddressView.of((InetSocketAddress) addresses.get());
         ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();

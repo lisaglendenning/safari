@@ -18,12 +18,12 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Promise;
@@ -79,13 +79,13 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
 
         @Provides @Singleton
         public BackendRequestService<?> getBackendRequestService(
-                ServiceLocator locator,
+                Injector injector,
                 BackendConnectionsService<?> connections,
                 ServerPeerConnections peers,
                 VolumeCache volumes,
                 ScheduledExecutorService executor) throws Exception {
             return BackendRequestService.newInstance(
-                    locator, volumes, connections, peers, executor);
+                    injector, volumes, connections, peers, executor);
         }
 
         @Override
@@ -95,7 +95,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
     }
     
     public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> BackendRequestService<C> newInstance(
-            ServiceLocator locator,
+            Injector injector,
             VolumeCache volumes,
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
@@ -107,7 +107,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 VolumeShardedOperationTranslators.of(
                         newVolumeIdLookup(volumes)),
                 executor);
-        instance.new Advertiser(locator, MoreExecutors.sameThreadExecutor());
+        instance.new Advertiser(injector, MoreExecutors.sameThreadExecutor());
         return instance;
     }
     
@@ -221,18 +221,18 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
 
     public class Advertiser extends Service.Listener {
 
-        protected final ServiceLocator locator;
+        protected final Injector injector;
         
-        public Advertiser(ServiceLocator locator, Executor executor) {
-            this.locator = locator;
+        public Advertiser(Injector injector, Executor executor) {
+            this.injector = injector;
             addListener(this, executor);
         }
         
         @Override
         public void running() {
-            Materializer<?> materializer = locator.getInstance(ControlMaterializerService.class).materializer();
-            Identifier myEntity = locator.getInstance(PeerConfiguration.class).getView().id();
-            BackendView view = locator.getInstance(BackendConfiguration.class).getView();
+            Materializer<?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
+            Identifier myEntity = injector.getInstance(PeerConfiguration.class).getView().id();
+            BackendView view = injector.getInstance(BackendConfiguration.class).getView();
             try {
                 BackendConfiguration.advertise(myEntity, view, materializer);
             } catch (Exception e) {

@@ -12,11 +12,11 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
+import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.Session;
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factories;
@@ -106,7 +106,7 @@ public class FrontendServerExecutor extends DependentService {
 
         @Provides @Singleton
         public FrontendServerExecutor getServerExecutor(
-                ServiceLocator locator,
+                Injector injector,
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
                 PeerToEnsembleLookup peerToEnsemble,
@@ -116,7 +116,7 @@ public class FrontendServerExecutor extends DependentService {
                 ExpiringSessionTable sessions,
                 ZxidGenerator zxids) {
             return FrontendServerExecutor.newInstance(
-                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, locator);
+                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, injector);
         }
 
         @Provides @Singleton
@@ -135,10 +135,10 @@ public class FrontendServerExecutor extends DependentService {
             Executor executor,
             ExpiringSessionTable sessions,
             ZxidGenerator zxids,
-            ServiceLocator locator) {
+            Injector injector) {
         ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
         FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
-        return new FrontendServerExecutor(handlers, server, peers, locator);
+        return new FrontendServerExecutor(handlers, server, peers, injector);
     }
     
     protected final FrontendServerTaskExecutor executor;
@@ -149,8 +149,8 @@ public class FrontendServerExecutor extends DependentService {
             ConcurrentMap<Long, FrontendSessionExecutor> handlers,
             FrontendServerTaskExecutor executor,
             ClientPeerConnections connections,
-            ServiceLocator locator) {
-        super(locator);
+            Injector injector) {
+        super(injector);
         this.handlers = handlers;
         this.executor = executor;
         this.connections = new ClientPeerConnectionListener(handlers, connections);

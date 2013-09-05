@@ -31,7 +31,7 @@ import edu.uw.zookeeper.protocol.client.ZxidTracker;
 
 public class BackendConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<C>>, Function<C,C> {
 
-    public static Module module() {
+    public static com.google.inject.Module module() {
         return new Module();
     }
     
@@ -42,7 +42,7 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
         @Override
         protected void configure() {
             super.configure();
-            bind(BackendConnectionsService.class).to(new TypeLiteral<BackendConnectionsService<?>>() {});
+            bind(BackendConnectionsService.class).to(new TypeLiteral<BackendConnectionsService<?>>() {}).in(Singleton.class);
         }
 
         @Provides @Singleton
@@ -52,11 +52,7 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
                 NetClientModule clientModule,
                 ListeningExecutorServiceFactory executors,
                 ServiceMonitor monitor) throws Exception {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = ClientConnectionFactoryBuilder.defaults()
-                .setClientModule(clientModule)
-                .setTimeOut(configuration.getTimeOut())
-                .setRuntimeModule(runtime)
-                .build();
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = getClientConnectionFactory(runtime, configuration, clientModule);
             BackendConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
                     BackendConnectionsService.newInstance(configuration, connections);
             monitor.addOnStart(instance);
@@ -66,6 +62,17 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
             return ImmutableList.<com.google.inject.Module>of(BackendConfiguration.module());
+        }
+
+        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getClientConnectionFactory(                
+                RuntimeModule runtime,
+                BackendConfiguration configuration,
+                NetClientModule clientModule) {
+            return ClientConnectionFactoryBuilder.defaults()
+                    .setClientModule(clientModule)
+                    .setTimeOut(configuration.getTimeOut())
+                    .setRuntimeModule(runtime)
+                    .build();
         }
     }
     

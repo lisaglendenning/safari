@@ -10,13 +10,13 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.RuntimeModule;
@@ -64,7 +64,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
                 FrontendConfiguration configuration, 
                 ServerTaskExecutor serverExecutor,
                 ScheduledExecutorService executor,
-                ServiceLocator locator,
+                Injector injector,
                 NetServerModule serverModule) throws Exception {
             ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = ServerConnectionFactoryBuilder.defaults()
                 .setAddress(configuration.getAddress())
@@ -73,7 +73,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
                 .setRuntimeModule(runtime)
                 .build();
             return FrontendServerService.newInstance(
-                    connections, configuration.getTimeOut(), executor, serverExecutor, locator);
+                    connections, configuration.getTimeOut(), executor, serverExecutor, injector);
         }
 
         @Override
@@ -90,7 +90,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             TimeValue timeOut,
             ScheduledExecutorService executor,
             ServerTaskExecutor server,
-            ServiceLocator locator) {
+            Injector injector) {
         FrontendServerService<T> instance = new FrontendServerService<T>(
                 connections,             
                 ServerConnectionExecutor.<T>factory(
@@ -99,7 +99,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
                         server.getAnonymousExecutor(), 
                         server.getConnectExecutor(), 
                         server.getSessionExecutor()), 
-                locator);
+                injector);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
@@ -140,25 +140,25 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         }
     }
 
-    protected final ServiceLocator locator;
+    protected final Injector injector;
     
     protected FrontendServerService(
             ServerConnectionFactory<T> connections,
             ParameterizedFactory<T, ServerConnectionExecutor<T>> factory,
-            ServiceLocator locator) {
+            Injector injector) {
         super(connections, factory);
-        this.locator = locator;
+        this.injector = injector;
     }
     
-    protected ServiceLocator locator() {
-        return locator;
+    protected Injector injector() {
+        return injector;
     }
 
     @Override
     protected void startUp() throws Exception {
         // global barrier - wait for all volumes to be assigned
         AllVolumesAssigned.call( 
-                locator().getInstance(ControlMaterializerService.class).materializer()).get();
+                injector().getInstance(ControlMaterializerService.class).materializer()).get();
 
         super.startUp();
     }
@@ -171,9 +171,9 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
 
         @Override
         public void running() {
-            Materializer<?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
-            Identifier peerId = locator().getInstance(PeerConfiguration.class).getView().id();
-            ServerInetAddressView address = locator().getInstance(FrontendConfiguration.class).getAddress();
+            Materializer<?> materializer = injector().getInstance(ControlMaterializerService.class).materializer();
+            Identifier peerId = injector().getInstance(PeerConfiguration.class).getView().id();
+            ServerInetAddressView address = injector().getInstance(FrontendConfiguration.class).getAddress();
             try {
                 FrontendConfiguration.advertise(peerId, address, materializer);
             } catch (Exception e) {

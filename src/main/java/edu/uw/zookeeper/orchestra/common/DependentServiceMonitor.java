@@ -6,18 +6,17 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.Iterators;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Inject;
+import com.google.inject.Injector;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ServiceMonitor;
 
 @Singleton
 public class DependentServiceMonitor {
 
     public static DependentServiceMonitor create(
-            ServiceMonitor monitor,
-            ServiceLocator locator) {
-        return new DependentServiceMonitor(monitor, locator);
+            ServiceMonitor monitor) {
+        return new DependentServiceMonitor(monitor);
     }
 
     public static Iterator<Class<?>> dependentServiceTypes(DependsOn depends) {
@@ -32,31 +31,28 @@ public class DependentServiceMonitor {
     }
     
     private final ServiceMonitor monitor;
-    private final ServiceLocator locator;
 
     @Inject
     public DependentServiceMonitor(
-            ServiceMonitor monitor,
-            ServiceLocator locator) {
+            ServiceMonitor monitor) {
         this.monitor = monitor;
-        this.locator = locator;
     }
 
-    public void start(DependsOn depends) {
+    public void start(Injector injector, DependsOn depends) {
         Iterator<Class<?>> types = dependentServiceTypes(depends);
         while (types.hasNext()) {
             @SuppressWarnings("unchecked")
             Class<? extends Service> next = (Class<? extends Service>) types.next();
-            start(next);
+            start(injector, next);
         }
     }
     
-    public void start(Class<? extends Service> type) {
+    public void start(Injector injector, Class<? extends Service> type) {
         DependsOn depends = type.getAnnotation(DependsOn.class);
         if (depends != null) {
-            start(depends);
+            start(injector, depends);
         }
-        Service service = getInstance(type);
+        Service service = getInstance(injector, type);
         switch (service.state()) {
         case NEW:
             service.startAsync();
@@ -72,8 +68,8 @@ public class DependentServiceMonitor {
         }
     }
     
-    public <T extends Service> T getInstance(Class<T> type) {
-        T service = locator.getInstance(type);
+    public <T extends Service> T getInstance(Injector injector, Class<T> type) {
+        T service = injector.getInstance(type);
         if (! monitor.isMonitoring(service)) {
             monitor.add(service);
         }

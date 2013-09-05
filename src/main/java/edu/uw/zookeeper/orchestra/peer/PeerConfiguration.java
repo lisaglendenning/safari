@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
@@ -39,6 +41,7 @@ public class PeerConfiguration {
         public PeerConfiguration getPeerConfiguration(
                 ControlMaterializerService control, 
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
+            checkState(control.isRunning());
             ServerInetAddressView address = ConfigurableServerAddressView.get(configuration);
             ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
             TimeValue timeOut = ConfigurableTimeout.get(configuration);

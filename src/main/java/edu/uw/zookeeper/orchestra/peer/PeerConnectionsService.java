@@ -13,11 +13,12 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.clients.common.ServiceLocator;
+import edu.uw.zookeeper.common.EventBusPublisher;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
@@ -86,11 +87,10 @@ public class PeerConnectionsService extends DependentService {
                 PeerConfiguration configuration,
                 ScheduledExecutorService executor,
                 ControlMaterializerService control,
-                ServiceLocator locator,
+                Injector injector,
                 NetServerModule servers,
                 NetClientModule clients,
-                Factory<? extends SocketAddress> addresses,
-                Factory<? extends Publisher> publishers) throws InterruptedException, ExecutionException, KeeperException {
+                Factory<? extends SocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
             ServerConnectionFactory<Connection<MessagePacket>> serverConnections = 
                     servers.getServerConnectionFactory(
                             codecFactory(JacksonModule.getMapper()), 
@@ -101,7 +101,7 @@ public class PeerConnectionsService extends DependentService {
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
             IntraVmEndpointFactory<MessagePacket> endpoints = IntraVmEndpointFactory.create(
-                    addresses, publishers, IntraVmEndpointFactory.sameThreadExecutors());
+                    addresses, EventBusPublisher.factory(), IntraVmEndpointFactory.sameThreadExecutors());
             IntraVmEndpoint<MessagePacket> serverLoopback = endpoints.get();
             IntraVmEndpoint<MessagePacket> clientLoopback = endpoints.get();
             PeerConnectionsService instance = PeerConnectionsService.newInstance(
@@ -113,7 +113,7 @@ public class PeerConnectionsService extends DependentService {
                     IntraVmConnection.create(serverLoopback, clientLoopback),
                     IntraVmConnection.create(clientLoopback, serverLoopback),
                     control.materializer(),
-                    locator);
+                    injector);
             return instance;
         }
 
@@ -144,7 +144,7 @@ public class PeerConnectionsService extends DependentService {
             Connection<? super MessagePacket> loopbackServer,
             Connection<? super MessagePacket> loopbackClient,
             Materializer<?> control,
-            ServiceLocator locator) {
+            Injector injector) {
         PeerConnectionsService instance = new PeerConnectionsService(
                 identifier, 
                 timeOut,
@@ -154,7 +154,7 @@ public class PeerConnectionsService extends DependentService {
                 loopbackServer,
                 loopbackClient,
                 control,
-                locator);
+                injector);
         instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
@@ -172,8 +172,8 @@ public class PeerConnectionsService extends DependentService {
             Connection<? super MessagePacket> loopbackServer,
             Connection<? super MessagePacket> loopbackClient,
             Materializer<?> control,
-            ServiceLocator locator) {
-        super(locator);
+            Injector injector) {
+        super(injector);
         this.identifier = identifier;
         this.servers = new ServerPeerConnections(identifier, timeOut, executor, serverConnectionFactory);
         this.clients = new ClientPeerConnections(identifier, timeOut, executor, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
@@ -203,7 +203,7 @@ public class PeerConnectionsService extends DependentService {
     
         @Override
         public void running() {
-            Materializer<?> materializer = locator().getInstance(ControlMaterializerService.class).materializer();
+            Materializer<?> materializer = injector().getInstance(ControlMaterializerService.class).materializer();
             try {
                 PeerConfiguration.advertise(identifier(), materializer);
             } catch (Exception e) {

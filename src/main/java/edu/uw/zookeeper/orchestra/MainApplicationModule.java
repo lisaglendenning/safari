@@ -10,7 +10,6 @@ import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Application;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceApplication;
@@ -78,8 +77,8 @@ public class MainApplicationModule extends DependentModule {
         FrontendServerService.class })
     public static class MainService extends DependentService {
         @Inject
-        public MainService(ServiceLocator locator) {
-            super(locator);
+        public MainService(Injector injector) {
+            super(injector);
         }
     }
 }

@@ -18,6 +18,8 @@ import edu.uw.zookeeper.client.SimpleClientBuilder;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
+import edu.uw.zookeeper.net.NetClientModule;
+import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Operation.Request;
@@ -26,9 +28,9 @@ import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
 
-public class SimpleControlConnections extends ControlConnectionsService<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> {
+public class SimpleControlConnectionsService extends ControlConnectionsService<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> {
 
-    public static Module module() {
+    public static com.google.inject.Module module() {
         return new Module();
     }
     
@@ -37,47 +39,50 @@ public class SimpleControlConnections extends ControlConnectionsService<Protocol
         @Override
         protected void configure() {
             bind(ControlConnectionsService.class).to(new TypeLiteral<ControlConnectionsService<?>>(){}).in(Singleton.class);
-            bind(new TypeLiteral<ControlConnectionsService<?>>(){}).to(SimpleControlConnections.class).in(Singleton.class);
+            bind(new TypeLiteral<ControlConnectionsService<?>>(){}).to(SimpleControlConnectionsService.class).in(Singleton.class);
         }
         
         @Provides @Singleton
-        public SimpleControlConnections getSimpleControlConnections(
-                IntraVmNetModule netModule, RuntimeModule runtime) {
-            return SimpleControlConnections.newInstance(netModule, runtime);
+        public SimpleControlConnectionsService getSimpleControlConnections(
+                IntraVmNetModule netModule, 
+                RuntimeModule runtime) {
+            ServerInetAddressView address = ServerInetAddressView.of((InetSocketAddress) netModule.factory().addresses().get());
+            return SimpleControlConnectionsService.newInstance(address, netModule, netModule, runtime);
         }
         
         @Provides @Singleton
         public ControlConfiguration getControlConfiguration(
-                SimpleControlConnections instance) {
+                SimpleControlConnectionsService instance) {
             return instance.getConfiguration();
         }
     }
     
-    public static SimpleControlConnections newInstance(
-            IntraVmNetModule netModule,
+    public static SimpleControlConnectionsService newInstance(
+            ServerInetAddressView address,
+            NetServerModule serverModule,
+            NetClientModule clientModule,
             RuntimeModule runtime) {
-        ServerInetAddressView address = ServerInetAddressView.of((InetSocketAddress) netModule.factory().addresses().get());
-        SimpleServerBuilder server = SimpleServerBuilder.defaults(address, netModule)
+        SimpleServerBuilder server = SimpleServerBuilder.defaults(address, serverModule)
                 .setRuntimeModule(runtime)
                 .setDefaults();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
         ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getConnectionBuilder().getTimeOut());
         @SuppressWarnings("unchecked")
         ClientConnectionFactory<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> connections = 
-                (ClientConnectionFactory<ProtocolCodecConnection<Request, AssignXidCodec, Connection<Request>>>) SimpleClientBuilder.connectionBuilder(netModule).setRuntimeModule(runtime).setDefaults().build();
+                (ClientConnectionFactory<ProtocolCodecConnection<Request, AssignXidCodec, Connection<Request>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
         EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>>> factory = 
                 EnsembleViewFactory.fromSession(
                         connections,
                         configuration.getEnsemble(), 
                         configuration.getTimeOut(),
                         runtime.getExecutors().get(ScheduledExecutorService.class));
-        return new SimpleControlConnections(configuration, server, connections, factory);
+        return new SimpleControlConnectionsService(configuration, server, connections, factory);
     }
     
     protected final ControlConfiguration configuration;
     protected final SimpleServerBuilder server;
     
-    protected SimpleControlConnections(
+    protected SimpleControlConnectionsService(
             ControlConfiguration configuration,
             SimpleServerBuilder server,
             ClientConnectionFactory<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> connections,

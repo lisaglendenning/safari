@@ -3,12 +3,12 @@ package edu.uw.zookeeper.orchestra.control;
 import java.util.List;
 
 import com.google.common.collect.ImmutableList;
+import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.orchestra.common.DependentModule;
@@ -36,9 +36,9 @@ public class ControlMaterializerService extends ClientConnectionExecutorService 
 
         @Provides @Singleton
         public ControlMaterializerService getControlClientService(
-                ServiceLocator locator,
+                Injector injector,
                 ControlConnectionsService<?> connections) {
-            return ControlMaterializerService.newInstance(locator, connections);
+            return ControlMaterializerService.newInstance(injector, connections);
         }
         
         @Override
@@ -48,20 +48,20 @@ public class ControlMaterializerService extends ClientConnectionExecutorService 
     }
     
     public static ControlMaterializerService newInstance(
-            ServiceLocator locator,
+            Injector injector,
             ControlConnectionsService<?> connections) {
-        return new ControlMaterializerService(locator, connections);
+        return new ControlMaterializerService(injector, connections);
     }
 
-    protected final ServiceLocator locator;
+    protected final Injector injector;
     protected final Materializer<Message.ServerResponse<?>> materializer;
     protected final WatchPromiseTrie watches;
 
     protected ControlMaterializerService(
-            ServiceLocator locator,
+            Injector injector,
             ControlConnectionsService<?> connections) {
         super(connections);
-        this.locator = locator;
+        this.injector = injector;
         this.materializer = Materializer.newInstance(
                         ControlSchema.getInstance().get(),
                         JacksonModule.getSerializer(),
@@ -80,8 +80,8 @@ public class ControlMaterializerService extends ClientConnectionExecutorService 
     
     @Override
     protected void startUp() throws Exception {
-        locator.getInstance(DependentServiceMonitor.class).start(getClass().getAnnotation(DependsOn.class));
-        locator.getInstance(ServiceMonitor.class).add(this);
+        injector.getInstance(DependentServiceMonitor.class).start(injector, getClass().getAnnotation(DependsOn.class));
+        injector.getInstance(ServiceMonitor.class).addOnStart(this);
         
         super.startUp();
 
