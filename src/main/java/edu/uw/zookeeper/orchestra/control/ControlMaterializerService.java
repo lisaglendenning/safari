@@ -9,10 +9,9 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
-import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.orchestra.common.DependentModule;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
+import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.protocol.Message;
@@ -80,8 +79,7 @@ public class ControlMaterializerService extends ClientConnectionExecutorService 
     
     @Override
     protected void startUp() throws Exception {
-        injector.getInstance(DependentServiceMonitor.class).start(injector, getClass().getAnnotation(DependsOn.class));
-        injector.getInstance(ServiceMonitor.class).addOnStart(this);
+        DependentService.addOnStart(injector, this);
         
         super.startUp();
 

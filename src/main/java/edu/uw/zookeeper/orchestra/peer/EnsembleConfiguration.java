@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.orchestra.peer;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
@@ -32,12 +34,13 @@ public class EnsembleConfiguration {
         @Provides @Singleton
         public EnsembleConfiguration getEnsembleConfiguration(
                 BackendConfiguration backendConfiguration,
-                ControlMaterializerService controlClient) throws InterruptedException, ExecutionException, KeeperException {
+                ControlMaterializerService control) throws InterruptedException, ExecutionException, KeeperException {
+            checkState(control.isRunning());
             // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
             ControlSchema.Ensembles.Entity ensembleNode = ControlSchema.Ensembles.Entity.create(
                     myView, 
-                    controlClient.materializer()).get();
+                    control.materializer()).get();
             return new EnsembleConfiguration(ensembleNode.get());
         }
     }

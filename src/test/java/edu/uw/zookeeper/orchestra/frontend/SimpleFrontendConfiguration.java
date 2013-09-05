@@ -2,24 +2,21 @@ package edu.uw.zookeeper.orchestra.frontend;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.util.concurrent.TimeUnit;
+import java.util.List;
 
-import com.google.inject.AbstractModule;
+import com.google.common.collect.Lists;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.TimeValue;
 
-public class SimpleFrontendConfiguration extends AbstractModule {
+public class SimpleFrontendConfiguration extends FrontendServerService.Module {
 
     public static SimpleFrontendConfiguration create() {
         return new SimpleFrontendConfiguration();
-    }
-    
-    @Override
-    protected void configure() {
     }
 
     @Provides @Singleton
@@ -27,7 +24,14 @@ public class SimpleFrontendConfiguration extends AbstractModule {
             Factory<? extends SocketAddress> addresses) {
         ServerInetAddressView address = 
                 ServerInetAddressView.of((InetSocketAddress) addresses.get());
-        TimeValue timeOut = TimeValue.create(0L, TimeUnit.MILLISECONDS);
+        TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, Session.Parameters.TIMEOUT_UNIT);
         return new FrontendConfiguration(address, timeOut);
+    }
+
+    @Override
+    protected List<com.google.inject.Module> getDependentModules() {
+        return Lists.<com.google.inject.Module>newArrayList(
+                EnsembleConnectionsService.module(),
+                FrontendServerExecutor.module());
     }
 }

@@ -19,8 +19,8 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.Session;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
+import edu.uw.zookeeper.common.EventBusPublisher;
 import edu.uw.zookeeper.common.Factories;
-import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Processors;
@@ -85,10 +85,10 @@ public class FrontendServerExecutor extends DependentService {
 
         @Provides @Singleton
         public ExpiringSessionTable getSessionTable(
-                Configuration configuration,
-                Factory<? extends Publisher> publishers) {
+                Configuration configuration) {
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(configuration);
-            return ExpiringSessionTable.newInstance(publishers.get(), policy);
+            return ExpiringSessionTable.newInstance(
+                    EventBusPublisher.newInstance(), policy);
         }
 
         @Provides @Singleton

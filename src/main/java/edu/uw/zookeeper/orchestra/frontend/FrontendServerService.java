@@ -27,6 +27,7 @@ import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.orchestra.Identifier;
 import edu.uw.zookeeper.orchestra.common.DependentModule;
+import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
 import edu.uw.zookeeper.orchestra.control.Control;
 import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
@@ -66,14 +67,22 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
                 ScheduledExecutorService executor,
                 Injector injector,
                 NetServerModule serverModule) throws Exception {
-            ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = ServerConnectionFactoryBuilder.defaults()
-                .setAddress(configuration.getAddress())
-                .setServerModule(serverModule)
-                .setTimeOut(configuration.getTimeOut())
-                .setRuntimeModule(runtime)
-                .build();
+            ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = 
+                    getServerConnectionFactory(runtime, configuration, serverModule);
             return FrontendServerService.newInstance(
                     connections, configuration.getTimeOut(), executor, serverExecutor, injector);
+        }
+        
+        protected ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> getServerConnectionFactory(
+                RuntimeModule runtime,
+                FrontendConfiguration configuration,
+                NetServerModule serverModule) {
+            return ServerConnectionFactoryBuilder.defaults()
+                    .setAddress(configuration.getAddress())
+                    .setServerModule(serverModule)
+                    .setTimeOut(configuration.getTimeOut())
+                    .setRuntimeModule(runtime)
+                    .build();
         }
 
         @Override
@@ -156,6 +165,8 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
 
     @Override
     protected void startUp() throws Exception {
+        DependentService.addOnStart(injector, this);
+
         // global barrier - wait for all volumes to be assigned
         AllVolumesAssigned.call( 
                 injector().getInstance(ControlMaterializerService.class).materializer()).get();

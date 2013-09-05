@@ -73,7 +73,7 @@ public class BackendTest {
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = BackendTestService.Module.injector();
-        injector.getInstance(BackendTestService.class).startAsync().awaitRunning();;
+        injector.getInstance(BackendTestService.class).startAsync().awaitRunning();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
         Thread.sleep(500);

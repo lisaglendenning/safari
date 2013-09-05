@@ -6,85 +6,56 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import com.google.inject.Guice;
+import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
-import com.google.inject.Module;
-import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.orchestra.backend.SimpleBackendConfiguration;
-import edu.uw.zookeeper.orchestra.common.DependentModule;
+import edu.uw.zookeeper.orchestra.backend.BackendTest;
 import edu.uw.zookeeper.orchestra.common.DependentService;
-import edu.uw.zookeeper.orchestra.common.DependentServiceMonitor;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.common.GuiceRuntimeModule;
-import edu.uw.zookeeper.orchestra.control.ControlTest;
-import edu.uw.zookeeper.orchestra.data.VolumeCacheService;
-import edu.uw.zookeeper.orchestra.net.IntraVmAsNetModule;
+import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.peer.EnsembleConfiguration;
-import edu.uw.zookeeper.orchestra.peer.PeerTest;
 
 @RunWith(JUnit4.class)
 public class FrontendTest {
 
-    public static FrontendTestModule module() {
-        return FrontendTestModule.create();
+    public static Injector injector() {
+        return BackendTest.injector().createChildInjector(
+                AssignmentCacheService.module(),
+                EnsembleConfiguration.module(),
+                SimpleFrontendConfiguration.create());
     }
 
-    @Singleton
     @DependsOn({ 
-        ControlTest.ControlTestService.class, 
+        ControlMaterializerService.class, 
         FrontendServerService.class })
     public static class FrontendTestService extends DependentService {
 
+        public static class Module extends AbstractModule {
+
+            public static Injector injector() {
+                return FrontendTest.injector().createChildInjector(
+                        new Module());
+            }
+            
+            @Override
+            protected void configure() {
+                bind(FrontendTestService.class).in(Singleton.class);
+            }
+        }
+        
         @Inject
-        public FrontendTestService(ServiceLocator locator) {
-            super(locator);
+        protected FrontendTestService(Injector injector) {
+            super(injector);
         }
     }
     
-    public static class FrontendTestModule extends DependentModule {
-
-        public static Injector injector() {
-            return Guice.createInjector(
-                    GuiceRuntimeModule.create(),
-                    IntraVmAsNetModule.create(),
-                    ControlTest.module(),
-                    PeerTest.module(),
-                    SimpleBackendConfiguration.create(),
-                    EnsembleConfiguration.module(),
-                    create());
-        }
-
-        public static FrontendTestModule create() {
-            return new FrontendTestModule();
-        }
-        
-        public FrontendTestModule() {
-        }
-
-        @Override
-        protected Module[] getModules() {
-            Module[] modules = {
-                    VolumeCacheService.module(),
-                    AssignmentCacheService.module(),
-                    SimpleFrontend.create() };
-            return modules;
-        }
-
-        @Provides @Singleton
-        public FrontendTestModule getSelf() {
-            return this;
-        }
-    }
-
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
-        Injector injector = FrontendTestModule.injector();
-        injector.getInstance(DependentServiceMonitor.class).start(FrontendTestService.class);
+        Injector injector = FrontendTestService.Module.injector();
+        injector.getInstance(FrontendTestService.class).startAsync().awaitRunning();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
         Thread.sleep(500);
