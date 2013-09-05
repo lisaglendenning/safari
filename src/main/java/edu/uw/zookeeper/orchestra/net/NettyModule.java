@@ -11,9 +11,9 @@ import com.google.inject.Singleton;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.EventLoopGroup;
+import edu.uw.zookeeper.common.EventBusPublisher;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ParameterizedFactory;
-import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
@@ -50,20 +50,20 @@ public class NettyModule extends AbstractModule {
     
     @Provides @Singleton
     public NettyServerModule getNettyServerModule(
-            Factory<? extends Publisher> publishers,
             Factory<? extends EventLoopGroup> eventLoopGroup) {
         ParameterizedFactory<SocketAddress, ServerBootstrap> bootstraps = 
                 NioServerBootstrapFactory.ParameterizedDecorator.newInstance(
                         NioServerBootstrapFactory.newInstance(eventLoopGroup));
-        return NettyServerModule.newInstance(publishers, bootstraps);
+        return NettyServerModule.newInstance(
+                EventBusPublisher.factory(), bootstraps);
     }
     
     @Provides @Singleton
     public NettyClientModule getNettyClientModule(
-            Factory<? extends Publisher> publishers,
             Factory<? extends EventLoopGroup> eventLoopGroup) {
         Factory<Bootstrap> bootstraps = 
                 NioClientBootstrapFactory.newInstance(eventLoopGroup);  
-        return NettyClientModule.newInstance(publishers, bootstraps);
+        return NettyClientModule.newInstance(
+                EventBusPublisher.factory(), bootstraps);
     }
 }
