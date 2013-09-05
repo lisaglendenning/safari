@@ -6,6 +6,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.clients.common.ServiceLocator;
+import edu.uw.zookeeper.common.ServiceMonitor;
 
 public abstract class DependentService extends AbstractIdleService {
 
@@ -28,6 +29,7 @@ public abstract class DependentService extends AbstractIdleService {
     protected void startUp() throws Exception {
         locator().getInstance(DependentServiceMonitor.class)
             .start(getClass().getAnnotation(DependsOn.class));
+        locator().getInstance(ServiceMonitor.class).add(this);
     }
 
     @Override

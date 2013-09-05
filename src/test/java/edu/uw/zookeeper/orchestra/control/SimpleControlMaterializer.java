@@ -1,5 +1,9 @@
 package edu.uw.zookeeper.orchestra.control;
 
+import java.util.List;
+
+import com.google.inject.internal.ImmutableList;
+
 public class SimpleControlMaterializer extends ControlMaterializerService.Module {
 
     public static SimpleControlMaterializer create() {
@@ -10,8 +14,7 @@ public class SimpleControlMaterializer extends ControlMaterializerService.Module
     }
 
     @Override
-    protected com.google.inject.Module[] getModules() {
-        com.google.inject.Module[] modules = { SimpleControlConnections.create() };
-        return modules;
+    protected List<com.google.inject.Module> getDependentModules() {
+        return ImmutableList.<com.google.inject.Module>of(SimpleControlConnections.module());
     }
 }

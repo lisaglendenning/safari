@@ -1,8 +1,6 @@
 package edu.uw.zookeeper.orchestra.common;
 
 import java.util.Iterator;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterators;
@@ -33,7 +31,6 @@ public class DependentServiceMonitor {
                 });
     }
     
-    private final Logger logger = LogManager.getLogger(getClass());
     private final ServiceMonitor monitor;
     private final ServiceLocator locator;
 
@@ -63,9 +60,15 @@ public class DependentServiceMonitor {
         switch (service.state()) {
         case NEW:
             service.startAsync();
-        default:
+        case STARTING:
             service.awaitRunning();
+        case RUNNING:
             break;
+        case STOPPING:
+        case TERMINATED:
+            throw new IllegalStateException(String.valueOf(service));
+        case FAILED:
+            throw new IllegalStateException(service.failureCause());
         }
     }
     

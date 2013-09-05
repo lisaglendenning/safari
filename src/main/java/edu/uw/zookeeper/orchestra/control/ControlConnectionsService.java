@@ -31,7 +31,7 @@ import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 
 class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
 
-    public static Module module() {
+    public static com.google.inject.Module module() {
         return new Module();
     }
     
@@ -42,8 +42,7 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
         @Override
         protected void configure() {
             super.configure();
-            TypeLiteral<ControlConnectionsService<?>> generic = new TypeLiteral<ControlConnectionsService<?>>(){};
-            bind(ControlConnectionsService.class).to(generic);
+            bind(ControlConnectionsService.class).to(new TypeLiteral<ControlConnectionsService<?>>(){}).in(Singleton.class);
         }
 
         @Provides @Singleton
@@ -53,11 +52,8 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
                 ListeningExecutorServiceFactory executors,
                 NetClientModule clientModule,
                 ScheduledExecutorService executor) {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = ClientConnectionFactoryBuilder.defaults()
-                    .setClientModule(clientModule)
-                    .setTimeOut(configuration.getTimeOut())
-                    .setRuntimeModule(runtime)
-                    .build();
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
+                    getClientConnectionFactory(runtime, configuration, clientModule);
             ControlConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
                     ControlConnectionsService.newInstance(configuration, connections, executor);
             return instance;
@@ -66,6 +62,17 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
             return ImmutableList.<com.google.inject.Module>of(ControlConfiguration.module());
+        }
+        
+        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getClientConnectionFactory(                
+                RuntimeModule runtime,
+                ControlConfiguration configuration,
+                NetClientModule clientModule) {
+            return ClientConnectionFactoryBuilder.defaults()
+                    .setClientModule(clientModule)
+                    .setTimeOut(configuration.getTimeOut())
+                    .setRuntimeModule(runtime)
+                    .build();
         }
     }
     

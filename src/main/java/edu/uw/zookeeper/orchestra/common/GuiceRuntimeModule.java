@@ -11,6 +11,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.clients.common.ServiceLocator;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
@@ -34,6 +35,7 @@ public class GuiceRuntimeModule extends AbstractModule {
         bind(Executor.class).to(ExecutorService.class).in(Singleton.class);
         bind(ExecutorService.class).to(ListeningExecutorService.class).in(Singleton.class);
         bind(ScheduledExecutorService.class).to(ListeningScheduledExecutorService.class).in(Singleton.class);
+        bind(ServiceLocator.class).to(InjectorServiceLocator.class);
     }
     
     @Provides @Singleton
