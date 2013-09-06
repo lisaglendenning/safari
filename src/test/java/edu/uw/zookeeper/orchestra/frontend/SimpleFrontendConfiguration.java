@@ -9,7 +9,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.TimeValue;
 

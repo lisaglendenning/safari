@@ -2,7 +2,7 @@ package edu.uw.zookeeper.orchestra.peer.protocol;
 
 import com.google.common.base.Objects;
 
-import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.protocol.Session;
 
 public abstract class SessionMessage<V> extends ValueMessage<Long, V> {
 

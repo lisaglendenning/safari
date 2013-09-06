@@ -11,7 +11,7 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.Session;
+import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.client.SimpleClientBuilder;

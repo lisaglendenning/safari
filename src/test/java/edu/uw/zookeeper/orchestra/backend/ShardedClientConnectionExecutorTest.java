@@ -21,7 +21,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.DefaultRuntimeModule;
-import edu.uw.zookeeper.GetEvent;
+import edu.uw.zookeeper.common.GetEvent;
 import edu.uw.zookeeper.client.SimpleClientBuilder;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
