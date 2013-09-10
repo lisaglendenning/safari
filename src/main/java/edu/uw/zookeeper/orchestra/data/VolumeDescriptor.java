@@ -60,8 +60,8 @@ public class VolumeDescriptor extends AbstractPair<ZNodeLabel.Path, ImmutableSor
         return second;
     }
     
-    public ZNodeLabel.Path append(ZNodeLabel label) {
-        return ZNodeLabel.Path.of(getRoot(), label);
+    public ZNodeLabel.Path append(Object label) {
+        return (ZNodeLabel.Path) ZNodeLabel.joined(getRoot(), label);
     }
     
     public boolean contains(ZNodeLabel.Path path) {

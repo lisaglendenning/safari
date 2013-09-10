@@ -107,7 +107,7 @@ public abstract class Control {
         }
 
         public static ZNodeLabel.Path path(Object parent, Object element) {
-            return ZNodeLabel.Path.of(path(parent), label(element));
+            return (ZNodeLabel.Path) ZNodeLabel.joined(path(parent), label(element));
         }
 
         public static ZNodeLabel.Path path(Object element) {
@@ -151,7 +151,7 @@ public abstract class Control {
                 ZNodeLabel label) {
             this.parent = (parent == null) ? getClass().getEnclosingClass() : parent;
             this.label = (label == null) ? label(getClass()) : label;
-            this.path = ZNodeLabel.Path.of(path(this.parent), this.label);
+            this.path = (ZNodeLabel.Path) ZNodeLabel.joined(path(this.parent), this.label);
         }
         
         public Object parent() {

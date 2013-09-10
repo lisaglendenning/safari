@@ -27,7 +27,7 @@ public class SchemaInstance implements Reference<Schema> {
         while (itr.hasNext()) {
             ZNodeTraversal.Element next = itr.next();
             Schema.ZNodeSchema nextSchema = next.getBuilder().build();
-            ZNodeLabel.Path path = ZNodeLabel.Path.of(next.getPath(), ZNodeLabel.of(nextSchema.getLabel()));
+            ZNodeLabel.Path path =(ZNodeLabel.Path)  ZNodeLabel.Path.joined(next.getPath(), nextSchema.getLabel());
             if (schema == null) {
                 if (path.isRoot()) {
                     schema = Schema.of(nextSchema);

@@ -226,7 +226,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peerAddress");
                 
                 public static ZNodeLabel.Path pathOf(Peers.Entity entity) {
-                    return ZNodeLabel.Path.of(entity.path(), LABEL);
+                    return (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), LABEL);
                 }
                 
                 public static CachedFunction<Identifier, PeerAddress> lookup(
@@ -442,7 +442,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("backend");
 
                 public static ZNodeLabel.Path pathOf(Ensembles.Entity entity) {
-                    return ZNodeLabel.Path.of(entity.path(), LABEL);
+                    return (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), LABEL);
                 }
                 
                 public static ListenableFuture<Entity.Backend> get(Ensembles.Entity entity, Materializer<?> materializer) {
@@ -722,7 +722,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("volume");
 
                 public static ZNodeLabel.Path pathOf(Volumes.Entity entity) {
-                    return ZNodeLabel.Path.of(entity.path(), LABEL);
+                    return (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), LABEL);
                 }
                 
                 public static ListenableFuture<Entity.Volume> get(Volumes.Entity entity, Materializer<?> materializer) {

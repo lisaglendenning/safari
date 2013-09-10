@@ -184,7 +184,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         protected final StampedReference.Updater<ControlSchema.Ensembles.Entity.Leader> leader;
         
         public RoleOverseer() {
-            this.leaderPath = ZNodeLabel.Path.of(myEnsemble.path(), ControlSchema.Ensembles.Entity.Leader.LABEL);
+            this.leaderPath = (ZNodeLabel.Path) ZNodeLabel.joined(myEnsemble.path(), ControlSchema.Ensembles.Entity.Leader.LABEL);
             this.myRole = Automatons.createSynchronizedEventful(
                     control, Automatons.createSimple(EnsembleRole.LOOKING));
             this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Ensembles.Entity.Leader>of(0L, null));

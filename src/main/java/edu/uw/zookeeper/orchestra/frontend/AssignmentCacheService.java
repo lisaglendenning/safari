@@ -73,7 +73,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
                                     }
                                 };
                                 return Control.FetchUntil.newInstance(
-                                        ZNodeLabel.Path.of(entity.path(), ControlSchema.Volumes.Entity.Ensemble.LABEL), 
+                                        (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), ControlSchema.Volumes.Entity.Ensemble.LABEL), 
                                                 processor, materializer);
                             }
                         }));

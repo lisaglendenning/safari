@@ -43,7 +43,7 @@ public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPai
                     transformed = getToPrefix();
                 } else {
                     String remaining = path.toString().substring(prefixLen);
-                    transformed = ZNodeLabel.Path.joined(getToPrefix().toString(), remaining);
+                    transformed = (ZNodeLabel.Path) ZNodeLabel.joined(getToPrefix().toString(), remaining);
                 }
                 builder.setPath(transformed);
                 output = (T) builder.build();

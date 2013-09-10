@@ -16,11 +16,11 @@ public class VolumeShardedOperationTranslators extends ShardedOperationTranslato
     }
     
     public static ZNodeLabel.Path rootOf(Identifier id) {
-        return ZNodeLabel.Path.of(getPrefix(), ZNodeLabel.Component.of(id.toString()));
+        return (ZNodeLabel.Path) ZNodeLabel.joined(getPrefix(), id);
     }
     
-    public static ZNodeLabel.Path pathOf(Identifier id, ZNodeLabel path) {
-        return ZNodeLabel.Path.of(rootOf(id), path);
+    public static ZNodeLabel.Path pathOf(Identifier id, Object path) {
+        return (ZNodeLabel.Path) ZNodeLabel.joined(rootOf(id), path);
     }
     
     public static ZNodeLabel.Path getPrefix() {
