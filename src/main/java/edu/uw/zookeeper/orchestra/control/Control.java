@@ -118,22 +118,6 @@ public abstract class Control {
             }
         }
 
-        @SuppressWarnings("unchecked")
-        public static <C extends ControlZNode> C newInstance(Class<C> cls, Object parent) {
-            for (Constructor<?> c: cls.getDeclaredConstructors()) {
-                Class<?>[] parameterTypes = c.getParameterTypes();
-                if ((parameterTypes.length == 1) 
-                        && parameterTypes[0].isAssignableFrom(parent.getClass())) {
-                    try {
-                        return (C) c.newInstance(parent);
-                    } catch (Exception e) {
-                        throw new AssertionError(e);
-                    }
-                }
-            }
-            throw new AssertionError(Arrays.toString(cls.getDeclaredConstructors()));
-        }
-        
         private final Object parent;
         private final ZNodeLabel.Path path;
         private final ZNodeLabel label;
@@ -208,7 +192,7 @@ public abstract class Control {
         }
 
         @SuppressWarnings("unchecked")
-        public static <T, C extends ValueZNode<T>> ListenableFuture<C> get(
+        public static <T, C extends ValueZNode<T>> ListenableFuture<C> getValue(
                 final Class<C> cls, 
                 final Object parent, 
                 final Materializer<?> materializer) {
@@ -270,7 +254,7 @@ public abstract class Control {
                         ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                             Optional<Operation.Error> error = Operations.maybeError(input.record(), KeeperException.Code.NODEEXISTS, input.toString());
                             if (error.isPresent()) {
-                                return get(cls, parent, materializer);
+                                return getValue(cls, parent, materializer);
                             } else {
                                 return Futures.immediateFuture(instance);
                             }
@@ -307,7 +291,7 @@ public abstract class Control {
     
     public static abstract class IdentifierZNode extends ValueZNode<Identifier> {
         
-        public static <C extends IdentifierZNode> ListenableFuture<C> get(
+        public static <C extends IdentifierZNode> ListenableFuture<C> getIdentifier(
                 final Class<C> cls, 
                 final Object parent, 
                 final Materializer<?> materializer) {
@@ -364,7 +348,7 @@ public abstract class Control {
                         ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                             Optional<Operation.Error> error = Operations.maybeError(input.record(), KeeperException.Code.NODEEXISTS, input.toString());
                             if (error.isPresent()) {
-                                return get(cls, parent, materializer);
+                                return getIdentifier(cls, parent, materializer);
                             } else {
                                 return Futures.immediateFuture(instance);
                             }
@@ -691,7 +675,7 @@ public abstract class Control {
                     
                     // check if the existing node is my value
                     
-                    valueFuture = ValueZNode.get(schema.getValueType(), task(), materializer);
+                    valueFuture = ValueZNode.getValue(schema.getValueType(), task(), materializer);
                     valueFuture.addListener(this, MoreExecutors.sameThreadExecutor());
                     return Optional.absent();
                 }

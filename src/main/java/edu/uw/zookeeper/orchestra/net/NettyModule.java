@@ -21,7 +21,7 @@ import edu.uw.zookeeper.netty.DaemonThreadFactory;
 import edu.uw.zookeeper.netty.EventLoopGroupService;
 import edu.uw.zookeeper.netty.client.NettyClientModule;
 import edu.uw.zookeeper.netty.client.NioClientBootstrapFactory;
-import edu.uw.zookeeper.netty.nio.NioEventLoopGroupFactory;
+import edu.uw.zookeeper.netty.NioEventLoopGroupFactory;
 import edu.uw.zookeeper.netty.server.NioServerBootstrapFactory;
 import edu.uw.zookeeper.netty.server.NettyServerModule;
 

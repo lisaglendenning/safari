@@ -199,7 +199,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("clientAddress");
                 
                 public static ListenableFuture<ClientAddress> get(Peers.Entity entity, Materializer<?> materializer) {
-                    return get(ClientAddress.class, entity, materializer);
+                    return getValue(ClientAddress.class, entity, materializer);
                 }
                 
                 public static ListenableFuture<ClientAddress> create(ServerInetAddressView value, Peers.Entity entity, Materializer<?> materializer) {
@@ -280,7 +280,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
                 
                 public static ListenableFuture<PeerAddress> get(Peers.Entity entity, Materializer<?> materializer) {
-                    return get(PeerAddress.class, entity, materializer);
+                    return getValue(PeerAddress.class, entity, materializer);
                 }
                 
                 public static ListenableFuture<PeerAddress> create(ServerInetAddressView value, Peers.Entity entity, Materializer<?> materializer) {
@@ -304,7 +304,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             public static class Backend extends Control.ValueZNode<BackendView> {
                 
                 public static ListenableFuture<Entity.Backend> get(Peers.Entity entity, Materializer<?> materializer) {
-                    return get(Entity.Backend.class, entity, materializer);
+                    return getValue(Entity.Backend.class, entity, materializer);
                 }
                 
                 public static ListenableFuture<Entity.Backend> create(BackendView value, Peers.Entity entity, Materializer<?> materializer) {
@@ -446,7 +446,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
                 
                 public static ListenableFuture<Entity.Backend> get(Ensembles.Entity entity, Materializer<?> materializer) {
-                    return get(Entity.Backend.class, entity, materializer);
+                    return getValue(Entity.Backend.class, entity, materializer);
                 }
                 
                 public static ListenableFuture<Entity.Backend> create(EnsembleView<ServerInetAddressView> value, Ensembles.Entity entity, Materializer<?> materializer) {
@@ -549,7 +549,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("leader");
                 
                 public static ListenableFuture<Entity.Leader> get(Ensembles.Entity parent, Materializer<?> materializer) {
-                    return get(Entity.Leader.class, parent, materializer);
+                    return getValue(Entity.Leader.class, parent, materializer);
                 }
                 
                 public static ListenableFuture<Entity.Leader> create(Identifier value, Ensembles.Entity parent, Materializer<?> materializer) {
@@ -726,7 +726,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
                 
                 public static ListenableFuture<Entity.Volume> get(Volumes.Entity entity, Materializer<?> materializer) {
-                    return get(Entity.Volume.class, entity, materializer);
+                    return getValue(Entity.Volume.class, entity, materializer);
                 }
                 
                 public static ListenableFuture<Entity.Volume> create(VolumeDescriptor value, Volumes.Entity entity, Materializer<?> materializer) {
@@ -749,7 +749,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("ensemble");
                 
                 public static ListenableFuture<Entity.Ensemble> get(Volumes.Entity entity, Materializer<?> materializer) {
-                    return get(Entity.Ensemble.class, entity, materializer);
+                    return getValue(Entity.Ensemble.class, entity, materializer);
                 }
                 
                 public static ListenableFuture<Entity.Ensemble> create(Identifier value, Volumes.Entity entity, Materializer<?> materializer) {
