@@ -274,7 +274,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     finger.remove();
                     break;
                 } else if (((OperationFuture.State.WAITING == state) || (OperationFuture.State.COMPLETE == state))
-                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(state) < 0))) {
+                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(state) <= 0))) {
                     // we need to preserve ordering of requests per volume
                     // as a proxy for this requirement, 
                     // don't submit until the task before us has submitted
