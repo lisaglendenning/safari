@@ -1,17 +1,21 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
-	<groupId>edu.uw.zookeeper</groupId>
+	<groupId>edu.uw.zookeeper.lite</groupId>
     <artifactId>orchestra</artifactId>
-	<version>0.5.2-SNAPSHOT</version>
     <packaging>jar</packaging>
 	<name>Orchestra</name>
+    <parent>
+        <groupId>edu.uw.zookeeper</groupId>
+        <artifactId>lite</artifactId>
+        <version>0.5.2-SNAPSHOT</version>
+        <relativePath>../../zookeeper-lite/parent</relativePath>
+    </parent>
     <build>
       <plugins>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.0</version>
           <configuration>
             <source>1.6</source>
             <target>1.6</target>
@@ -20,14 +24,12 @@
         <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
-            <version>2.9</version>
             <configuration>
             </configuration>
         </plugin>
         <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-source-plugin</artifactId>
-            <version>2.2.1</version>
             <executions>
                 <execution>
                     <id>attach-sources</id>
@@ -37,35 +39,55 @@
                 </execution>
             </executions>
         </plugin>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+                <execution>
+                    <id>copy-dependencies-scope</id>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>copy-dependencies</goal>
+                    </goals>
+                    <configuration>
+                        <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        <overWriteReleases>true</overWriteReleases>
+                        <overWriteSnapshots>true</overWriteSnapshots>
+                        <overWriteIfNewer>true</overWriteIfNewer>
+                        <useSubDirectoryPerScope>true</useSubDirectoryPerScope>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
       </plugins>
     </build>
     <dependencies>
         <dependency>
-            <groupId>${project.groupId}.lite</groupId>
+            <groupId>${project.groupId}</groupId>
             <artifactId>zklite-clients</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}.lite</groupId>
+            <groupId>${project.groupId}</groupId>
             <artifactId>zkserver</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}.lite</groupId>
+            <groupId>${project.groupId}</groupId>
             <artifactId>zkcore</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}.lite</groupId>
+            <groupId>${project.groupId}</groupId>
             <artifactId>zkclient</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}.lite</groupId>
+            <groupId>${project.groupId}</groupId>
             <artifactId>zkserver</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
