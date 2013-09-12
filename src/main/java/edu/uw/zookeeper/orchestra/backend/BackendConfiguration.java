@@ -15,6 +15,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterators;
@@ -58,7 +59,9 @@ public class BackendConfiguration {
             ServerInetAddressView clientAddress = BackendAddressDiscovery.call(configuration);
             EnsembleView<ServerInetAddressView> ensemble = BackendEnsembleViewFactory.getInstance(configuration);
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
-            return new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
+            BackendConfiguration instance = new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
+            LogManager.getLogger(getClass()).info("{}", instance);
+            return instance;
         }
     }
 
@@ -84,6 +87,11 @@ public class BackendConfiguration {
     
     public TimeValue getTimeOut() {
         return timeOut;
+    }
+    
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("view", view).add("timeOut", timeOut).toString();
     }
     
     protected static abstract class OptionalConfiguration implements Function<Configuration, String> {
@@ -149,7 +157,7 @@ public class BackendConfiguration {
             }
         }
         
-        protected final Logger logger = LogManager.getLogger();
+        protected final Logger logger = LogManager.getLogger(getClass());
         protected final Configuration configuration;
         
         public BackendAddressDiscovery(Configuration configuration) {
@@ -198,15 +206,19 @@ public class BackendConfiguration {
                 connector = JMXConnectorFactory.connect(url);
                 MBeanServerConnection mbeans = connector.getMBeanServerConnection();
                 EnsembleRoleView<InetSocketAddress, ServerInetAddressView> roles = ServerViewJmxQuery.ensembleViewOf(mbeans);
-                return EnsembleView.from(ImmutableSortedSet.copyOf(Iterators.transform(
-                        roles.iterator(), 
-                        new Function<ServerRoleView<InetSocketAddress, ServerInetAddressView>, ServerInetAddressView>() {
-                            @Override
-                            public ServerInetAddressView apply(
-                                    ServerRoleView<InetSocketAddress, ServerInetAddressView> input) {
-                                return input.first();
-                            }
-                        })));
+                if (roles == null) {
+                    return EnsembleView.of(ServerViewJmxQuery.addressViewOf(mbeans));
+                } else {
+                    return EnsembleView.from(ImmutableSortedSet.copyOf(Iterators.transform(
+                            roles.iterator(), 
+                            new Function<ServerRoleView<InetSocketAddress, ServerInetAddressView>, ServerInetAddressView>() {
+                                @Override
+                                public ServerInetAddressView apply(
+                                        ServerRoleView<InetSocketAddress, ServerInetAddressView> input) {
+                                    return input.first();
+                                }
+                            })));
+                }
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             } finally {
