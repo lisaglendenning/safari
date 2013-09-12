@@ -67,8 +67,6 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
     protected final Executor executor;
     protected final LinkedQueue<BackendRequestFuture> mailbox;
     // not thread safe
-    protected LinkedIterator<BackendRequestFuture> pending;
-    // not thread safe
     protected LinkedIterator<BackendRequestFuture> finger;
 
     public BackendSessionExecutor(
@@ -87,7 +85,6 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         this.publisher = publisher;
         this.executor = executor;
         this.mailbox = LinkedQueue.create();
-        this.pending = mailbox.iterator();
         this.finger = null;
     }
     
@@ -132,9 +129,6 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
                 return false;
             }
         }
-        if (! pending.hasNext()) {
-            pending = mailbox.iterator();
-        }
         return true;
     }
     
@@ -143,6 +137,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         if (state() == State.TERMINATED) {
             return;
         }
+        // TODO: save pending across calls?
+        LinkedIterator<BackendRequestFuture> pending = mailbox.iterator();
         int xid = message.xid();
         if (xid == OpCodeXid.NOTIFICATION.xid()) {
             while (pending.hasNext() && pending.peekNext().isDone()) {
