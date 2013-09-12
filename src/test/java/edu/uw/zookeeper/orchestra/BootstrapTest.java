@@ -12,6 +12,7 @@ import com.google.inject.Injector;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.orchestra.backend.BackendRequestService;
 import edu.uw.zookeeper.orchestra.backend.BackendTest;
 import edu.uw.zookeeper.orchestra.common.DependentService;
 import edu.uw.zookeeper.orchestra.common.DependsOn;
@@ -33,6 +34,7 @@ public class BootstrapTest {
 
     @DependsOn({ 
         ControlMaterializerService.class, 
+        BackendRequestService.class,
         EnsembleMemberService.class,
         FrontendServerService.class })
     public static class SimpleMainService extends DependentService {

@@ -6,6 +6,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.Service;
@@ -19,6 +22,7 @@ import edu.uw.zookeeper.orchestra.Identifier;
 
 public abstract class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends ForwardingService implements ConnectionFactory<V> {
 
+    protected final Logger logger = LogManager.getLogger(getClass());
     protected final Identifier identifier;
     protected final TimeValue timeOut;
     protected final ScheduledExecutorService executor;
@@ -50,7 +54,7 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
         switch (connection.state()) {
         case CONNECTION_CLOSING:
         case CONNECTION_CLOSED:
-            peers.remove(peer, connection);
+            remove(connection);
             return null;
         default:
             return connection;
@@ -81,6 +85,14 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
         connections.unregister(handler);
     }
     
+    protected boolean remove(V connection) {
+        boolean removed = peers.remove(connection.remoteAddress().getIdentifier(), connection);
+        if (removed) {
+            logger.info("Removed {}", connection);
+        }
+        return removed;
+    }
+    
     public V put(V v) {
         V prev = peers.put(v.remoteAddress().getIdentifier(), v);
         new RemoveOnClose(v);
@@ -104,20 +116,20 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
 
     protected class RemoveOnClose {
         
-        protected final V instance;
+        protected final V connection;
         
-        public RemoveOnClose(V instance) {
-            this.instance = instance;
-            instance.register(this);
+        public RemoveOnClose(V connection) {
+            this.connection = connection;
+            connection.register(this);
         }
     
         @Subscribe
         public void handleTransition(Automaton.Transition<?> event) {
             if (Connection.State.CONNECTION_CLOSED == event.to()) {
                 try {
-                    instance.unregister(this);
+                    connection.unregister(this);
                 } catch (IllegalArgumentException e) {}
-                peers.remove(instance.remoteAddress().getIdentifier(), instance);
+                remove(connection);
             }
         }
     }

@@ -4,8 +4,10 @@ import static com.google.common.base.Preconditions.checkState;
 
 import java.util.concurrent.ExecutionException;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.base.Objects;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -45,7 +47,9 @@ public class PeerConfiguration {
             ServerInetAddressView address = ConfigurableServerAddressView.get(configuration);
             ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
-            return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
+            PeerConfiguration instance = new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
+            LogManager.getLogger(getClass()).info("{}", instance);
+            return instance;
         }
     }
     
@@ -73,21 +77,26 @@ public class PeerConfiguration {
 
     public static final String CONFIG_PATH = "Peer";
     
-    private final PeerAddressView address;
+    private final PeerAddressView view;
     private final TimeValue timeOut;
     
     public PeerConfiguration(
-            PeerAddressView address,
+            PeerAddressView view,
             TimeValue timeOut) {
-        this.address = address;
+        this.view = view;
         this.timeOut = timeOut;
     }
     
     public PeerAddressView getView() {
-        return address;
+        return view;
     }
     
     public TimeValue getTimeOut() {
         return timeOut;
+    }
+
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("view", view).add("timeOut", timeOut).toString();
     }
 }

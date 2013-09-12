@@ -28,11 +28,7 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.NetClientModule;
-import edu.uw.zookeeper.orchestra.common.DependsOn;
-import edu.uw.zookeeper.orchestra.control.ControlMaterializerService;
 import edu.uw.zookeeper.orchestra.frontend.FrontendConfiguration;
-import edu.uw.zookeeper.orchestra.frontend.FrontendServerService;
-import edu.uw.zookeeper.orchestra.peer.EnsembleMemberService;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.proto.IExistsResponse;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -44,10 +40,6 @@ public class SingleClientTest {
         return BootstrapTest.injector();
     }
 
-    @DependsOn({ 
-        ControlMaterializerService.class, 
-        EnsembleMemberService.class,
-        FrontendServerService.class })
     public static class SingleClientService extends BootstrapTest.SimpleMainService {
 
         public static class Module extends AbstractModule {
@@ -103,8 +95,8 @@ public class SingleClientTest {
         }
     }
 
-    @Test(timeout=10000)
-    public void test() throws Exception {
+    @Test(timeout=60000)
+    public void testPipeline() throws Exception {
         Injector injector = SingleClientService.Module.injector();
         SingleClientService client = injector.getInstance(SingleClientService.class);
         client.startAsync().awaitRunning();
@@ -112,13 +104,14 @@ public class SingleClientTest {
         monitor.startAsync().awaitRunning();
         
         Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 
-                CallUntilPresent.create(IterationCallable.create(1, 1, 
+                CallUntilPresent.create(IterationCallable.create(100, 10, 
                     SubmitCallable.create(
                             PathedRequestGenerator.exists(
                                     ConstantGenerator.of(ZNodeLabel.Path.root())), 
                             client.getClient().getClientConnectionExecutor())));
         Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result = callable.call();
-        assertTrue(result.second().get() instanceof IExistsResponse);
+        assertTrue(result.second().get().record() instanceof IExistsResponse);
+        
         monitor.stopAsync().awaitTerminated();
     }
 }
