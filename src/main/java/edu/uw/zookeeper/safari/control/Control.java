@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutionException;
 
 import javax.annotation.Nullable;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Objects;
@@ -26,6 +27,8 @@ import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.TreeFetcher;
+import edu.uw.zookeeper.client.TreeFetcher.Parameters;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
@@ -390,22 +393,27 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<V> extends PromiseTask<TreeFetcher<V>, V> implements FutureCallback<Optional<V>> {
+    public static class FetchUntil<V> extends PromiseTask<TreeFetcher.Builder<V>, V> implements FutureCallback<Optional<V>> {
     
         public static <V> FetchUntil<V> newInstance(
                 ZNodeLabel.Path root, 
                 Processor<? super Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<V>> result, 
                 Materializer<?> materializer) {
-            TreeFetcher<V> fetcher = TreeFetcher.<V>builder()
-                    .setResult(result).setClient(materializer).setData(true).setWatch(true).build();
+            TreeFetcher.Builder<V> fetcher = TreeFetcher.<V>builder()
+                    .setParameters(Parameters.of(true, true, false, false))
+                    .setResult(result).setClient(materializer).setRoot(root);
             Promise<V> promise = newPromise();
             return newInstance(root, materializer, fetcher, promise);
         }
     
         public static <V> FetchUntil<V> newInstance(
-                ZNodeLabel.Path root, Materializer<?> materializer, TreeFetcher<V> fetcher, Promise<V> promise) {
+                ZNodeLabel.Path root, Materializer<?> materializer, TreeFetcher.Builder<V> fetcher, Promise<V> promise) {
             return new FetchUntil<V>(
                     root, materializer, fetcher, promise);
+        }
+
+        public static <V> Promise<V> newPromise() {
+            return LoggingPromise.create(LogManager.getLogger(FetchUntil.class), PromiseTask.<V>newPromise());
         }
     
         protected final ZNodeLabel.Path root;
@@ -414,7 +422,7 @@ public abstract class Control {
         public FetchUntil(
                 ZNodeLabel.Path root, 
                 Materializer<?> materializer, 
-                TreeFetcher<V> fetcher,
+                TreeFetcher.Builder<V> fetcher,
                 Promise<V> promise) {
             super(fetcher, promise);
             this.root = root;
@@ -492,7 +500,7 @@ public abstract class Control {
             protected final ListenableFuture<Optional<V>> future;
             
             public Updater(ZNodeLabel.Path path) {
-                this.future = task().apply(path);
+                this.future = task().setRoot(path).build();
                 Futures.addCallback(future, FetchUntil.this, MoreExecutors.sameThreadExecutor());
                 FetchUntil.this.addListener(this, MoreExecutors.sameThreadExecutor());
             }
