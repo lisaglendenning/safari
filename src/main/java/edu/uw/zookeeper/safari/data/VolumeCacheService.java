@@ -24,6 +24,7 @@ import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Schema;
+import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.protocol.Operation;
@@ -107,19 +108,19 @@ public class VolumeCacheService extends AbstractIdleService {
                                 // so we need to dig into the message to see if it is the information we want
                                 // and update the cache ourselves...
                                 if (!result.isPresent() && input.isPresent()) {
-                                    Records.Request request = input.get().first();
-                                    if (request.opcode() == OpCode.GET_DATA) {
-                                        ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
+                                    Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>> operation = input.get();
+                                    if (operation.first().opcode() == OpCode.GET_DATA) {
+                                        ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) operation.first()).getPath());
                                         Schema.SchemaNode schemaNode = ControlSchema.getInstance().get().match(requestPath);
                                         if (schemaNode == ControlSchema.getInstance().byElement(ControlSchema.Volumes.Entity.Volume.class)) {
                                             Materializer.MaterializedNode node = materializer.get(requestPath);
                                             if ((node != null) && (node.get() != null)) {
                                                 VolumeDescriptor v = (VolumeDescriptor) node.get().get();
                                                 if ((v != null) && v.contains(path)) {
-                                                    Identifier id = Identifier.valueOf(((ZNodeLabel.Path) requestPath.head()).tail().toString());
-                                                    Volume volume = Volume.of(id, v);
-                                                    cache.put(volume);
-                                                    result = Optional.of(volume);
+                                                    Operation.ProtocolResponse<?> response = operation.second().get();
+                                                    ZNodeViewCache.ViewUpdate update = ZNodeViewCache.ViewUpdate.of(
+                                                            requestPath, ZNodeViewCache.View.DATA, null, StampedReference.of(response.zxid(), (Records.DataGetter) response.record()));
+                                                    handleViewUpdate(update);
                                                 }
                                             }
                                         }
