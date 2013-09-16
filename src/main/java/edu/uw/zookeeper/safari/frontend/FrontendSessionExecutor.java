@@ -217,7 +217,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             if (! super.send(message)) {
                 return false;
             }
-            message.addListener(this, MoreExecutors.sameThreadExecutor());
+            message.addListener(this, executor);
         }
         return true;
     }
@@ -258,10 +258,11 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         FrontendRequestFuture next;
         while ((next = finger.peekNext()) != null) {
             if (!apply(next) || (finger.peekNext() == next)) {
-                finger = null;
                 break;
             }
         }
+        logger.trace("next={} finger.next={}", next, finger.peekNext());
+        finger = null;
     }
     
     @Override
@@ -279,8 +280,13 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     // as a proxy for this requirement, 
                     // don't submit until the task before us has submitted
                     // (note this is stronger than necessary)
-                    // this also means that no tasks after this one can run!
                     // we also don't want to publish before our predecessor!
+                    
+                    // short-circuit queue: if WAITING,
+                    // then no tasks after this one can run!
+                    if (state.compareTo(OperationFuture.State.WAITING) > 0) {
+                        finger.next();
+                    }
                     break;
                 } else if (input.call() == state) {
                     finger.next();
@@ -294,7 +300,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     @Override
     protected void runExit() {
         if (state.compareAndSet(State.RUNNING, State.WAITING)) {
-            if ((finger != null) && finger.hasNext()) {
+            FrontendRequestFuture next = mailbox.peek();
+            if ((next != null) && ! ((BackendRequestTask) next).pending()) {
                 schedule();
             }
         }
@@ -618,12 +625,14 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         public boolean cancel(boolean mayInterruptIfRunning) {
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
-                for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
-                    for (BackendSessionExecutor.BackendRequestFuture e: backends) {
-                        e.cancel(mayInterruptIfRunning);
+                synchronized (this) {
+                    for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
+                        for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                            e.cancel(mayInterruptIfRunning);
+                        }
                     }
+                    pending.clear();
                 }
-                pending.clear();
             }
             return cancel;
         }
@@ -632,12 +641,14 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         public boolean set(Message.ServerResponse<?> result) {
             boolean set = super.set(result);
             if (set) {
-                for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
-                    for (BackendSessionExecutor.BackendRequestFuture e: backends) {
-                        e.cancel(true);
+                synchronized (this) {
+                    for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
+                        for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                            e.cancel(true);
+                        }
                     }
+                    pending.clear();
                 }
-                pending.clear();
             }
             return set;
         }
@@ -646,20 +657,19 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         public boolean setException(Throwable t) {
             boolean setException = super.setException(t);
             if (setException) {
-                for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
-                    for (BackendSessionExecutor.BackendRequestFuture e: backends) {
-                        e.cancel(true);
+                synchronized (this) {
+                    for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
+                        for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                            e.cancel(true);
+                        }
                     }
+                    pending.clear();
                 }
-                pending.clear();
             }
             return setException;
         }
         
-        @Override
-        public synchronized State call() throws Exception {
-            logger.entry(this);
-            
+        public synchronized boolean pending() {
             Iterator<ListenableFuture<?>> p = pending.iterator();
             while (p.hasNext()) {
                 ListenableFuture<?> next = p.next();
@@ -667,7 +677,14 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     p.remove();
                 }
             }
-            if (pending.isEmpty()) {
+            return ! pending.isEmpty();
+        }
+        
+        @Override
+        public synchronized State call() throws Exception {
+            logger.entry(this);
+            
+            if (! pending()) {
                 switch (state()) {
                 case WAITING:
                 {

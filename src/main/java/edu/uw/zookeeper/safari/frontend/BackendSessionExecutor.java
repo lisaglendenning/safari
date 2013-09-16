@@ -229,8 +229,9 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
                     finger.remove();
                     break;
                 } else if ((OperationFuture.State.COMPLETE == state)
-                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(OperationFuture.State.PUBLISHED) < 0))) {
+                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(state) <= 0))) {
                     // tasks can only publish when predecessors have published
+                    finger.next();
                     break;
                 } else if (input.call() == state) {
                     break;
