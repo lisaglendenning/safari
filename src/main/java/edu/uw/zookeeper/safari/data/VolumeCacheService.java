@@ -32,6 +32,7 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
+import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
@@ -92,46 +93,47 @@ public class VolumeCacheService extends AbstractIdleService {
                         return cache.get(input);
                     }
                 },
-                new AsyncFunction<ZNodeLabel.Path, Volume>() {
-                    @Override
-                    public ListenableFuture<Volume> apply(
-                            final ZNodeLabel.Path path)
-                            throws Exception {
-                        // since we can't hash on an arbitrary path,
-                        // we must do a scan
-                        Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>> processor = new Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>>() {
-                            @Override
-                            public Optional<Volume> apply(Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>> input)
-                                    throws Exception {
-                                Optional<Volume> result = Optional.fromNullable(cache.get(path));
-                                // UNFORTUNATELY...the cache doesn't get updated automagically until after this message is processed
-                                // so we need to dig into the message to see if it is the information we want
-                                // and update the cache ourselves...
-                                if (!result.isPresent() && input.isPresent()) {
-                                    Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>> operation = input.get();
-                                    if (operation.first().opcode() == OpCode.GET_DATA) {
-                                        ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) operation.first()).getPath());
-                                        Schema.SchemaNode schemaNode = ControlSchema.getInstance().get().match(requestPath);
-                                        if (schemaNode == ControlSchema.getInstance().byElement(ControlSchema.Volumes.Entity.Volume.class)) {
-                                            Materializer.MaterializedNode node = materializer.get(requestPath);
-                                            if ((node != null) && (node.get() != null)) {
-                                                VolumeDescriptor v = (VolumeDescriptor) node.get().get();
-                                                if ((v != null) && v.contains(path)) {
-                                                    Operation.ProtocolResponse<?> response = operation.second().get();
-                                                    ZNodeViewCache.ViewUpdate update = ZNodeViewCache.ViewUpdate.of(
-                                                            requestPath, ZNodeViewCache.View.DATA, null, StampedReference.of(response.zxid(), (Records.DataGetter) response.record()));
-                                                    handleViewUpdate(update);
+                SharedLookup.create(
+                    new AsyncFunction<ZNodeLabel.Path, Volume>() {
+                        @Override
+                        public ListenableFuture<Volume> apply(
+                                final ZNodeLabel.Path path)
+                                throws Exception {
+                            // since we can't hash on an arbitrary path,
+                            // we must do a scan
+                            Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>> processor = new Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>>() {
+                                @Override
+                                public Optional<Volume> apply(Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>> input)
+                                        throws Exception {
+                                    Optional<Volume> result = Optional.fromNullable(cache.get(path));
+                                    // UNFORTUNATELY...the cache doesn't get updated automagically until after this message is processed
+                                    // so we need to dig into the message to see if it is the information we want
+                                    // and update the cache ourselves...
+                                    if (!result.isPresent() && input.isPresent()) {
+                                        Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>> operation = input.get();
+                                        if (operation.first().opcode() == OpCode.GET_DATA) {
+                                            ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) operation.first()).getPath());
+                                            Schema.SchemaNode schemaNode = ControlSchema.getInstance().get().match(requestPath);
+                                            if (schemaNode == ControlSchema.getInstance().byElement(ControlSchema.Volumes.Entity.Volume.class)) {
+                                                Materializer.MaterializedNode node = materializer.get(requestPath);
+                                                if ((node != null) && (node.get() != null)) {
+                                                    VolumeDescriptor v = (VolumeDescriptor) node.get().get();
+                                                    if ((v != null) && v.contains(path)) {
+                                                        Operation.ProtocolResponse<?> response = operation.second().get();
+                                                        ZNodeViewCache.ViewUpdate update = ZNodeViewCache.ViewUpdate.of(
+                                                                requestPath, ZNodeViewCache.View.DATA, null, StampedReference.of(response.zxid(), (Records.DataGetter) response.record()));
+                                                        handleViewUpdate(update);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
+                                    return result;
                                 }
-                                return result;
-                            }
-                        };
-                        return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, materializer);
-                    }
-                });
+                            };
+                            return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, materializer);
+                        }
+                    }));
     }
     
     public VolumeCache asCache() {

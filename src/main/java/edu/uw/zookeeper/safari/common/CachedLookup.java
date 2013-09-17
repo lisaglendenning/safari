@@ -1,28 +1,30 @@
 package edu.uw.zookeeper.safari.common;
 
-import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
 import com.google.common.base.Function;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
+
 import edu.uw.zookeeper.common.AbstractPair;
+import edu.uw.zookeeper.common.Reference;
 
 public class CachedLookup<K,V> extends AbstractPair<ConcurrentMap<K,V>, CachedFunction<K,V>> {
 
-    public static class CacheFunction<K,V> implements Function<K,V> {
+    public static class CacheFunction<K,V> implements Function<K,V>, Reference<ConcurrentMap<K,V>> {
         
-        public static <K,V> CacheFunction<K,V> create(Map<K,V> cache) {
+        public static <K,V> CacheFunction<K,V> create(ConcurrentMap<K,V> cache) {
             return new CacheFunction<K,V>(cache);
         }
         
-        protected final Map<K,V> cache;
+        protected final ConcurrentMap<K,V> cache;
         
-        public CacheFunction(Map<K,V> cache) {
+        public CacheFunction(ConcurrentMap<K,V> cache) {
             this.cache = cache;
         }
         
-        public Map<K,V> get() {
+        @Override
+        public ConcurrentMap<K,V> get() {
             return cache;
         }
         

@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.common;
 
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
 
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -21,6 +22,8 @@ public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>
             AsyncFunction<? super K,V> delegate) {
         super(lookups, delegate);
     }
+    
+    protected final static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
 
     @Override
     public ListenableFuture<V> apply(K input) throws Exception {
@@ -47,7 +50,7 @@ public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>
                 ListenableFuture<V> value) {
             super(key, value);
             
-            second().addListener(this, MoreExecutors.sameThreadExecutor());
+            second().addListener(this, sameThreadExecutor);
         }
         
         @Override
