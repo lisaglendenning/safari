@@ -110,8 +110,8 @@ public class MultipleClientTest {
         monitor.startAsync().awaitRunning();
         
         int nclients = 2;
-        int iterations = 2;
-        int logInterval = 10;
+        int iterations = 32;
+        int logInterval = 8;
         List<ListenableFuture<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>>> futures = Lists.newArrayListWithCapacity(nclients);
         for (int i=0; i<nclients; ++i) {
             Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 

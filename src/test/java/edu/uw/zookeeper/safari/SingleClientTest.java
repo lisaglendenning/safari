@@ -103,8 +103,8 @@ public class SingleClientTest {
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
         
-        int iterations = 100;
-        int logInterval = 10;
+        int iterations = 32;
+        int logInterval = 8;
         Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 
                 CallUntilPresent.create(IterationCallable.create(iterations, logInterval, 
                     SubmitCallable.create(
