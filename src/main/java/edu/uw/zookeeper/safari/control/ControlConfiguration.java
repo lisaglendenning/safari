@@ -7,7 +7,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ZooKeeperApplication;
-import edu.uw.zookeeper.client.ClientBuilder;
+import edu.uw.zookeeper.client.ConfigurableEnsembleView;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
@@ -29,17 +29,17 @@ public class ControlConfiguration {
         @Provides @Singleton
         public ControlConfiguration getControlConfiguration(Configuration configuration) {
             EnsembleView<ServerInetAddressView> ensemble = 
-                    ConfigurableEnsembleView.get(configuration);
+                    ControlConfigurableEnsembleView.get(configuration);
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
             return new ControlConfiguration(ensemble, timeOut);
         }
     }
 
     @Configurable(path="Control", key="Ensemble", arg="control", value="localhost:2381", help="Address:Port,...")
-    public static class ConfigurableEnsembleView extends ClientBuilder.ConfigurableEnsembleView {
+    public static class ControlConfigurableEnsembleView extends ConfigurableEnsembleView {
 
         public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
-            return new ConfigurableEnsembleView().apply(configuration);
+            return new ControlConfigurableEnsembleView().apply(configuration);
         }
     }
 

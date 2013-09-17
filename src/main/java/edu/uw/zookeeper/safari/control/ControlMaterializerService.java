@@ -7,11 +7,11 @@ import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.client.ClientConnectionExecutorService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.client.ClientConnectionExecutorService;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
@@ -59,12 +59,11 @@ public class ControlMaterializerService extends ClientConnectionExecutorService 
     protected ControlMaterializerService(
             Injector injector,
             ControlConnectionsService<?> connections) {
-        super(connections);
+        super(connections.factory());
         this.injector = injector;
         this.materializer = Materializer.newInstance(
                         ControlSchema.getInstance().get(),
                         JacksonModule.getSerializer(),
-                        this, 
                         this);
         this.watches = WatchPromiseTrie.newInstance();
     }

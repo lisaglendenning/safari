@@ -29,7 +29,6 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Message.Server;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.server.ServerConnectionExecutor;
-import edu.uw.zookeeper.protocol.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.safari.Identifier;
@@ -40,6 +39,7 @@ import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
+import edu.uw.zookeeper.server.ServerConnectionExecutorsService;
 import edu.uw.zookeeper.server.ServerConnectionFactoryBuilder;
 
 @DependsOn({FrontendServerExecutor.class})

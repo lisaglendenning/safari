@@ -16,7 +16,7 @@ import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.server.ServerBuilder;
+import edu.uw.zookeeper.server.ConfigurableServerAddressView;
 
 public class FrontendConfiguration {
 
@@ -34,7 +34,7 @@ public class FrontendConfiguration {
 
         @Provides @Singleton
         public FrontendConfiguration getFrontendConfiguration(Configuration configuration) {
-            ServerInetAddressView address = ServerBuilder.ConfigurableServerAddressView.get(configuration);
+            ServerInetAddressView address = ConfigurableServerAddressView.get(configuration);
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
             return new FrontendConfiguration(address, timeOut);
         }

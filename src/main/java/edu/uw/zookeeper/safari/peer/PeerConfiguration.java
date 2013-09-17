@@ -23,7 +23,7 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.server.ServerBuilder;
+import edu.uw.zookeeper.server.ConfigurableServerAddressView;
 
 public class PeerConfiguration {
 
@@ -44,7 +44,7 @@ public class PeerConfiguration {
                 ControlMaterializerService control, 
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
             checkState(control.isRunning());
-            ServerInetAddressView address = ConfigurableServerAddressView.get(configuration);
+            ServerInetAddressView address = PeerConfigurableServerAddressView.get(configuration);
             ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
             PeerConfiguration instance = new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
@@ -54,10 +54,10 @@ public class PeerConfiguration {
     }
     
     @Configurable(arg="peerAddress", path="Peer", key="PeerAddress", value=":2281", help="Address:Port")
-    public static class ConfigurableServerAddressView extends ServerBuilder.ConfigurableServerAddressView {
+    public static class PeerConfigurableServerAddressView extends ConfigurableServerAddressView {
 
         public static ServerInetAddressView get(Configuration configuration) {
-            return new ConfigurableServerAddressView().apply(configuration);
+            return new PeerConfigurableServerAddressView().apply(configuration);
         }
     }
 

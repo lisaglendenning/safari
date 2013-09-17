@@ -102,6 +102,10 @@ class ControlConnectionsService<C extends ProtocolCodecConnection<? super Messag
     public ClientConnectionFactory<C> connections() {
         return connections;
     }
+    
+    public EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory() {
+        return factory;
+    }
 
     @Override
     public ListenableFuture<ClientConnectionExecutor<C>> get() {

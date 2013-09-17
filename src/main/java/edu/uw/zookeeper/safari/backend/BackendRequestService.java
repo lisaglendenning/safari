@@ -171,8 +171,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 executor);
         Control.createPrefix(Materializer.newInstance(
                 BackendSchema.getInstance().get(), 
-                JacksonModule.getSerializer(), 
-                client, 
+                JacksonModule.getSerializer(),
                 client));
         client.submit(Records.newInstance(IDisconnectRequest.class)).get();
         client.stop();
