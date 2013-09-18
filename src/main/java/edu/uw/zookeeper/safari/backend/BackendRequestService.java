@@ -7,6 +7,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -55,9 +58,9 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionResponse;
+import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ServerPeerConnection;
 
 @DependsOn({BackendConnectionsService.class})
 public class BackendRequestService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends DependentService {
@@ -131,7 +134,10 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             }
         };
     }
+    
+    protected static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
 
+    protected final Logger logger;
     protected final BackendConnectionsService<C> connections;
     protected final ConcurrentMap<ServerPeerConnection<?>, ServerPeerConnectionListener> peers;
     protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendClient> clients;
@@ -148,6 +154,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             ShardedOperationTranslators translator,
             ScheduledExecutorService executor) {
         super(injector);
+        this.logger = LogManager.getLogger(getClass());
         this.connections = connections;
         this.lookup = lookup;
         this.translator = translator;
@@ -190,7 +197,8 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             MessageSessionOpenRequest request) {
         return Futures.transform(
                 connections.get(), 
-                new SessionOpenTask(request));
+                new SessionOpenTask(request),
+                sameThreadExecutor);
     }
 
     protected class SessionOpenTask implements Function<C, ShardedClientConnectionExecutor<C>> {
@@ -328,6 +336,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         }
 
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
+            logger.debug("{}", message);
             BackendClient client = clients.get(message.getIdentifier());
             if (client != null) {
                 ListenableFuture<Message.ServerResponse<?>> future;
@@ -337,7 +346,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                     throw Throwables.propagate(e);
                 }
                 if (message.getValue().record().opcode() == OpCode.CLOSE_SESSION) {
-                    future.addListener(client.new RemoveTask(), MoreExecutors.sameThreadExecutor());
+                    future.addListener(client.new RemoveTask(), sameThreadExecutor);
                 }
             } else {
                 // TODO
@@ -356,7 +365,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 this.frontend = frontend;
                 this.client = client;
                 
-                client.addListener(new RegisterTask(), MoreExecutors.sameThreadExecutor());
+                client.addListener(new RegisterTask(), sameThreadExecutor);
             }
             
             public MessageSessionOpenRequest getFrontend() {
@@ -435,7 +444,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             this.connection = connection;
             this.client = client;
             
-            client.addListener(this, MoreExecutors.sameThreadExecutor());
+            client.addListener(this, sameThreadExecutor);
         }
         
         @Override
@@ -454,7 +463,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 return;
             }
             if (! client.session().isDone()) {
-                client.session().addListener(this, MoreExecutors.sameThreadExecutor());
+                client.session().addListener(this, sameThreadExecutor);
                 return;
             }
             ConnectMessage.Response response;
@@ -468,7 +477,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                     MessagePacket.of(
                             MessageSessionOpenResponse.of(
                                     task().getIdentifier(), response)));
-            Futures.addCallback(future, this);
+            Futures.addCallback(future, this, sameThreadExecutor);
         }
 
         @Override

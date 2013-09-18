@@ -11,7 +11,6 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ServerPeerConnection;
 
 public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<Connection<? super MessagePacket>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket>>> {
 

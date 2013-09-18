@@ -68,10 +68,10 @@ import edu.uw.zookeeper.safari.common.LinkedIterator;
 import edu.uw.zookeeper.safari.common.LinkedQueue;
 import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.data.Volume;
+import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ClientPeerConnection;
 
 public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher {
     
@@ -88,6 +88,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     }
     
     public static interface FrontendRequestFuture extends OperationFuture<Message.ServerResponse<?>> {}
+
+    protected static final Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
     
     protected final Logger logger;
     protected final Executor executor;
@@ -359,7 +361,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 this.future = future;
                 futures.add(future);
                 future.addListener(runnable, executor);
-                future.addListener(this, MoreExecutors.sameThreadExecutor());
+                future.addListener(this, sameThreadExecutor);
             }
             
             @Override
@@ -425,14 +427,15 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                                             input,
                                                             Futures.getUnchecked(task.connection()),
                                                             self,
-                                                            MoreExecutors.sameThreadExecutor());
+                                                            sameThreadExecutor);
                                                     BackendSessionExecutor prev = cache.put(backend.getEnsemble(), backend);
                                                     if (prev != null) {
                                                         assert (prev.state() == Actor.State.TERMINATED);
                                                     }
                                                     return backend;
                                                 }
-                                            });
+                                            }, 
+                                            sameThreadExecutor);
                                 }
                             }), 
                             FrontendSessionExecutor.this, 

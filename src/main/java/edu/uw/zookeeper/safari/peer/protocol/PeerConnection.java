@@ -135,48 +135,4 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
             }
         }
     }
-    
-    public static class ClientPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
-
-        public static <C extends Connection<? super MessagePacket>> ClientPeerConnection<C> create(
-                Identifier localIdentifier,
-                Identifier remoteIdentifier,
-                C connection,
-                TimeValue timeOut,
-                ScheduledExecutorService executor) {
-            return new ClientPeerConnection<C>(
-                    localIdentifier, remoteIdentifier, connection, timeOut, executor);
-        }
-        
-        public ClientPeerConnection(
-                Identifier localIdentifier,
-                Identifier remoteIdentifier,
-                C connection,
-                TimeValue timeOut,
-                ScheduledExecutorService executor) {
-            super(localIdentifier, remoteIdentifier, connection, timeOut, executor);
-        }
-    }
-
-
-    public static class ServerPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
-
-        public static <C extends Connection<? super MessagePacket>> ServerPeerConnection<C> create(
-                Identifier localIdentifier,
-                Identifier remoteIdentifier,
-                C connection,
-                TimeValue timeOut,
-                ScheduledExecutorService executor) {
-            return new ServerPeerConnection<C>(localIdentifier, remoteIdentifier, connection, timeOut, executor);
-        }
-        
-        public ServerPeerConnection(
-                Identifier localIdentifier,
-                Identifier remoteIdentifier,
-                C connection,
-                TimeValue timeOut,
-                ScheduledExecutorService executor) {
-            super(localIdentifier, remoteIdentifier, connection, timeOut, executor);
-        }
-    }
 }

@@ -22,7 +22,6 @@ import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ClientPeerConnection;
 
 public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<Connection<? super MessagePacket>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket>>> {
 

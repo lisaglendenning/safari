@@ -33,9 +33,9 @@ import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.EnsembleConfiguration;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
+import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ClientPeerConnection;
 
 @DependsOn({PeerToEnsembleLookup.class, PeerConnectionsService.class})
 public class EnsembleConnectionsService extends AbstractIdleService {

@@ -38,14 +38,14 @@ import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.FramedMessagePacketCodec;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacketCodec;
+import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ClientPeerConnection;
-import edu.uw.zookeeper.safari.peer.protocol.PeerConnection.ServerPeerConnection;
 
 @DependsOn({ServerPeerConnections.class, ClientPeerConnections.class})
 public class PeerConnectionsService extends DependentService {
@@ -85,7 +85,8 @@ public class PeerConnectionsService extends DependentService {
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
                 PeerConfiguration configuration,
-                ScheduledExecutorService executor,
+                ScheduledExecutorService scheduler,
+                Executor executor,
                 ControlMaterializerService control,
                 Injector injector,
                 NetServerModule servers,
@@ -101,13 +102,15 @@ public class PeerConnectionsService extends DependentService {
                             codecFactory(JacksonModule.getMapper()), 
                             connectionFactory()).get();
             IntraVmEndpointFactory<MessagePacket> endpoints = IntraVmEndpointFactory.create(
-                    addresses, EventBusPublisher.factory(), IntraVmEndpointFactory.sameThreadExecutors());
+                    addresses, 
+                    EventBusPublisher.factory(), 
+                    IntraVmEndpointFactory.actorExecutors(executor));
             IntraVmEndpoint<MessagePacket> serverLoopback = endpoints.get();
             IntraVmEndpoint<MessagePacket> clientLoopback = endpoints.get();
             PeerConnectionsService instance = PeerConnectionsService.newInstance(
                     configuration.getView().id(), 
                     configuration.getTimeOut(),
-                    executor,
+                    scheduler,
                     serverConnections, 
                     clientConnections,
                     IntraVmConnection.create(serverLoopback, clientLoopback),
