@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.control;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import java.net.UnknownHostException;
 import java.util.List;
 
 import javax.annotation.Nullable;
@@ -206,7 +207,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return create(ClientAddress.class, value, entity, materializer);
                 }
                 
-                public static ClientAddress valueOf(String label, Peers.Entity parent) {
+                public static ClientAddress valueOf(String label, Peers.Entity parent) throws UnknownHostException {
                     return of(ServerInetAddressView.fromString(label), parent);
                 }
                 
@@ -287,7 +288,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return create(PeerAddress.class, value, entity, materializer);
                 }
                 
-                public static PeerAddress valueOf(String label, Peers.Entity parent) {
+                public static PeerAddress valueOf(String label, Peers.Entity parent) throws UnknownHostException {
                     return of(ServerInetAddressView.fromString(label), parent);
                 }
                 
