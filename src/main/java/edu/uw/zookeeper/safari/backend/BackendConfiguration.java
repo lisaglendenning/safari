@@ -153,7 +153,7 @@ public class BackendConfiguration {
         }
     }
 
-    @Configurable(path="Backend", key="Cfg", arg="backend-cfg", help="zoo.cfg")
+    @Configurable(path="Backend", key="Cfg", arg="backendCfg", help="zoo.cfg")
     public static class ConfigurableBackendCfg implements Function<Configuration, BackendView> {
     
         public static BackendView get(Configuration configuration) {

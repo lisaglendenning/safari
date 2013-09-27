@@ -35,7 +35,7 @@ public class ControlConfiguration {
         }
     }
 
-    @Configurable(path="Control", key="Ensemble", arg="control", value="localhost:2381", help="Address:Port,...")
+    @Configurable(path="Control", key="Ensemble", arg="control", value="127.0.0.1:2381", help="Address:Port,...")
     public static class ControlConfigurableEnsembleView extends ConfigurableEnsembleView {
 
         public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
