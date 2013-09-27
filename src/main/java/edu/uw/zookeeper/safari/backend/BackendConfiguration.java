@@ -1,6 +1,14 @@
 package edu.uw.zookeeper.safari.backend;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
@@ -8,6 +16,10 @@ import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.base.Predicate;
+import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -40,16 +52,20 @@ public class BackendConfiguration {
         @Provides @Singleton
         public BackendConfiguration getBackendConfiguration(
                 Configuration configuration) throws Exception {
-            ServerInetAddressView clientAddress = ConfigurableAddressView.get(configuration);
-            if (clientAddress == null) {
-                clientAddress = BackendAddressDiscovery.get();
-            }
-            EnsembleView<ServerInetAddressView> ensemble = ConfigurableEnsembleView.get(configuration);
-            if (ensemble == null) {
-                ensemble = BackendEnsembleViewFactory.get();
+            BackendView view = ConfigurableBackendCfg.get(configuration);
+            if (view == null) {
+                ServerInetAddressView clientAddress = ConfigurableAddressView.get(configuration);
+                if (clientAddress == null) {
+                    clientAddress = BackendAddressDiscovery.get();
+                }
+                EnsembleView<ServerInetAddressView> ensemble = ConfigurableEnsembleView.get(configuration);
+                if (ensemble == null) {
+                    ensemble = BackendEnsembleViewFactory.get();
+                }
+                view = BackendView.of(clientAddress, ensemble);
             }
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
-            BackendConfiguration instance = new BackendConfiguration(BackendView.of(clientAddress, ensemble), timeOut);
+            BackendConfiguration instance = new BackendConfiguration(view, timeOut);
             LogManager.getLogger(getClass()).info("{}", instance);
             return instance;
         }
@@ -131,6 +147,78 @@ public class BackendConfiguration {
             if (config.hasPath(configurable.key())) {
                 return EnsembleView.fromString(
                         config.getString(configurable.key()));
+            } else {
+                return null;
+            }     
+        }
+    }
+
+    @Configurable(path="Backend", key="Cfg", arg="backend-cfg", help="zoo.cfg")
+    public static class ConfigurableBackendCfg implements Function<Configuration, BackendView> {
+    
+        public static BackendView get(Configuration configuration) {
+            return new ConfigurableBackendCfg().apply(configuration);
+        }
+        
+        @Override
+        public BackendView apply(Configuration configuration) {
+            Configurable configurable = getClass().getAnnotation(Configurable.class);
+            Config config = configuration.withConfigurable(configurable)
+                    .getConfigOrEmpty(configurable.path());
+            if (config.hasPath(configurable.key())) {
+                try {
+                    FileInputStream cfg = new FileInputStream(
+                            new File(config.getString(configurable.key())));
+                    Properties properties = new Properties();
+                    try {
+                        properties.load(cfg);
+                    } finally {
+                        cfg.close();
+                    }
+                    
+                    ServerInetAddressView clientAddress;
+                    int clientPort = Integer.parseInt(properties.getProperty("clientPort"));
+                    String clientPortAddress = properties.getProperty("clientPortAddress", "").trim();
+                    if (clientPortAddress.isEmpty()) {
+                        clientAddress = ServerInetAddressView.of(
+                                InetAddress.getByName("127.0.0.1"), clientPort);
+                    } else {
+                        checkArgument(clientPort > 0);
+                        clientAddress = ServerInetAddressView.fromString(
+                                String.format("%s:%d", clientPortAddress, clientPort));
+                    }
+                    
+                    Set<Map.Entry<Object, Object>> serverProperties = Sets.filter(properties.entrySet(),
+                            new Predicate<Map.Entry<Object, Object>>(){
+
+                                @Override
+                                public boolean apply(Map.Entry<Object, Object> input) {
+                                    // TODO Auto-generated method stub
+                                    return input.getKey().toString().trim().startsWith("server.");
+                                }});
+                    ImmutableSet.Builder<ServerInetAddressView> servers = ImmutableSet.builder();
+                    for (Map.Entry<Object, Object> e: serverProperties) {
+                        String[] fields = e.getValue().toString().trim().split(":");
+                        ServerInetAddressView server;
+                        if (fields.length == 1) {
+                            server = ServerInetAddressView.of(
+                                    InetAddress.getByName("127.0.0.1"), 
+                                    Integer.parseInt(fields[0]));
+                        } else if (fields.length >= 2) {
+                            server = ServerInetAddressView.fromString(
+                                    String.format("%s:%s", fields[0], fields[1]));
+                        } else {
+                            throw new IllegalArgumentException(String.valueOf(e));
+                        }
+                        servers.add(server);
+                    }
+                    EnsembleView<ServerInetAddressView> ensemble = EnsembleView.from(servers.build());
+                    
+                    return BackendView.of(clientAddress, ensemble);
+                } catch (Exception e) {
+                    Throwables.propagateIfInstanceOf(e, IllegalArgumentException.class); 
+                    throw new IllegalArgumentException(e);
+                }
             } else {
                 return null;
             }     
