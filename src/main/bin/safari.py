@@ -29,7 +29,7 @@ def main(argv, environ):
             if 'JAVA_HOME' in environ else 'java'
     
     JAVA_CLASSPATH = os.path.join(SAFARI_LIB, "*")
-    JAVA_MAIN = "edu.uw.zookeeper.proxy.Main"
+    JAVA_MAIN = "edu.uw.zookeeper.safari.Main"
     JAVA_ARGS = ['-classpath', JAVA_CLASSPATH]
     if SAFARI_LOG_CONFIG:
         JAVA_ARGS.append(SAFARI_LOG_CONFIG)
