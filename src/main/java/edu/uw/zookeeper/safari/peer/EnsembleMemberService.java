@@ -35,7 +35,7 @@ import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlSchema.Ensembles.Entity;
+import edu.uw.zookeeper.safari.control.ControlSchema.Regions.Entity;
 import edu.uw.zookeeper.safari.data.VolumeDescriptor;
 
 public class EnsembleMemberService extends AbstractIdleService {
@@ -53,10 +53,10 @@ public class EnsembleMemberService extends AbstractIdleService {
                 EnsembleConfiguration ensembleConfiguration,
                 PeerConfiguration peerConfiguration,
                 ControlMaterializerService control) {
-            ControlSchema.Ensembles.Entity myEnsemble = ControlSchema.Ensembles.Entity.of(ensembleConfiguration.getEnsemble());
-            ControlSchema.Ensembles.Entity.Peers.Member myMember = ControlSchema.Ensembles.Entity.Peers.Member.of(
+            ControlSchema.Regions.Entity myEnsemble = ControlSchema.Regions.Entity.of(ensembleConfiguration.getEnsemble());
+            ControlSchema.Regions.Entity.Peers.Member myMember = ControlSchema.Regions.Entity.Peers.Member.of(
                     peerConfiguration.getView().id(), 
-                    ControlSchema.Ensembles.Entity.Peers.of(myEnsemble));
+                    ControlSchema.Regions.Entity.Peers.of(myEnsemble));
             EnsembleMemberService instance = 
                     new EnsembleMemberService(myMember, myEnsemble, control);
             return instance;
@@ -81,7 +81,7 @@ public class EnsembleMemberService extends AbstractIdleService {
                     materializer);
         }
         
-        protected static final ZNodeLabel.Path ROOT = Control.path(ControlSchema.Ensembles.class);
+        protected static final ZNodeLabel.Path ROOT = Control.path(ControlSchema.Regions.class);
         
         protected final Materializer<?> materializer;
         
@@ -94,7 +94,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             Materializer.MaterializedNode root = materializer.get(ROOT);
             if (root != null) {
                 for (Materializer.MaterializedNode e: root.values()) {
-                    if (! e.containsKey(ControlSchema.Ensembles.Entity.Leader.LABEL)) {
+                    if (! e.containsKey(ControlSchema.Regions.Entity.Leader.LABEL)) {
                         return Optional.absent();
                     }
                 }
@@ -105,13 +105,13 @@ public class EnsembleMemberService extends AbstractIdleService {
     }
 
     protected final ControlMaterializerService control;
-    protected final ControlSchema.Ensembles.Entity.Peers.Member myMember;
-    protected final ControlSchema.Ensembles.Entity myEnsemble;
+    protected final ControlSchema.Regions.Entity.Peers.Member myMember;
+    protected final ControlSchema.Regions.Entity myEnsemble;
     protected final RoleOverseer role;
     
     protected EnsembleMemberService(
-            ControlSchema.Ensembles.Entity.Peers.Member myMember, 
-            ControlSchema.Ensembles.Entity myEnsemble,
+            ControlSchema.Regions.Entity.Peers.Member myMember, 
+            ControlSchema.Regions.Entity myEnsemble,
             ControlMaterializerService control) {
         this.control = control;
         this.myEnsemble = myEnsemble;
@@ -154,7 +154,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             
             // Calculate "my" volumes using distance in the identifier space
             Identifier.Space ensembles = Identifier.Space.newInstance();
-            for (ZNodeLabel.Component label: materializer.get(Control.path(ControlSchema.Ensembles.class)).keySet()) {
+            for (ZNodeLabel.Component label: materializer.get(Control.path(ControlSchema.Regions.class)).keySet()) {
                 ensembles.add(Identifier.valueOf(label.toString()));
             }
             List<ControlSchema.Volumes.Entity> myVolumes = Lists.newLinkedList();
@@ -167,7 +167,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             
             // Try to acquire my volumes
             for (ControlSchema.Volumes.Entity v: myVolumes) {
-                ControlSchema.Volumes.Entity.Ensemble.create(myEnsemble.get(), v, materializer);
+                ControlSchema.Volumes.Entity.Region.create(myEnsemble.get(), v, materializer);
             }
         }        
     }
@@ -179,16 +179,16 @@ public class EnsembleMemberService extends AbstractIdleService {
     protected class RoleOverseer implements FutureCallback<WatchEvent> {
     
         protected final ZNodeLabel.Path leaderPath;
-        protected final ControlSchema.Ensembles.Entity.Leader.Proposer<?> proposer;
+        protected final ControlSchema.Regions.Entity.Leader.Proposer<?> proposer;
         protected final Automatons.SynchronizedEventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
-        protected final StampedReference.Updater<ControlSchema.Ensembles.Entity.Leader> leader;
+        protected final StampedReference.Updater<ControlSchema.Regions.Entity.Leader> leader;
         
         public RoleOverseer() {
-            this.leaderPath = (ZNodeLabel.Path) ZNodeLabel.joined(myEnsemble.path(), ControlSchema.Ensembles.Entity.Leader.LABEL);
+            this.leaderPath = (ZNodeLabel.Path) ZNodeLabel.joined(myEnsemble.path(), ControlSchema.Regions.Entity.Leader.LABEL);
             this.myRole = Automatons.createSynchronizedEventful(
                     control, Automatons.createSimple(EnsembleRole.LOOKING));
-            this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Ensembles.Entity.Leader>of(0L, null));
-            this.proposer = ControlSchema.Ensembles.Entity.Leader.Proposer.of(
+            this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Regions.Entity.Leader>of(0L, null));
+            this.proposer = ControlSchema.Regions.Entity.Leader.Proposer.of(
                     control.materializer());
             myRole.register(this);
             control.materializer().register(this);
@@ -196,7 +196,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         }
         
         public EnsembleRole elect() throws InterruptedException, ExecutionException {
-            ControlSchema.Ensembles.Entity.Leader ensembleLeader = proposer.apply(Entity.Leader.of(myMember.get(), myEnsemble)).get();
+            ControlSchema.Regions.Entity.Leader ensembleLeader = proposer.apply(Entity.Leader.of(myMember.get(), myEnsemble)).get();
             return myRoleFor(ensembleLeader);
         }
 
@@ -231,7 +231,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             if (leaderPath.equals(event.path())) {
                 Materializer.MaterializedNode node = control.materializer().get(leaderPath);
                 Identifier value = (node != null) ? (Identifier) node.get().get() : null;
-                setLeader(StampedReference.of(event.updated().stamp(), ControlSchema.Ensembles.Entity.Leader.of(value, myEnsemble)));
+                setLeader(StampedReference.of(event.updated().stamp(), ControlSchema.Regions.Entity.Leader.of(value, myEnsemble)));
             }
         }
 
@@ -239,7 +239,7 @@ public class EnsembleMemberService extends AbstractIdleService {
         public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
             if (leaderPath.equals(event.path().get())) {
                 if (ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED == event.type()) {
-                    setLeader(StampedReference.<ControlSchema.Ensembles.Entity.Leader>of(event.path().stamp(), null));
+                    setLeader(StampedReference.<ControlSchema.Regions.Entity.Leader>of(event.path().stamp(), null));
                 }
             }
         }
@@ -257,7 +257,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             }
         }
         
-        protected EnsembleRole myRoleFor(ControlSchema.Ensembles.Entity.Leader leader) {
+        protected EnsembleRole myRoleFor(ControlSchema.Regions.Entity.Leader leader) {
             if (leader == null) {
                 return EnsembleRole.LOOKING;
             } else if (myMember.get().equals(leader.get())) {
@@ -267,8 +267,8 @@ public class EnsembleMemberService extends AbstractIdleService {
             }
         }
 
-        protected void setLeader(StampedReference<ControlSchema.Ensembles.Entity.Leader> newLeader) {
-            StampedReference<ControlSchema.Ensembles.Entity.Leader> prevLeader = leader.setIfGreater(newLeader);
+        protected void setLeader(StampedReference<ControlSchema.Regions.Entity.Leader> newLeader) {
+            StampedReference<ControlSchema.Regions.Entity.Leader> prevLeader = leader.setIfGreater(newLeader);
             if (prevLeader.stamp() < newLeader.stamp()) {
                 myRole.apply(myRoleFor(newLeader.get()));
             }

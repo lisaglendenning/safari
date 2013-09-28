@@ -110,7 +110,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             
             public static AsyncFunction<Identifier, Identifier> lookupEnsemble(
                     final Materializer<?> materializer) {
-                final AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier> ensembleOfBackend = Ensembles.Entity.lookup(materializer);
+                final AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier> ensembleOfBackend = Regions.Entity.lookup(materializer);
                 return new AsyncFunction<Identifier, Identifier>() {
                     @Override
                     public ListenableFuture<Identifier> apply(
@@ -323,19 +323,19 @@ public abstract class ControlSchema extends Control.ControlZNode {
         }
     }
 
-    @ZNode(label="ensembles")
-    public static abstract class Ensembles extends Control.ControlZNode {
+    @ZNode(label="regions")
+    public static abstract class Regions extends Control.ControlZNode {
         
-        public static ListenableFuture<List<Ensembles.Entity>> getEnsembles(ClientExecutor<? super Records.Request, ?> client) {
+        public static ListenableFuture<List<Regions.Entity>> getEnsembles(ClientExecutor<? super Records.Request, ?> client) {
             return Futures.transform(
-                    client.submit(Operations.Requests.getChildren().setPath(path(Ensembles.class)).build()), 
-                    new AsyncFunction<Operation.ProtocolResponse<?>, List<Ensembles.Entity>>() {
+                    client.submit(Operations.Requests.getChildren().setPath(path(Regions.class)).build()), 
+                    new AsyncFunction<Operation.ProtocolResponse<?>, List<Regions.Entity>>() {
                         @Override
-                        public ListenableFuture<List<Ensembles.Entity>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
+                        public ListenableFuture<List<Regions.Entity>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                             Records.ChildrenGetter response = (Records.ChildrenGetter) Operations.unlessError(input.record());
-                            List<Ensembles.Entity> result = Lists.newArrayListWithCapacity(response.getChildren().size());
+                            List<Regions.Entity> result = Lists.newArrayListWithCapacity(response.getChildren().size());
                             for (String child: response.getChildren()) {
-                                result.add(Ensembles.Entity.of(Identifier.valueOf(child)));
+                                result.add(Regions.Entity.of(Identifier.valueOf(child)));
                             }
                             return Futures.immediateFuture(result);
                         }
@@ -367,7 +367,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 }
             }
 
-            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Ensembles.Entity> create(
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Regions.Entity> create(
                     final EnsembleView<ServerInetAddressView> value, 
                     final Materializer<O> materializer) {
                 Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.create(
@@ -385,7 +385,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                                 final EnsembleView<ServerInetAddressView> backend)
                                 throws Exception {
                             return Control.LookupHashedTask.create(
-                                    ControlSchema.Ensembles.Entity.hashOf(backend),
+                                    ControlSchema.Regions.Entity.hashOf(backend),
                                     new AsyncFunction<Identifier, Optional<Identifier>>() {
                                         @Override
                                         public ListenableFuture<Optional<Identifier>> apply(
@@ -415,11 +415,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 return Hash.default32().apply(EnsembleView.toString(value));
             }
             
-            public static Ensembles.Entity valueOf(String label) {
+            public static Regions.Entity valueOf(String label) {
                 return of(Identifier.valueOf(label));
             }
             
-            public static Ensembles.Entity of(Identifier identifier) {
+            public static Regions.Entity of(Identifier identifier) {
                 return new Entity(identifier);
             }
             
@@ -442,23 +442,23 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("backend");
 
-                public static ZNodeLabel.Path pathOf(Ensembles.Entity entity) {
+                public static ZNodeLabel.Path pathOf(Regions.Entity entity) {
                     return (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), LABEL);
                 }
                 
-                public static ListenableFuture<Entity.Backend> get(Ensembles.Entity entity, Materializer<?> materializer) {
+                public static ListenableFuture<Entity.Backend> get(Regions.Entity entity, Materializer<?> materializer) {
                     return getValue(Entity.Backend.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Backend> create(EnsembleView<ServerInetAddressView> value, Ensembles.Entity entity, Materializer<?> materializer) {
-                    return create(Ensembles.Entity.Backend.class, value, entity, materializer);
+                public static ListenableFuture<Entity.Backend> create(EnsembleView<ServerInetAddressView> value, Regions.Entity entity, Materializer<?> materializer) {
+                    return create(Regions.Entity.Backend.class, value, entity, materializer);
                 }
                 
-                public static Entity.Backend of(EnsembleView<ServerInetAddressView> value, Ensembles.Entity parent) {
+                public static Entity.Backend of(EnsembleView<ServerInetAddressView> value, Regions.Entity parent) {
                     return new Backend(value, parent);
                 }
 
-                public Backend(EnsembleView<ServerInetAddressView> value, Ensembles.Entity parent) {
+                public Backend(EnsembleView<ServerInetAddressView> value, Regions.Entity parent) {
                     super(value, parent);
                 }
             }
@@ -469,7 +469,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peers");
                 
-                public static Entity.Peers of(Ensembles.Entity parent) {
+                public static Entity.Peers of(Regions.Entity parent) {
                     return new Peers(parent);
                 }
 
@@ -503,7 +503,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return CachedFunction.create(cached, lookup);
                 }
                 
-                public Peers(Ensembles.Entity parent) {
+                public Peers(Regions.Entity parent) {
                     super(parent);
                 }
 
@@ -549,11 +549,11 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 @Label
                 public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("leader");
                 
-                public static ListenableFuture<Entity.Leader> get(Ensembles.Entity parent, Materializer<?> materializer) {
+                public static ListenableFuture<Entity.Leader> get(Regions.Entity parent, Materializer<?> materializer) {
                     return getValue(Entity.Leader.class, parent, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Leader> create(Identifier value, Ensembles.Entity parent, Materializer<?> materializer) {
+                public static ListenableFuture<Entity.Leader> create(Identifier value, Regions.Entity parent, Materializer<?> materializer) {
                     return create(Entity.Leader.class, value, parent, materializer);
                 }
                 
@@ -642,16 +642,16 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     }
                 }
                 
-                public static Entity.Leader of(Identifier value, Ensembles.Entity parent) {
+                public static Entity.Leader of(Identifier value, Regions.Entity parent) {
                     return new Leader(value, parent);
                 }
 
-                public Leader(Identifier value, Ensembles.Entity parent) {
+                public Leader(Identifier value, Regions.Entity parent) {
                     super(value, parent);
                 }
                 
-                public Ensembles.Entity parent() {
-                    return (Ensembles.Entity) super.parent();
+                public Regions.Entity parent() {
+                    return (Regions.Entity) super.parent();
                 }
             }
         }
@@ -744,24 +744,24 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
 
             @ZNode(type=Identifier.class)
-            public static class Ensemble extends Control.ValueZNode<Identifier> {
+            public static class Region extends Control.ValueZNode<Identifier> {
 
                 @Label
-                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("ensemble");
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("region");
                 
-                public static ListenableFuture<Entity.Ensemble> get(Volumes.Entity entity, Materializer<?> materializer) {
-                    return getValue(Entity.Ensemble.class, entity, materializer);
+                public static ListenableFuture<Entity.Region> get(Volumes.Entity entity, Materializer<?> materializer) {
+                    return getValue(Entity.Region.class, entity, materializer);
                 }
                 
-                public static ListenableFuture<Entity.Ensemble> create(Identifier value, Volumes.Entity entity, Materializer<?> materializer) {
-                    return create(Entity.Ensemble.class, value, entity, materializer);
+                public static ListenableFuture<Entity.Region> create(Identifier value, Volumes.Entity entity, Materializer<?> materializer) {
+                    return create(Entity.Region.class, value, entity, materializer);
                 }
                 
-                public static Entity.Ensemble of(Identifier value, Volumes.Entity parent) {
-                    return new Ensemble(value, parent);
+                public static Entity.Region of(Identifier value, Volumes.Entity parent) {
+                    return new Region(value, parent);
                 }
 
-                public Ensemble(Identifier value, Volumes.Entity parent) {
+                public Region(Identifier value, Volumes.Entity parent) {
                     super(value, parent);
                 }
             }

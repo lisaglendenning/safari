@@ -38,7 +38,7 @@ public class EnsembleConfiguration {
             checkState(control.isRunning());
             // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
-            ControlSchema.Ensembles.Entity ensembleNode = ControlSchema.Ensembles.Entity.create(
+            ControlSchema.Regions.Entity ensembleNode = ControlSchema.Regions.Entity.create(
                     myView, 
                     control.materializer()).get();
             return new EnsembleConfiguration(ensembleNode.get());

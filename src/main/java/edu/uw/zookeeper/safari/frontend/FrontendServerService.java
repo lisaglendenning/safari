@@ -139,7 +139,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             Materializer.MaterializedNode root = materializer.get(ROOT);
             if (root != null) {
                 for (Materializer.MaterializedNode e: root.values()) {
-                    if (! e.containsKey(ControlSchema.Volumes.Entity.Ensemble.LABEL)) {
+                    if (! e.containsKey(ControlSchema.Volumes.Entity.Region.LABEL)) {
                         return Optional.absent();
                     }
                 }

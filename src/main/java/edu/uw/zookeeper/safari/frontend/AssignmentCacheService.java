@@ -73,7 +73,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
                                     }
                                 };
                                 return Control.FetchUntil.newInstance(
-                                        (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), ControlSchema.Volumes.Entity.Ensemble.LABEL), 
+                                        (ZNodeLabel.Path) ZNodeLabel.joined(entity.path(), ControlSchema.Volumes.Entity.Region.LABEL), 
                                                 processor, materializer);
                             }
                         }));
@@ -109,7 +109,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
                 cache.asCache().remove(volumeId);
             } else {
                 Identifier volumeId = Identifier.valueOf(pathHead.tail().toString());
-                if (ControlSchema.Volumes.Entity.Ensemble.LABEL.equals(pathTail)) {
+                if (ControlSchema.Volumes.Entity.Region.LABEL.equals(pathTail)) {
                     cache.asCache().remove(volumeId);
                 }
             }
@@ -129,7 +129,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
         if (! VOLUMES_PATH.equals(pointer.get().path())) {
             Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());
-            if (ControlSchema.Volumes.Entity.Ensemble.LABEL.equals(pointer.label())) {
+            if (ControlSchema.Volumes.Entity.Region.LABEL.equals(pointer.label())) {
                 Identifier assignment = (Identifier) node.get().get();
                 Identifier prevAssignment = (assignment == null) ? cache.asCache().remove(volumeId) : cache.asCache().put(volumeId, assignment);
                 if (logger.isInfoEnabled()) {
@@ -149,7 +149,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         if (volumes != null) {
             for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
                 Identifier volumeId = Identifier.valueOf(child.getKey().toString());
-                Materializer.MaterializedNode assignmentChild = child.getValue().get(ControlSchema.Volumes.Entity.Ensemble.LABEL);
+                Materializer.MaterializedNode assignmentChild = child.getValue().get(ControlSchema.Volumes.Entity.Region.LABEL);
                 if (assignmentChild != null) {
                     Identifier assignment = (Identifier) assignmentChild.get().get();
                     if (assignment != null) {

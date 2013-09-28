@@ -40,7 +40,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
     }
     
     public static enum EntityType {
-        VOLUME, ENSEMBLE;
+        VOLUME, REGION;
 
         public static EntityType fromString(String value) {
             for (EntityType e : values()) {
@@ -95,15 +95,15 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
                     }});
                 break;
             }
-            case ENSEMBLE:
+            case REGION:
             {
                 final EnsembleView<ServerInetAddressView> ensemble = JacksonModule.getMapper().readValue((String) input.getArguments()[2], new TypeReference<EnsembleView<ServerInetAddressView>>() {});
-                ListenableFuture<ControlSchema.Ensembles.Entity> future = ControlSchema.Ensembles.Entity.create(ensemble, materializer);
-                Futures.addCallback(future, new FutureCallback<ControlSchema.Ensembles.Entity>(){
+                ListenableFuture<ControlSchema.Regions.Entity> future = ControlSchema.Regions.Entity.create(ensemble, materializer);
+                Futures.addCallback(future, new FutureCallback<ControlSchema.Regions.Entity>(){
                     @Override
-                    public void onSuccess(ControlSchema.Ensembles.Entity result) {
+                    public void onSuccess(ControlSchema.Regions.Entity result) {
                         try {
-                            shell.println(String.format("Ensemble %s created => %s", ensemble, result.get()));
+                            shell.println(String.format("Region %s created => %s", ensemble, result.get()));
                             shell.flush();
                         } catch (IOException e) {
                         }
