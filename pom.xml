@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>edu.uw.zookeeper</groupId>
 	<artifactId>safari</artifactId>
-	<version>0.5.4-SNAPSHOT</version>
+	<version>0.5.4</version>
 	<packaging>jar</packaging>
 	<name>Safari</name>
 	<parent>
@@ -12,17 +12,61 @@
 		<version>1.0.0</version>
 		<relativePath>../zookeeper-lite/parent/zookeeper</relativePath>
 	</parent>
+	<properties>
+        <maven.build.timestamp.format>yyyy-MM-dd-HH:mm</maven.build.timestamp.format>
+		<main.class>edu.uw.zookeeper.safari.Main</main.class>
+		<main.prefix>SAFARI_</main.prefix>
+		<main.timestamp>${maven.build.timestamp}</main.timestamp>
+		<zookeeper.lite.source>${project.basedir}/../zookeeper-lite</zookeeper.lite.source>
+	</properties>
 	<build>
+		<resources>
+			<resource>
+				<directory>${zookeeper.lite.source}/zkcore/src/main/resources</directory>
+			</resource>
+		</resources>
+		<testResources>
+			<testResource>
+				<directory>${zookeeper.lite.source}/zkcore/src/test/resources</directory>
+			</testResource>
+		</testResources>
 		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>copy-resources</id>
+						<phase>compile</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${project.build.directory}/bin</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${zookeeper.lite.source}/zkcore/src/main/bin</directory>
+									<filtering>true</filtering>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-source-plugin</artifactId>
 				<executions>
 					<execution>
-						<id>attach-sources</id>
+						<id>jar-sources</id>
+						<goals>
+							<goal>jar-no-fork</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>test-jar-sources</id>
 						<goals>
 							<goal>test-jar-no-fork</goal>
-							<goal>jar-no-fork</goal>
 						</goals>
 					</execution>
 				</executions>
@@ -32,9 +76,30 @@
 				<artifactId>maven-jar-plugin</artifactId>
 				<executions>
 					<execution>
+						<id>default-jar</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+						<configuration>
+							<archive>
+								<manifest>
+									<mainClass>${main.class}</mainClass>
+								</manifest>
+							</archive>
+							<excludes>
+								<exclude>log4j2.xml</exclude>
+							</excludes>
+						</configuration>
+					</execution>
+					<execution>
 						<goals>
 							<goal>test-jar</goal>
 						</goals>
+						<configuration>
+							<excludes>
+								<exclude>log4j2.xml</exclude>
+							</excludes>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>
@@ -43,7 +108,7 @@
 				<artifactId>maven-dependency-plugin</artifactId>
 				<executions>
 					<execution>
-						<id>copy-dependencies-scope</id>
+						<id>copy-dependencies</id>
 						<phase>package</phase>
 						<goals>
 							<goal>copy-dependencies</goal>
@@ -58,25 +123,25 @@
 					</execution>
 				</executions>
 			</plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <configuration>
-                    <finalName>${project.build.finalName}</finalName>
-                    <descriptors>
-                        <descriptor>src/main/assembly/release.xml</descriptor>
-                    </descriptors>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>make-assembly</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<configuration>
+					<finalName>${project.build.finalName}</finalName>
+					<descriptors>
+						<descriptor>src/main/assembly/release.xml</descriptor>
+					</descriptors>
+				</configuration>
+				<executions>
+					<execution>
+						<id>make-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 	<dependencies>
@@ -111,13 +176,13 @@
 			<type>test-jar</type>
 			<scope>test</scope>
 		</dependency>
-        <dependency>
-            <groupId>${project.groupId}.lite</groupId>
-            <artifactId>zklite-clients</artifactId>
-            <version>${project.version}</version>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
+		<dependency>
+			<groupId>${project.groupId}.lite</groupId>
+			<artifactId>zklite-clients</artifactId>
+			<version>${project.version}</version>
+			<type>test-jar</type>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>com.google.inject</groupId>
 			<artifactId>guice</artifactId>
