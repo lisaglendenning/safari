@@ -48,7 +48,7 @@ public class FrontendConfiguration {
         }        
     }
 
-    @Configurable(path="Frontend", key="Timeout", value="30 seconds", help="Time")
+    @Configurable(path="frontend", key="timeout", value="30 seconds", help="time")
     public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {

@@ -35,7 +35,7 @@ public class ControlConfiguration {
         }
     }
 
-    @Configurable(path="Control", key="Ensemble", arg="control", value="127.0.0.1:2381", help="Address:Port,...")
+    @Configurable(path="control", key="ensemble", arg="control", value="127.0.0.1:2381", help="address:port,...")
     public static class ControlConfigurableEnsembleView extends ConfigurableEnsembleView {
 
         public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
@@ -43,7 +43,7 @@ public class ControlConfiguration {
         }
     }
 
-    @Configurable(path="Control", key="Timeout", value="30 seconds", help="Time")
+    @Configurable(path="control", key="timeout", value="30 seconds", help="time")
     public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {

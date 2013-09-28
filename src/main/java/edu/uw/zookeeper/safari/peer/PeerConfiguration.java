@@ -53,7 +53,7 @@ public class PeerConfiguration {
         }
     }
     
-    @Configurable(arg="peerAddress", path="Peer", key="PeerAddress", value=":2281", help="Address:Port")
+    @Configurable(arg="peerAddress", path="peer", key="peerAddress", value=":2281", help="address:port")
     public static class PeerConfigurableServerAddressView extends ConfigurableServerAddressView {
 
         public static ServerInetAddressView get(Configuration configuration) {
@@ -61,7 +61,7 @@ public class PeerConfiguration {
         }
     }
 
-    @Configurable(path="Peer", key="Timeout", value="30 seconds", help="Time")
+    @Configurable(path="peer", key="timeout", value="30 seconds", help="time")
     public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {

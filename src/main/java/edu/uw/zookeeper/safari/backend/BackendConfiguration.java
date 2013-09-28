@@ -100,7 +100,7 @@ public class BackendConfiguration {
         return Objects.toStringHelper(this).add("view", view).add("timeOut", timeOut).toString();
     }
     
-    @Configurable(path="Backend", key="Timeout", value="30 seconds", help="Time")
+    @Configurable(path="backend", key="timeout", value="30 seconds", help="time")
     public static class ConfigurableTimeout extends ZooKeeperApplication.ConfigurableTimeout {
 
         public static TimeValue get(Configuration configuration) {
@@ -108,7 +108,7 @@ public class BackendConfiguration {
         }
     }
     
-    @Configurable(path="Backend", key="ClientAddress", arg="backend", help="Address:Port")
+    @Configurable(path="backend", key="clientAddress", arg="backend", help="address:port")
     public static class ConfigurableAddressView implements Function<Configuration, ServerInetAddressView> {
     
         public static ServerInetAddressView get(Configuration configuration) {
@@ -132,7 +132,7 @@ public class BackendConfiguration {
         }
     }
 
-    @Configurable(path="Backend", key="Ensemble", arg="ensemble", help="Address:Port,...")
+    @Configurable(path="backend", key="ensemble", arg="ensemble", help="address:port,...")
     public static class ConfigurableEnsembleView implements Function<Configuration, EnsembleView<ServerInetAddressView>> {
     
         public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
@@ -153,7 +153,7 @@ public class BackendConfiguration {
         }
     }
 
-    @Configurable(path="Backend", key="Cfg", arg="backendCfg", help="zoo.cfg")
+    @Configurable(path="backend", key="cfg", arg="backendCfg", help="zoo.cfg")
     public static class ConfigurableBackendCfg implements Function<Configuration, BackendView> {
     
         public static BackendView get(Configuration configuration) {
