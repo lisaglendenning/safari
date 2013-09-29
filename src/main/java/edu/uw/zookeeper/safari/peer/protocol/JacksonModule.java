@@ -142,7 +142,7 @@ public class JacksonModule extends SimpleModule {
             Integer.valueOf(VERSION_FIELDS[0]), 
             Integer.valueOf(VERSION_FIELDS[1]), 
             Integer.valueOf(VERSION_FIELDS[2]),
-            VERSION_FIELDS[3], 
+            VERSION_FIELDS.length > 3 ? VERSION_FIELDS[3] : null, 
             "edu.uw.zookeeper", "safari");
     
     protected final SimpleDeserializers deserializers;
