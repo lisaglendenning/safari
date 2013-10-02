@@ -42,6 +42,19 @@
 							<outputDirectory>src/main/resources</outputDirectory>
 						</configuration>
 					</execution>
+                    <execution>
+                        <id>unpack-test-resources</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>unpack-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>test-sources</classifier>
+                            <includeArtifactIds>zkcore</includeArtifactIds>
+                            <includes>log4j2.xml</includes>
+                            <outputDirectory>src/test/resources</outputDirectory>
+                        </configuration>
+                    </execution>
 					<execution>
 						<id>copy-dependencies</id>
 						<phase>package</phase>
