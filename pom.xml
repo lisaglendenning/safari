@@ -10,27 +10,54 @@
 		<groupId>edu.uw</groupId>
 		<artifactId>zookeeper</artifactId>
 		<version>1.0.0</version>
-		<relativePath>../zookeeper-lite/parent/zookeeper</relativePath>
 	</parent>
 	<properties>
-        <maven.build.timestamp.format>yyyy-MM-dd-HH:mm</maven.build.timestamp.format>
+		<maven.build.timestamp.format>yyyy-MM-dd-HH:mm</maven.build.timestamp.format>
 		<main.class>edu.uw.zookeeper.safari.Main</main.class>
 		<main.prefix>SAFARI_</main.prefix>
 		<main.timestamp>${maven.build.timestamp}</main.timestamp>
-		<zookeeper.lite.source>${project.basedir}/../zookeeper-lite</zookeeper.lite.source>
 	</properties>
 	<build>
 		<resources>
 			<resource>
-				<directory>${zookeeper.lite.source}/zkcore/src/main/resources</directory>
+				<directory>src/main/resources</directory>
+				<filtering>true</filtering>
 			</resource>
 		</resources>
-		<testResources>
-			<testResource>
-				<directory>${zookeeper.lite.source}/zkcore/src/test/resources</directory>
-			</testResource>
-		</testResources>
 		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>unpack-resources</id>
+						<phase>validate</phase>
+						<goals>
+							<goal>unpack-dependencies</goal>
+						</goals>
+						<configuration>
+							<classifier>sources</classifier>
+							<includeArtifactIds>zkcore</includeArtifactIds>
+							<includes>main.py,log4j2.xml</includes>
+							<outputDirectory>src/main/resources</outputDirectory>
+						</configuration>
+					</execution>
+					<execution>
+						<id>copy-dependencies</id>
+						<phase>package</phase>
+						<goals>
+							<goal>copy-dependencies</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${project.build.directory}/lib</outputDirectory>
+							<overWriteReleases>true</overWriteReleases>
+							<overWriteSnapshots>true</overWriteSnapshots>
+							<overWriteIfNewer>true</overWriteIfNewer>
+							<useSubDirectoryPerScope>true</useSubDirectoryPerScope>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-resources-plugin</artifactId>
@@ -87,6 +114,7 @@
 								</manifest>
 							</archive>
 							<excludes>
+								<exclude>main.py</exclude>
 								<exclude>log4j2.xml</exclude>
 							</excludes>
 						</configuration>
@@ -99,26 +127,6 @@
 							<excludes>
 								<exclude>log4j2.xml</exclude>
 							</excludes>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-dependency-plugin</artifactId>
-				<executions>
-					<execution>
-						<id>copy-dependencies</id>
-						<phase>package</phase>
-						<goals>
-							<goal>copy-dependencies</goal>
-						</goals>
-						<configuration>
-							<outputDirectory>${project.build.directory}/lib</outputDirectory>
-							<overWriteReleases>true</overWriteReleases>
-							<overWriteSnapshots>true</overWriteSnapshots>
-							<overWriteIfNewer>true</overWriteIfNewer>
-							<useSubDirectoryPerScope>true</useSubDirectoryPerScope>
 						</configuration>
 					</execution>
 				</executions>
@@ -141,6 +149,22 @@
 						</goals>
 					</execution>
 				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-clean-plugin</artifactId>
+				<configuration>
+					<filesets>
+						<fileset>
+							<directory>src/main/resources</directory>
+							<includes>
+								<include>log4j2.xml</include>
+								<include>main.py</include>
+							</includes>
+							<followSymlinks>false</followSymlinks>
+						</fileset>
+					</filesets>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>
