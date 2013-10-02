@@ -2,7 +2,6 @@ package edu.uw.zookeeper.safari.backend;
 
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.base.Function;
 import com.google.common.eventbus.Subscribe;
@@ -83,7 +82,6 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
                 executor);
     }
 
-    protected final AtomicInteger lastXid = new AtomicInteger(-1);
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     protected final ShardedOperationTranslators translator;
     
@@ -126,10 +124,6 @@ public class ShardedClientConnectionExecutor<C extends ProtocolCodecConnection<?
                     shard, record);
         } else {
             int xid = ((Operation.ProtocolRequest<?>) request).xid();
-            if (lastXid.get() > 0 && lastXid.get() != xid - 1) {
-                throw new AssertionError(String.format("%d %d", lastXid.get(), xid));
-            }
-            lastXid.set(xid);
             sharded = ShardedRequestMessage.of(
                     shard,
                     ProtocolRequestMessage.of(xid, record));
