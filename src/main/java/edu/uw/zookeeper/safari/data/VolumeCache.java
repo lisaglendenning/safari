@@ -53,7 +53,11 @@ public class VolumeCache {
             volume = node.get();
             node = node.parent().isPresent() ? node.parent().get().get() : null;
         }
-        return volume;
+        if ((volume != null) && (volume.getDescriptor().contains(path))) {
+            return volume;
+        } else {
+            return null;
+        }
     }
 
     public Volume put(Volume volume) {

@@ -4,8 +4,10 @@ import static com.google.common.base.Preconditions.checkState;
 
 import java.util.concurrent.ExecutionException;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.base.Objects;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -41,7 +43,9 @@ public class EnsembleConfiguration {
             ControlSchema.Regions.Entity ensembleNode = ControlSchema.Regions.Entity.create(
                     myView, 
                     control.materializer()).get();
-            return new EnsembleConfiguration(ensembleNode.get());
+            EnsembleConfiguration instance = new EnsembleConfiguration(ensembleNode.get());
+            LogManager.getLogger(getClass()).info("{}", instance);
+            return instance;
         }
     }
     
@@ -53,5 +57,10 @@ public class EnsembleConfiguration {
     
     public Identifier getEnsemble() {
         return ensemble;
+    }
+
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("ensemble", ensemble).toString();
     }
 }
