@@ -8,15 +8,15 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public class MessageSessionResponse extends SessionMessage<ShardedResponseMessage<?>> {
 
     public static MessageSessionResponse of(
-            Long id, 
+            Long identifier, 
             ShardedResponseMessage<?> value) {
-        return new MessageSessionResponse(id, value);
+        return new MessageSessionResponse(identifier, value);
     }
 
     @JsonCreator
     public MessageSessionResponse(
-            @JsonProperty("id") Long id, 
+            @JsonProperty("identifier") Long identifier, 
             @JsonProperty("value") ShardedResponseMessage<?> value) {
-        super(id, value);
+        super(identifier, value);
     }
 }
