@@ -40,12 +40,20 @@ public class SingleClientTest {
         return BootstrapTest.injector();
     }
 
+    public static Injector injector(Injector parent) {
+        return BootstrapTest.injector(parent);
+    }
+
     public static class SingleClientService extends BootstrapTest.SimpleMainService {
 
         public static class Module extends AbstractModule {
 
             public static Injector injector() {
-                return SingleClientTest.injector().createChildInjector(
+                return injector(SingleClientTest.injector());
+            }
+
+            public static Injector injector(Injector parent) {
+                return parent.createChildInjector(
                         new Module());
             }
             
@@ -89,9 +97,6 @@ public class SingleClientTest {
                 injector.getInstance(ServiceMonitor.class).addOnStart(e);
                 e.startAsync().awaitRunning();
             }
-            
-            // create root
-            client.getClientConnectionExecutor().submit(Operations.Requests.create().build());
         }
     }
 
@@ -102,6 +107,10 @@ public class SingleClientTest {
         client.startAsync().awaitRunning();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
+
+        // create root
+        client.getClient().getClientConnectionExecutor().submit(
+                Operations.Requests.create().build());
         
         int iterations = 32;
         int logInterval = 8;

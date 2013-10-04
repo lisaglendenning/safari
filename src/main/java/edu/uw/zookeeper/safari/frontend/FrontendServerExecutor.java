@@ -65,7 +65,7 @@ import edu.uw.zookeeper.server.ExpiringSessionTable;
 import edu.uw.zookeeper.server.SessionParametersPolicy;
 import edu.uw.zookeeper.server.SessionTable;
 
-@DependsOn({EnsembleConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class, ExpiringSessionService.class })
+@DependsOn({RegionConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class, ExpiringSessionService.class })
 public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {
@@ -111,7 +111,7 @@ public class FrontendServerExecutor extends DependentService {
                 AssignmentCacheService assignments,
                 PeerToEnsembleLookup peerToEnsemble,
                 ClientPeerConnections peers,
-                EnsembleConnectionsService ensembles,
+                RegionConnectionsService ensembles,
                 Executor executor,
                 ExpiringSessionTable sessions,
                 ZxidGenerator zxids) {
@@ -131,7 +131,7 @@ public class FrontendServerExecutor extends DependentService {
             AssignmentCacheService assignments,
             PeerToEnsembleLookup peerToEnsemble,
             ClientPeerConnections peers,
-            EnsembleConnectionsService ensembles,
+            RegionConnectionsService ensembles,
             Executor executor,
             ExpiringSessionTable sessions,
             ZxidGenerator zxids,
@@ -237,7 +237,7 @@ public class FrontendServerExecutor extends DependentService {
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
                 PeerToEnsembleLookup peerToEnsemble,
-                EnsembleConnectionsService connections,
+                RegionConnectionsService connections,
                 Executor executor,
                 ExpiringSessionTable sessions,
                 ZxidGenerator zxids) {

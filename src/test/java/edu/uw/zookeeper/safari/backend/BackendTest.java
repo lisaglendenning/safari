@@ -18,6 +18,7 @@ import edu.uw.zookeeper.safari.backend.BackendRequestService;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlTest;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
 import edu.uw.zookeeper.safari.peer.PeerTest;
@@ -26,7 +27,11 @@ import edu.uw.zookeeper.safari.peer.PeerTest;
 public class BackendTest {
 
     public static Injector injector() {
-        return PeerTest.injector().createChildInjector(
+        return injector(ControlTest.injector());
+    }
+
+    public static Injector injector(Injector parent) {
+        return PeerTest.injector(parent).createChildInjector(
                 VolumeCacheService.module(),
                 SimpleBackendRequestServiceModule.create());
     }

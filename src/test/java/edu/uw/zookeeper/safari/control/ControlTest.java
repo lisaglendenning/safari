@@ -1,16 +1,17 @@
 package edu.uw.zookeeper.safari.control;
 
 
-import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import com.google.common.collect.ImmutableList;
+import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.DefaultRuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
@@ -22,27 +23,37 @@ import edu.uw.zookeeper.safari.net.IntraVmAsNetModule;
 public class ControlTest {
     
     public static Injector injector() {
-        return Guice.createInjector(
+        return injector(Guice.createInjector(
                 GuiceRuntimeModule.create(DefaultRuntimeModule.defaults()),
-                IntraVmAsNetModule.create(),
-                SimpleControlMaterializerModule.create());
+                IntraVmAsNetModule.create()));
+    }
+
+    public static Injector injector(Injector parent) {
+        return parent.createChildInjector(
+                SimpleControlConnectionsService.module(),
+                module());
     }
     
-    public static class SimpleControlMaterializerModule extends ControlMaterializerService.Module {
-
-        public static SimpleControlMaterializerModule create() {
-            return new SimpleControlMaterializerModule();
-        }
-        
-        public SimpleControlMaterializerModule() {
-        }
-
-        @Override
-        protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(SimpleControlConnectionsService.module());
-        }
+    public static ControlModule module() {
+        return new ControlModule();
     }
 
+    public static class ControlModule extends AbstractModule {
+
+        public ControlModule() {}
+        
+        @Override
+        protected void configure() {
+        }
+
+        @Provides @Singleton
+        public ControlMaterializerService getControlClientService(
+                Injector injector,
+                ControlConnectionsService<?> connections) {
+            return ControlMaterializerService.newInstance(injector, connections);
+        }
+    }
+    
     @Test(timeout=5000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = injector();

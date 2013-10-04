@@ -20,7 +20,11 @@ import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
 public class PeerTest {
     
     public static Injector injector() {
-        return ControlTest.injector().createChildInjector(
+        return injector(ControlTest.injector());
+    }
+    
+    public static Injector injector(Injector parent) {
+        return parent.createChildInjector(
                 SimplePeerConnectionsModule.create());
     }
     

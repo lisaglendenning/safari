@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.frontend;
 
 import java.nio.channels.ClosedChannelException;
+import java.util.concurrent.Executor;
 
 import org.apache.zookeeper.KeeperException;
 
@@ -25,24 +26,35 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
 
 public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session> implements Runnable, FutureCallback<MessagePacket> {
     
+    public static EstablishBackendSessionTask create(
+            Session frontend,
+            Optional<Session> existing,
+            Identifier ensemble,
+            ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection,
+            Promise<Session> promise) {
+        EstablishBackendSessionTask instance = new EstablishBackendSessionTask(frontend, existing, ensemble, connection, promise);
+        connection.addListener(instance, sameThreadExecutor);
+        return instance;
+    }
+    
+    protected static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
+    
     protected final Session frontend;
     protected final Optional<Session> existing;
     protected final ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection;
     protected volatile ListenableFuture<MessagePacket> writeFuture;
     
-    public EstablishBackendSessionTask(
+    protected EstablishBackendSessionTask(
             Session frontend,
             Optional<Session> existing,
             Identifier ensemble,
             ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection,
-            Promise<Session> promise) throws Exception {
+            Promise<Session> promise) {
         super(ensemble, promise);
         this.frontend = frontend;
         this.existing = existing;
         this.connection = connection;
         this.writeFuture = null;
-        
-        connection.addListener(this, MoreExecutors.sameThreadExecutor());
     }
     
     public Session frontend() {

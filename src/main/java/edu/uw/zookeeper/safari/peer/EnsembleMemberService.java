@@ -54,9 +54,9 @@ public class EnsembleMemberService extends AbstractIdleService {
                 PeerConfiguration peerConfiguration,
                 ControlMaterializerService control) {
             ControlSchema.Regions.Entity myEnsemble = ControlSchema.Regions.Entity.of(ensembleConfiguration.getEnsemble());
-            ControlSchema.Regions.Entity.Peers.Member myMember = ControlSchema.Regions.Entity.Peers.Member.of(
+            ControlSchema.Regions.Entity.Members.Member myMember = ControlSchema.Regions.Entity.Members.Member.of(
                     peerConfiguration.getView().id(), 
-                    ControlSchema.Regions.Entity.Peers.of(myEnsemble));
+                    ControlSchema.Regions.Entity.Members.of(myEnsemble));
             EnsembleMemberService instance = 
                     new EnsembleMemberService(myMember, myEnsemble, control);
             return instance;
@@ -105,12 +105,12 @@ public class EnsembleMemberService extends AbstractIdleService {
     }
 
     protected final ControlMaterializerService control;
-    protected final ControlSchema.Regions.Entity.Peers.Member myMember;
+    protected final ControlSchema.Regions.Entity.Members.Member myMember;
     protected final ControlSchema.Regions.Entity myEnsemble;
     protected final RoleOverseer role;
     
     protected EnsembleMemberService(
-            ControlSchema.Regions.Entity.Peers.Member myMember, 
+            ControlSchema.Regions.Entity.Members.Member myMember, 
             ControlSchema.Regions.Entity myEnsemble,
             ControlMaterializerService control) {
         this.control = control;

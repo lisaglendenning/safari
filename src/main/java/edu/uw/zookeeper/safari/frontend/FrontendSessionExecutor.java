@@ -408,7 +408,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                     Optional<Session> session = (prev == null) ? 
                                             Optional.<Session>absent() : 
                                                 Optional.of(prev.getSession());
-                                    final EstablishBackendSessionTask task = new EstablishBackendSessionTask(
+                                    final EstablishBackendSessionTask task = EstablishBackendSessionTask.create(
                                             session(),
                                             session,
                                             ensemble, 

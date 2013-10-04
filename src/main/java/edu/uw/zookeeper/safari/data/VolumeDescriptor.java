@@ -1,9 +1,16 @@
 package edu.uw.zookeeper.safari.data;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.util.Collection;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.base.Function;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Reference;
@@ -20,7 +27,7 @@ public class VolumeDescriptor extends AbstractPair<ZNodeLabel.Path, ImmutableSor
     }
     
     public static VolumeDescriptor of(ZNodeLabel.Path root) {
-        return of(root, ImmutableSortedSet.<ZNodeLabel>of());
+        return of(root, ImmutableSet.<ZNodeLabel>of());
     }
 
     public static VolumeDescriptor of(
@@ -44,12 +51,43 @@ public class VolumeDescriptor extends AbstractPair<ZNodeLabel.Path, ImmutableSor
             return instance;
         }
     }
+    
+    protected static class Canonicalize implements Function<ZNodeLabel, ZNodeLabel> {
+        
+        public static Canonicalize of(ZNodeLabel.Path root) {
+            return new Canonicalize(root);
+        }
+        
+        private final ZNodeLabel.Path root;
+        
+        public Canonicalize(ZNodeLabel.Path root) {
+            this.root = root;
+        }
+
+        @Override
+        public ZNodeLabel apply(ZNodeLabel input) {
+            ZNodeLabel output = input;
+            if (input instanceof ZNodeLabel.Path) {
+                ZNodeLabel.Path path = (ZNodeLabel.Path) input;
+                if (path.isAbsolute()) {
+                    checkArgument(root.prefixOf(path), input);
+                    int rootLength = root.toString().length();
+                    if (rootLength == 1) {
+                        return path.suffix(0);
+                    } else {
+                        return path.suffix(rootLength + 1);
+                    }
+                }
+            }
+            return output;
+        }
+    }
 
     @JsonCreator
     public VolumeDescriptor(
             @JsonProperty("root") ZNodeLabel.Path root, 
             @JsonProperty("leaves") Collection<ZNodeLabel> leaves) {
-        super(root, ImmutableSortedSet.copyOf(leaves));
+        super(root, ImmutableSortedSet.copyOf(Iterables.transform(leaves, Canonicalize.of(root))));
     }
     
     public ZNodeLabel.Path getRoot() {
@@ -74,5 +112,17 @@ public class VolumeDescriptor extends AbstractPair<ZNodeLabel.Path, ImmutableSor
             }
         }
         return true;
+    }
+    
+    public VolumeDescriptor add(ZNodeLabel leaf) {
+        ImmutableSortedSet<ZNodeLabel> leaves = 
+                ImmutableSortedSet.<ZNodeLabel>naturalOrder()
+                .addAll(getLeaves()).add(leaf).build();
+        return VolumeDescriptor.of(getRoot(), leaves);
+    }
+    
+    public VolumeDescriptor remove(ZNodeLabel leaf) {
+        Sets.SetView<ZNodeLabel> leaves = Sets.difference(getLeaves(), ImmutableSet.of(leaf));
+        return VolumeDescriptor.of(getRoot(), leaves);
     }
 }

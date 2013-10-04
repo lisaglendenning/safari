@@ -3,8 +3,11 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
+
+import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
@@ -14,6 +17,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -38,7 +42,7 @@ import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 
 @DependsOn({PeerToEnsembleLookup.class, PeerConnectionsService.class})
-public class EnsembleConnectionsService extends AbstractIdleService {
+public class RegionConnectionsService extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -49,13 +53,13 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         public Module() {}
 
         @Provides @Singleton
-        public EnsembleConnectionsService getEnsembleConnectionsService(
+        public RegionConnectionsService getEnsembleConnectionsService(
                 PeerConfiguration peer,
                 EnsembleConfiguration ensemble,
                 ControlMaterializerService control,
                 PeerToEnsembleLookup peerToEnsemble,
                 ClientPeerConnections peerConnections) {
-            return EnsembleConnectionsService.newInstance(
+            return RegionConnectionsService.newInstance(
                             peer.getView().id(),
                             ensemble.getEnsemble(),
                             peerToEnsemble.get().asLookup().first(),
@@ -69,7 +73,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         }
     }
 
-    public static EnsembleConnectionsService newInstance(
+    public static RegionConnectionsService newInstance(
             Identifier myId,
             Identifier myEnsemble,
             Function<? super Identifier, Identifier> peerToEnsemble,
@@ -79,20 +83,22 @@ public class EnsembleConnectionsService extends AbstractIdleService {
                 CachedLookup.create(
                         SelectSelfTask.create(
                                 myId, myEnsemble, control.materializer()));
-        return new EnsembleConnectionsService(
+        return new RegionConnectionsService(
                 selectedPeers,
                 peerToEnsemble,
                 peerConnections,
                 control);
     }
+
+    protected static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
     
     protected final ControlMaterializerService control;
     protected final ClientPeerConnections peerConnections;
     protected final CachedLookup<Identifier, Identifier> selectedPeers;
-    protected final EnsembleConnections ensembleConnections;
+    protected final RegionConnections ensembleConnections;
     protected final Function<? super Identifier, Identifier> peerToEnsemble;
     
-    protected EnsembleConnectionsService(
+    protected RegionConnectionsService(
             CachedLookup<Identifier, Identifier> selectedPeers,
             Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections peerConnections,
@@ -101,7 +107,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         this.peerToEnsemble = peerToEnsemble;
         this.peerConnections = peerConnections;
         this.selectedPeers = selectedPeers;
-        this.ensembleConnections = EnsembleConnections.create(
+        this.ensembleConnections = RegionConnections.create(
                 selectedPeers.asLookup(), peerConnections.asLookup());
     }
 
@@ -124,23 +130,6 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         for (ClientPeerConnection<?> c: peerConnections) {
             handleClientPeerConnection(c);
         }
-
-        // establish a peer connection per ensemble
-        Futures.transform(
-                ControlSchema.Regions.getEnsembles(control.materializer()), 
-                new AsyncFunction<List<ControlSchema.Regions.Entity>, List<ClientPeerConnection<Connection<? super MessagePacket>>>>() {
-                    @Override
-                    public ListenableFuture<List<ClientPeerConnection<Connection<? super MessagePacket>>>> apply(List<ControlSchema.Regions.Entity> input)
-                            throws Exception {
-                        List<ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>>> futures = Lists.newArrayListWithCapacity(input.size());
-                        for (ControlSchema.Regions.Entity e: input) {
-                            futures.add(Futures.transform(
-                                    selectedPeers.asLookup().apply(e.get()), 
-                                    ensembleConnections));
-                        }
-                        return Futures.successfulAsList(futures);
-                    }
-                }).get();
     }
     
     @Override
@@ -180,12 +169,12 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         }
     }
 
-    public static class EnsembleConnections extends CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> {
+    public static class RegionConnections extends CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> {
     
-        public static EnsembleConnections create(
+        public static RegionConnections create(
                 final CachedFunction<Identifier, Identifier> peers,
                 final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectFunction) {
-            return new EnsembleConnections(
+            return new RegionConnections(
                     new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
                         @Override
                         public @Nullable
@@ -205,15 +194,16 @@ public class EnsembleConnectionsService extends AbstractIdleService {
                                         Identifier ensemble) throws Exception {
                                     return Futures.transform(
                                             peers.apply(ensemble),
-                                            connectFunction);
+                                            connectFunction,
+                                            sameThreadExecutor);
                                 }
                             }));
         }
         
-        protected EnsembleConnections(
+        protected RegionConnections(
                 Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> first,
                 AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> second) {
-            super(first, second);
+            super(first, second, LogManager.getLogger(RegionConnections.class));
         }
     }
 
@@ -245,13 +235,14 @@ public class EnsembleConnectionsService extends AbstractIdleService {
 
         public static SelectSelfTask create(
                 Identifier myId,
-                Identifier myEnsemble,
+                Identifier myRegion,
                 Materializer<?> materializer) {
-            return new SelectSelfTask(myId, myEnsemble, SelectMemberTask.create(materializer));
+            return new SelectSelfTask(myId, myRegion, 
+                    SelectMemberTask.create(materializer));
         }
         
         protected final Identifier myId;
-        protected final Identifier myEnsemble;
+        protected final Identifier myRegion;
         protected final AsyncFunction<Identifier, Identifier> fallback;
         
         public SelectSelfTask(
@@ -259,24 +250,24 @@ public class EnsembleConnectionsService extends AbstractIdleService {
                 Identifier myEnsemble,
                 AsyncFunction<Identifier, Identifier> fallback) {
             this.myId = myId;
-            this.myEnsemble = myEnsemble;
+            this.myRegion = myEnsemble;
             this.fallback = fallback;
         }
 
         @Override
-        public ListenableFuture<Identifier> apply(Identifier ensemble)
+        public ListenableFuture<Identifier> apply(Identifier region)
                 throws Exception {
-            return (ensemble == myEnsemble) ?
+            return region.equals(myRegion) ?
                     Futures.immediateFuture(myId) : 
-                        fallback.apply(ensemble);
+                        fallback.apply(region);
         }
     }
     
     public static class SelectMemberTask<T> implements AsyncFunction<Identifier, Identifier> {
 
-        public static SelectMemberTask<List<ControlSchema.Regions.Entity.Peers.Member>> create(Materializer<?> materializer) {
-            return new SelectMemberTask<List<ControlSchema.Regions.Entity.Peers.Member>>(
-                    ControlSchema.Regions.Entity.Peers.getMembers(materializer),
+        public static SelectMemberTask<List<ControlSchema.Regions.Entity.Members.Member>> create(Materializer<?> materializer) {
+            return new SelectMemberTask<List<ControlSchema.Regions.Entity.Members.Member>>(
+                    ControlSchema.Regions.Entity.Members.getMembers(materializer),
                     SelectPresentMemberTask.create(materializer));
         }
         
@@ -293,62 +284,65 @@ public class EnsembleConnectionsService extends AbstractIdleService {
         @Override
         public ListenableFuture<Identifier> apply(Identifier ensemble)
                 throws Exception {
-            return Futures.transform(memberLookup.apply(ensemble), selector);
+            return Futures.transform(
+                    memberLookup.apply(ensemble), 
+                    selector, 
+                    sameThreadExecutor);
         }
     }
 
-    public static class SelectPresentMemberTask implements AsyncFunction<List<ControlSchema.Regions.Entity.Peers.Member>, Identifier> {
+    public static class SelectPresentMemberTask implements AsyncFunction<List<ControlSchema.Regions.Entity.Members.Member>, Identifier> {
 
         public static SelectPresentMemberTask create(
                 ClientExecutor<? super Records.Request, ?> client) {
             return new SelectPresentMemberTask(
                     client,
-                    SelectRandom.<ControlSchema.Regions.Entity.Peers.Member>create());
+                    SelectRandom.<ControlSchema.Regions.Entity.Members.Member>create());
         }
         
         protected final ClientExecutor<? super Records.Request, ?> client;
-        protected final Function<List<ControlSchema.Regions.Entity.Peers.Member>, ControlSchema.Regions.Entity.Peers.Member> selector;
+        protected final Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector;
         
         public SelectPresentMemberTask(
                 ClientExecutor<? super Records.Request, ?> client,
-                Function<List<ControlSchema.Regions.Entity.Peers.Member>, ControlSchema.Regions.Entity.Peers.Member> selector) {
+                Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector) {
             this.client = client;
             this.selector = selector;
         }
         
         @Override
         public ListenableFuture<Identifier> apply(
-                List<ControlSchema.Regions.Entity.Peers.Member> members) {
+                List<ControlSchema.Regions.Entity.Members.Member> members) {
             List<ListenableFuture<Boolean>> presence = Lists.newArrayListWithCapacity(members.size());
-            for (ControlSchema.Regions.Entity.Peers.Member e: members) {
+            for (ControlSchema.Regions.Entity.Members.Member e: members) {
                 presence.add(ControlSchema.Peers.Entity.of(e.get()).presence().exists(client));
             }
             ListenableFuture<List<Boolean>> future = Futures.successfulAsList(presence);
-            return Futures.transform(future, SelectPresentMemberFunction.create(members, selector));
+            return Futures.transform(future, SelectPresentMemberFunction.create(members, selector), sameThreadExecutor);
         }
     }
     
     public static class SelectPresentMemberFunction implements Function<List<Boolean>, Identifier> {
 
         public static SelectPresentMemberFunction create(
-                List<ControlSchema.Regions.Entity.Peers.Member> members,
-                Function<List<ControlSchema.Regions.Entity.Peers.Member>, ControlSchema.Regions.Entity.Peers.Member> selector) {
+                List<ControlSchema.Regions.Entity.Members.Member> members,
+                Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector) {
             return new SelectPresentMemberFunction(members, selector);
         }
         
-        protected final List<ControlSchema.Regions.Entity.Peers.Member> members;
-        protected final Function<List<ControlSchema.Regions.Entity.Peers.Member>, ControlSchema.Regions.Entity.Peers.Member> selector;
+        protected final List<ControlSchema.Regions.Entity.Members.Member> members;
+        protected final Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector;
         
         public SelectPresentMemberFunction(
-                List<ControlSchema.Regions.Entity.Peers.Member> members,
-                Function<List<ControlSchema.Regions.Entity.Peers.Member>, ControlSchema.Regions.Entity.Peers.Member> selector) {
+                List<ControlSchema.Regions.Entity.Members.Member> members,
+                Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector) {
             this.members = members;
             this.selector = selector;
         }
         
         @Override
         public Identifier apply(List<Boolean> presence) {
-            List<ControlSchema.Regions.Entity.Peers.Member> living = Lists.newArrayListWithCapacity(members.size());
+            List<ControlSchema.Regions.Entity.Members.Member> living = Lists.newArrayListWithCapacity(members.size());
             for (int i=0; i<members.size(); ++i) {
                 try {
                     if (Boolean.TRUE.equals(presence.get(i))) {
@@ -356,7 +350,7 @@ public class EnsembleConnectionsService extends AbstractIdleService {
                     }
                 } catch (Exception e) {}
             }
-            ControlSchema.Regions.Entity.Peers.Member selected = selector.apply(living);
+            ControlSchema.Regions.Entity.Members.Member selected = selector.apply(living);
             return (selected == null) ? null : selected.get();
         }
     }

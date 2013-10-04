@@ -17,6 +17,7 @@ import edu.uw.zookeeper.safari.backend.BackendTest;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlTest;
 import edu.uw.zookeeper.safari.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.safari.frontend.FrontendServerService;
 import edu.uw.zookeeper.safari.frontend.SimpleFrontendConfiguration;
@@ -26,7 +27,11 @@ import edu.uw.zookeeper.safari.peer.EnsembleMemberService;
 public class BootstrapTest {
 
     public static Injector injector() {
-        return BackendTest.injector().createChildInjector(
+        return injector(ControlTest.injector());
+    }
+
+    public static Injector injector(Injector parent) {
+        return BackendTest.injector(parent).createChildInjector(
                 AssignmentCacheService.module(),
                 EnsembleMemberService.module(),
                 SimpleFrontendConfiguration.create());
@@ -42,7 +47,11 @@ public class BootstrapTest {
         public static class Module extends AbstractModule {
 
             public static Injector injector() {
-                return BootstrapTest.injector().createChildInjector(
+                return injector(BootstrapTest.injector());
+            }
+
+            public static Injector injector(Injector parent) {
+                return parent.createChildInjector(
                         new Module());
             }
             

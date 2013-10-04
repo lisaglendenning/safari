@@ -1,9 +1,14 @@
 package edu.uw.zookeeper.safari.common;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -18,19 +23,26 @@ public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFuncti
     public static <K,V> AddToCacheLookup<K,V> create(
             ConcurrentMap<K,V> cache,
             AsyncFunction<? super K,V> delegate) {
-        return new AddToCacheLookup<K,V>(cache, delegate);
+        return new AddToCacheLookup<K,V>(cache, delegate, 
+                LogManager.getLogger(AddToCacheLookup.class));
     }
 
-    protected final static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
+    protected final static Executor sameThreadExecutor = 
+            MoreExecutors.sameThreadExecutor();
 
+    protected final Logger logger;
+    
     public AddToCacheLookup(
             ConcurrentMap<K,V> cache,
-            AsyncFunction<? super K,V> delegate) {
+            AsyncFunction<? super K,V> delegate,
+            Logger logger) {
         super(cache, delegate);
+        this.logger = logger;
     }
 
     @Override
-    public ListenableFuture<V> apply(@Nullable K input) throws Exception {
+    public ListenableFuture<V> apply(K input) throws Exception {
+        checkNotNull(input);
         return Futures.transform(
                 second().apply(input), 
                 new AddToCacheFunction(input), 
@@ -51,7 +63,10 @@ public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFuncti
             if (input != null) {
                 V prev = first().putIfAbsent(key, input);
                 if (prev != null) {
+                    logger.trace("Ignoring {} ({} => {})", input, key, prev);
                     input = prev;
+                } else {
+                    logger.trace("Caching {} => {}", key, input);
                 }
             }
             return input;

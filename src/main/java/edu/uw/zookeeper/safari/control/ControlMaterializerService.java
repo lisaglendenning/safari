@@ -28,11 +28,6 @@ public class ControlMaterializerService extends ClientConnectionExecutorService 
 
         public Module() {}
         
-        @Override
-        protected void configure() {
-            super.configure();
-        }
-
         @Provides @Singleton
         public ControlMaterializerService getControlClientService(
                 Injector injector,

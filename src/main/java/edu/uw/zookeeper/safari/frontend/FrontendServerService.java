@@ -88,7 +88,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
             return ImmutableList.<com.google.inject.Module>of(
-                    EnsembleConnectionsService.module(),
+                    RegionConnectionsService.module(),
                     FrontendConfiguration.module(),
                     FrontendServerExecutor.module());
         }

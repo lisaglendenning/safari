@@ -91,7 +91,7 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
                     }
                 }
             } else {
-                if (components.get(3).equals(ControlSchema.Regions.Entity.Peers.LABEL)) {
+                if (components.get(3).equals(ControlSchema.Regions.Entity.Members.LABEL)) {
                     if (components.size() == 4) {
                         if (event.type() == ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED) {
                             for (Map.Entry<Identifier, Identifier> e: cache.asCache().entrySet()) {
@@ -124,7 +124,7 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
         if (ensembles != null) {
             for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> ensemble: ensembles.entrySet()) {
                 Identifier ensembleId = Identifier.valueOf(ensemble.getKey().toString());
-                Materializer.MaterializedNode peers = ensemble.getValue().get(ControlSchema.Regions.Entity.Peers.LABEL);
+                Materializer.MaterializedNode peers = ensemble.getValue().get(ControlSchema.Regions.Entity.Members.LABEL);
                 if (peers != null) {
                     for (ZNodeLabel.Component peer: peers.keySet()) {
                         Identifier peerId = Identifier.valueOf(peer.toString());

@@ -29,7 +29,7 @@ import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
 import edu.uw.zookeeper.safari.common.DependentModule;
 
-class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
+public class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
 
     public static com.google.inject.Module module() {
         return new Module();

@@ -326,7 +326,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
     @ZNode(label="regions")
     public static abstract class Regions extends Control.ControlZNode {
         
-        public static ListenableFuture<List<Regions.Entity>> getEnsembles(ClientExecutor<? super Records.Request, ?> client) {
+        public static ListenableFuture<List<Regions.Entity>> getRegions(ClientExecutor<? super Records.Request, ?> client) {
             return Futures.transform(
                     client.submit(Operations.Requests.getChildren().setPath(path(Regions.class)).build()), 
                     new AsyncFunction<Operation.ProtocolResponse<?>, List<Regions.Entity>>() {
@@ -464,38 +464,38 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             @ZNode
-            public static class Peers extends Control.ControlZNode {
+            public static class Members extends Control.ControlZNode {
 
                 @Label
-                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("peers");
+                public static ZNodeLabel.Component LABEL = ZNodeLabel.Component.of("members");
                 
-                public static Entity.Peers of(Regions.Entity parent) {
-                    return new Peers(parent);
+                public static Entity.Members of(Regions.Entity parent) {
+                    return new Members(parent);
                 }
 
                 public static CachedFunction<Identifier, List<Member>> getMembers(
                         final Materializer<?> materializer) {
-                    Function<Identifier, List<Member>> cached = new Function<Identifier, List<Peers.Member>>() {
+                    Function<Identifier, List<Member>> cached = new Function<Identifier, List<Members.Member>>() {
                         @Override
                         @Nullable
                         public
-                        List<Member> apply(Identifier ensemble) {
-                            Peers peers = Peers.of(Entity.of(ensemble));
-                            return peers.get(materializer);
+                        List<Member> apply(Identifier region) {
+                            Members members = Members.of(Entity.of(region));
+                            return members.get(materializer);
                         }
                     };
-                    AsyncFunction<Identifier, List<Member>> lookup = new AsyncFunction<Identifier, List<Peers.Member>>() {
+                    AsyncFunction<Identifier, List<Member>> lookup = new AsyncFunction<Identifier, List<Members.Member>>() {
                         @Override
-                        public ListenableFuture<List<Member>> apply(Identifier ensemble) {
-                            final Peers peers = Peers.of(Entity.of(ensemble));
+                        public ListenableFuture<List<Member>> apply(Identifier region) {
+                            final Members members = Members.of(Entity.of(region));
                             return Futures.transform(
-                                    materializer.operator().getChildren(peers.path()).submit(),
+                                    materializer.operator().getChildren(members.path()).submit(),
                                     new AsyncFunction<Operation.ProtocolResponse<?>, List<Member>>() {
                                         @Override
                                         @Nullable
                                         public ListenableFuture<List<Member>> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
                                             Operations.unlessError(input.record());
-                                            return Futures.immediateFuture(peers.get(materializer));
+                                            return Futures.immediateFuture(members.get(materializer));
                                         }
                                     });
                         }
@@ -503,19 +503,21 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     return CachedFunction.create(cached, lookup);
                 }
                 
-                public Peers(Regions.Entity parent) {
+                public Members(Regions.Entity parent) {
                     super(parent);
                 }
 
                 public List<Member> get(Materializer<?> materializer) {
-                    ImmutableList.Builder<Member> members = ImmutableList.builder();
                     Materializer.MaterializedNode parent = materializer.get(path());
                     if (parent != null) {
+                        ImmutableList.Builder<Member> members = ImmutableList.builder();
                         for (ZNodeLabel.Component e: parent.keySet()) {
                             members.add(Member.valueOf(e.toString(), this));
                         }
+                        return members.build();
+                    } else {
+                        return null;
                     }
-                    return members.build();
                 }
                 
                 @ZNode
@@ -524,15 +526,15 @@ public abstract class ControlSchema extends Control.ControlZNode {
                     @Label(type=LabelType.PATTERN)
                     public static final String LABEL_PATTERN = Identifier.PATTERN;
 
-                    public static Peers.Member valueOf(String label, Entity.Peers parent) {
+                    public static Members.Member valueOf(String label, Entity.Members parent) {
                         return of(Identifier.valueOf(label), parent);
                     }
                     
-                    public static Peers.Member of(Identifier identifier, Entity.Peers parent) {
+                    public static Members.Member of(Identifier identifier, Entity.Members parent) {
                         return new Member(identifier, parent);
                     }
                     
-                    public Member(Identifier identifier, Entity.Peers parent) {
+                    public Member(Identifier identifier, Entity.Members parent) {
                         super(identifier, parent);
                     }
                     
@@ -733,6 +735,10 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 public static ListenableFuture<Entity.Volume> create(VolumeDescriptor value, Volumes.Entity entity, Materializer<?> materializer) {
                     return create(Entity.Volume.class, value, entity, materializer);
                 }
+
+                public static ListenableFuture<Entity.Volume> set(VolumeDescriptor value, Volumes.Entity entity, Materializer<?> materializer) {
+                    return setValue(Entity.Volume.class, value, entity, materializer);
+                }
                 
                 public static Entity.Volume of(VolumeDescriptor value, Volumes.Entity parent) {
                     return new Volume(value, parent);
@@ -755,6 +761,10 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 
                 public static ListenableFuture<Entity.Region> create(Identifier value, Volumes.Entity entity, Materializer<?> materializer) {
                     return create(Entity.Region.class, value, entity, materializer);
+                }
+
+                public static ListenableFuture<Entity.Region> set(Identifier value, Volumes.Entity entity, Materializer<?> materializer) {
+                    return setValue(Entity.Region.class, value, entity, materializer);
                 }
                 
                 public static Entity.Region of(Identifier value, Volumes.Entity parent) {

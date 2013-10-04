@@ -241,6 +241,29 @@ public abstract class Control {
                         }
                     });
         }
+
+        public static <T, C extends ValueZNode<T>> ListenableFuture<C> setValue(
+                final Class<C> cls,
+                final T value,
+                final Object parent, 
+                final Materializer<?> materializer) {
+            final C instance = newInstance(cls, value, parent);
+            final ZNodeLabel.Path path = instance.path();
+            return Futures.transform(
+                    materializer.operator().setData(path, value).submit(),
+                    new AsyncFunction<Operation.ProtocolResponse<?>, C>() {
+                        @Override
+                        public @Nullable
+                        ListenableFuture<C> apply(Operation.ProtocolResponse<?> input) throws KeeperException {
+                            Optional<Operation.Error> error = Operations.maybeError(input.record(), KeeperException.Code.NODEEXISTS, input.toString());
+                            if (error.isPresent()) {
+                                return getValue(cls, parent, materializer);
+                            } else {
+                                return Futures.immediateFuture(instance);
+                            }
+                        }
+                    });
+        }
         
         public static <T, C extends ValueZNode<T>> ListenableFuture<C> create(
                 final Class<C> cls, 
