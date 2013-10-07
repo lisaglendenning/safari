@@ -5,7 +5,11 @@ import static org.junit.Assert.*;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.KeeperException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -19,6 +23,7 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 
 import edu.uw.zookeeper.DefaultRuntimeModule;
+import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.clients.common.Generators;
 import edu.uw.zookeeper.clients.common.IterationCallable;
 import edu.uw.zookeeper.clients.common.SubmitCallable;
@@ -27,9 +32,13 @@ import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.SingleClientTest.SingleClientService;
+import edu.uw.zookeeper.safari.backend.BackendSchema;
+import edu.uw.zookeeper.safari.backend.SimpleBackendConnections;
 import edu.uw.zookeeper.safari.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
@@ -59,6 +68,8 @@ public class MultipleRegionTest {
                         parent.createChildInjector(ControlTest.module()))));
     }
 
+    protected final Logger logger = LogManager.getLogger(getClass());
+    
     @Test(timeout=10000)
     public void test() throws Exception {
         Injector rootInjector = injector();
@@ -87,6 +98,18 @@ public class MultipleRegionTest {
         }
         for (Injector injector: regionInjectors) {
             injector.getInstance(BootstrapTest.SimpleMainService.class).awaitRunning();
+        }
+        
+        // open backdoor connections
+        List<OperationClientExecutor<?>> backdoors = Lists.newArrayListWithCapacity(num_regions);
+        for (Injector injector: regionInjectors) {
+            backdoors.add(OperationClientExecutor.newInstance(
+                    ConnectMessage.Request.NewRequest.newInstance(), 
+                    injector.getInstance(SimpleBackendConnections.class).get().get(),
+                    injector.getInstance(ScheduledExecutorService.class)));
+        }
+        for (OperationClientExecutor<?> backdoor: backdoors) {
+            assertTrue(backdoor.session().get() instanceof ConnectMessage.Response.Valid);
         }
         
         ServiceMonitor monitor = rootInjector.getInstance(ServiceMonitor.class);
@@ -139,14 +162,44 @@ public class MultipleRegionTest {
         
         // create root
         Message.ServerResponse<?> response = clients[0].getClient().getConnectionClientExecutor().submit(
-                Operations.Requests.create().setPath(ZNodeLabel.Path.root()).build()).get();
+                Operations.Requests.create().setPath(rootVolume.getDescriptor().getRoot()).build()).get();
         Operations.unlessError(response.record());
+        for (int i=0; i<num_regions; ++i) {
+            ZNodeLabel.Path path = (ZNodeLabel.Path) ZNodeLabel.joined(BackendSchema.Volumes.path(), rootVolume.getId());
+            Identifier assigned = ControlSchema.Volumes.Entity.Region.get(ControlSchema.Volumes.Entity.of(rootVolume.getId()), control.materializer()).get().get();
+            Identifier region = regionInjectors[i].getInstance(EnsembleConfiguration.class).getEnsemble();
+            response = backdoors.get(i).submit(
+                    Operations.Requests.sync().setPath(path).build()).get();
+            Operations.maybeError(response.record(), KeeperException.Code.NONODE);
+            response = backdoors.get(i).submit(
+                            Operations.Requests.exists().setPath(path).build()).get();
+            if (region.equals(assigned)) {
+                Operations.unlessError(response.record(), String.valueOf(region));
+            } else {
+                Operations.expectError(response.record(), KeeperException.Code.NONODE, String.valueOf(region));
+            }
+        }
         
         // create all volume roots
         for (Volume v: volumes) {
             response = clients[0].getClient().getConnectionClientExecutor().submit(
                     Operations.Requests.create().setPath(v.getDescriptor().getRoot()).build()).get();
             Operations.unlessError(response.record());
+            for (int i=0; i<num_regions; ++i) {
+                ZNodeLabel.Path path = (ZNodeLabel.Path) ZNodeLabel.joined(BackendSchema.Volumes.path(), v.getId());
+                Identifier assigned = ControlSchema.Volumes.Entity.Region.get(ControlSchema.Volumes.Entity.of(v.getId()), control.materializer()).get().get();
+                Identifier region = regionInjectors[i].getInstance(EnsembleConfiguration.class).getEnsemble();
+                response = backdoors.get(i).submit(
+                        Operations.Requests.sync().setPath(path).build()).get();
+                Operations.maybeError(response.record(), KeeperException.Code.NONODE);
+                response = backdoors.get(i).submit(
+                                Operations.Requests.exists().setPath(path).build()).get();
+                if (region.equals(assigned)) {
+                    Operations.unlessError(response.record(), String.valueOf(region));
+                } else {
+                    Operations.expectError(response.record(), KeeperException.Code.NONODE, String.valueOf(region));
+                }
+            }
         }
 
         // alternate volume operations for both clients
@@ -173,6 +226,10 @@ public class MultipleRegionTest {
                     ListCallable.create(callables)).call();
         for (Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result: results) {
             Operations.unlessError(result.second().get().record());
+        }
+        
+        for (OperationClientExecutor<?> backdoor: backdoors) {
+            Operations.unlessError(ConnectionClientExecutorService.disconnect(backdoor).record());
         }
         
         monitor.stopAsync().awaitTerminated();
