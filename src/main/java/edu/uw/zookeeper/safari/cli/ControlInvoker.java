@@ -132,7 +132,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
         Materializer<?> materializer = Materializer.newInstance(
                 ControlSchema.getInstance().get(),
                 JacksonModule.getSerializer(),
-                shell.getEnvironment().get(ClientExecutorInvoker.CLIENT_KEY).getClientConnectionExecutor());
+                shell.getEnvironment().get(ClientExecutorInvoker.CLIENT_KEY).getConnectionClientExecutor());
         shell.getEnvironment().put(MATERIALIZER_KEY, materializer);
         
         Control.createPrefix(materializer);

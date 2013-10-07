@@ -8,24 +8,32 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.AbstractPair;
 
-public class CachedFunction<I,O> extends Pair<Function<? super I,O>, AsyncFunction<? super I,O>> implements AsyncFunction<I,O> {
+public class CachedFunction<I,O> extends AbstractPair<Function<? super I,O>, AsyncFunction<? super I,O>> implements AsyncFunction<I,O> {
 
     public static <I,O> CachedFunction<I,O> create(
-            Function<? super I,O> first, 
-            AsyncFunction<? super I,O> second) {
-        return new CachedFunction<I,O>(first, second,  
+            Function<? super I,O> cached, 
+            AsyncFunction<? super I,O> async) {
+        return new CachedFunction<I,O>(cached, async,  
                 LogManager.getLogger(CachedFunction.class));
     }
     
     protected final Logger logger;
     
     public CachedFunction(
-            Function<? super I,O> first, AsyncFunction<? super I,O> second,
+            Function<? super I,O> cached, AsyncFunction<? super I,O> async,
             Logger logger) {
-        super(first, second);
+        super(cached, async);
         this.logger = logger;
+    }
+    
+    public Function<? super I,O> cached() {
+        return first;
+    }
+    
+    public AsyncFunction<? super I,O> async() {
+        return second;
     }
 
     @Override

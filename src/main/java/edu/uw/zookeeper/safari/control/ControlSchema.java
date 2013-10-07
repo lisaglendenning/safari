@@ -327,6 +327,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
     public static abstract class Regions extends Control.ControlZNode {
         
         public static ListenableFuture<List<Regions.Entity>> getRegions(ClientExecutor<? super Records.Request, ?> client) {
+            client.submit(Operations.Requests.sync().setPath(path(Regions.class)).build());
             return Futures.transform(
                     client.submit(Operations.Requests.getChildren().setPath(path(Regions.class)).build()), 
                     new AsyncFunction<Operation.ProtocolResponse<?>, List<Regions.Entity>>() {
@@ -488,6 +489,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
                         @Override
                         public ListenableFuture<List<Member>> apply(Identifier region) {
                             final Members members = Members.of(Entity.of(region));
+                            materializer.operator().sync(members.path()).submit();
                             return Futures.transform(
                                     materializer.operator().getChildren(members.path()).submit(),
                                     new AsyncFunction<Operation.ProtocolResponse<?>, List<Member>>() {

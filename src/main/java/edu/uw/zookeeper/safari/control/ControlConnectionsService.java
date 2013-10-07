@@ -14,7 +14,7 @@ import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.client.ClientConnectionFactoryBuilder;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
-import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.common.DefaultsFactory;
 import edu.uw.zookeeper.common.ForwardingService;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.RuntimeModule;
@@ -22,14 +22,12 @@ import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.client.AssignXidCodec;
-import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
+import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.safari.common.DependentModule;
 
-public class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<ClientConnectionExecutor<C>>> {
+public class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements DefaultsFactory<Session, ListenableFuture<OperationClientExecutor<C>>> {
 
     public static com.google.inject.Module module() {
         return new Module();
@@ -52,9 +50,9 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
                 ListeningExecutorServiceFactory executors,
                 NetClientModule clientModule,
                 ScheduledExecutorService executor) {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = 
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
                     getClientConnectionFactory(runtime, configuration, clientModule);
-            ControlConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
+            ControlConnectionsService<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> instance = 
                     ControlConnectionsService.newInstance(configuration, connections, executor);
             return instance;
         }
@@ -64,7 +62,7 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
             return ImmutableList.<com.google.inject.Module>of(ControlConfiguration.module());
         }
         
-        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getClientConnectionFactory(                
+        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> getClientConnectionFactory(                
                 RuntimeModule runtime,
                 ControlConfiguration configuration,
                 NetClientModule clientModule) {
@@ -80,7 +78,7 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
             ControlConfiguration configuration,
             ClientConnectionFactory<C> connections,
             ScheduledExecutorService executor) {
-        EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory = 
+        EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<C>>> factory = 
                 EnsembleViewFactory.fromSession(
                         connections,
                         configuration.getEnsemble(), 
@@ -89,26 +87,31 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
         return new ControlConnectionsService<C>(connections, factory);
     }
 
-    protected final ClientConnectionFactory<C> connections;
-    protected final EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory;
+    protected final ClientConnectionFactory<? extends C> connections;
+    protected final EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<C>>> factory;
     
     protected ControlConnectionsService(
-            ClientConnectionFactory<C> connections,
-            EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory) {
+            ClientConnectionFactory<? extends C> connections,
+            EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<C>>> factory) {
         this.connections = connections;
         this.factory = factory;
     }
     
-    public ClientConnectionFactory<C> connections() {
+    public ClientConnectionFactory<? extends C> connections() {
         return connections;
     }
     
-    public EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<C>>> factory() {
+    public EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<C>>> factory() {
         return factory;
     }
 
     @Override
-    public ListenableFuture<ClientConnectionExecutor<C>> get() {
+    public ListenableFuture<OperationClientExecutor<C>> get(Session value) {
+        return factory.get().get(value);
+    }
+
+    @Override
+    public ListenableFuture<OperationClientExecutor<C>> get() {
         return factory.get().get();
     }
 

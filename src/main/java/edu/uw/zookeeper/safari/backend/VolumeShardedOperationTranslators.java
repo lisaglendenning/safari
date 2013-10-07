@@ -1,58 +1,71 @@
 package edu.uw.zookeeper.safari.backend;
 
-import com.google.common.base.Function;
+import static com.google.common.base.Preconditions.*;
 
-import edu.uw.zookeeper.common.Pair;
+import java.util.concurrent.Executor;
+
+import com.google.common.base.Function;
+import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.data.Volume;
 
-// TODO: what about volume changes?
-public class VolumeShardedOperationTranslators extends ShardedOperationTranslators {
+public class VolumeShardedOperationTranslators implements AsyncFunction<Identifier, OperationPrefixTranslator> {
 
-    public static VolumeShardedOperationTranslators of(Function<Identifier, Volume> lookup) {
+    public static VolumeShardedOperationTranslators of(CachedFunction<Identifier, Volume> lookup) {
         return new VolumeShardedOperationTranslators(lookup);
     }
     
     public static ZNodeLabel.Path rootOf(Identifier id) {
-        return (ZNodeLabel.Path) ZNodeLabel.joined(getPrefix(), id);
+        return (ZNodeLabel.Path) ZNodeLabel.joined(BackendSchema.Volumes.path(), id);
     }
     
     public static ZNodeLabel.Path pathOf(Identifier id, Object path) {
         return (ZNodeLabel.Path) ZNodeLabel.joined(rootOf(id), path);
     }
     
-    public static ZNodeLabel.Path getPrefix() {
-        return BackendSchema.getInstance().byElement(BackendSchema.Volumes.class).path();
-    }
+    protected static final Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
     
-    public static class VolumePrefix implements Function<Identifier, Pair<ZNodeLabel.Path, ZNodeLabel.Path>> {
-        protected final Function<Identifier, Volume> lookup;
-        
-        public VolumePrefix(Function<Identifier, Volume> lookup) {
-            this.lookup = lookup;
-        }
-        
-        @Override
-        public Pair<ZNodeLabel.Path, ZNodeLabel.Path> apply(Identifier id) {
-            Volume volume = lookup.apply(id);
-            return Pair.create(volume.getDescriptor().getRoot(), rootOf(volume.getId()));
-        }
+    protected final VolumeToTranslator constructor;
+    protected final CachedFunction<Identifier, Volume> lookup;
+    
+    public VolumeShardedOperationTranslators(CachedFunction<Identifier, Volume> lookup) {
+        this.constructor = new VolumeToTranslator();
+        this.lookup = lookup;
     }
 
-    public VolumeShardedOperationTranslators(Function<Identifier, Volume> lookup) {
-        super(new VolumePrefix(lookup));
-    }
-    
     @Override
-    protected OperationPrefixTranslator newTranslator(Identifier id) {
-        if (id.equals(Identifier.zero())) {
-            return OperationPrefixTranslator.create(
-                    RecordPrefixTranslator.<Records.Request>none(), 
-                    RecordPrefixTranslator.<Records.Response>none());
-        } else {
-            return super.newTranslator(id);
+    public ListenableFuture<OperationPrefixTranslator> apply(Identifier input)
+            throws Exception {
+        if (input.equals(Identifier.zero())) {
+            return Futures.immediateFuture(constructor.apply(Volume.none()));
+        }
+        return Futures.transform(
+                lookup.apply(input), constructor, sameThreadExecutor);
+    }
+
+    public static class VolumeToTranslator implements Function<Volume, OperationPrefixTranslator> {
+    
+        public VolumeToTranslator() {}
+        
+        @Override
+        public OperationPrefixTranslator apply(Volume input) {
+            checkNotNull(input);
+            if (input.equals(Volume.none())) {
+                return OperationPrefixTranslator.create(
+                        RecordPrefixTranslator.<Records.Request>none(), 
+                        RecordPrefixTranslator.<Records.Response>none());
+            } else {
+                return OperationPrefixTranslator.create(
+                        input.getDescriptor().getRoot(), 
+                        rootOf(input.getId()));
+            }
         }
     }
 }

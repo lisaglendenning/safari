@@ -66,6 +66,7 @@ import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.LinkedIterator;
 import edu.uw.zookeeper.safari.common.LinkedQueue;
+import edu.uw.zookeeper.safari.common.OperationFuture;
 import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
@@ -120,13 +121,13 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         this.session = session;
         this.processor = processor;
         this.volumes = CachedFunction.create(
-                volumes.first(),
+                volumes.cached(),
                 RunnableLookup.create(
-                        volumes.second(), this, MoreExecutors.sameThreadExecutor()));
+                        volumes.async(), this, MoreExecutors.sameThreadExecutor()));
         this.assignments = CachedFunction.create(
-                assignments.first(),
+                assignments.cached(),
                 RunnableLookup.create(
-                        assignments.second(), this, MoreExecutors.sameThreadExecutor()));
+                        assignments.async(), this, MoreExecutors.sameThreadExecutor()));
         this.backends = new BackendLookup(ensembleForPeer, connectionLookup);
         this.finger = mailbox.iterator();
     }

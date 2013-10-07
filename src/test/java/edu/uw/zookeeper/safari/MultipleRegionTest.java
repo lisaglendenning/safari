@@ -45,7 +45,7 @@ public class MultipleRegionTest {
                         parent.createChildInjector(ControlTest.module()))));
     }
 
-    @Test//(timeout=10000)
+    @Test(timeout=10000)
     public void test() throws Exception {
         Injector rootInjector = injector();
         int num_regions = 2;
@@ -113,7 +113,7 @@ public class MultipleRegionTest {
         
         // Clear caches
         for (Injector injector: regionInjectors) {
-            injector.getInstance(VolumeCacheService.class).asCache().clear();
+            injector.getInstance(VolumeCacheService.class).cache().clear();
             injector.getInstance(AssignmentCacheService.class).get().asCache().clear();
         }
 
@@ -124,13 +124,13 @@ public class MultipleRegionTest {
         }
         
         // create root
-        Message.ServerResponse<?> response = clients[0].getClient().getClientConnectionExecutor().submit(
+        Message.ServerResponse<?> response = clients[0].getClient().getConnectionClientExecutor().submit(
                 Operations.Requests.create().setPath(ZNodeLabel.Path.root()).build()).get();
         assertFalse(response instanceof Operation.Error);
         
         // create all volume roots
         for (Volume v: volumes) {
-            response = clients[0].getClient().getClientConnectionExecutor().submit(
+            response = clients[0].getClient().getConnectionClientExecutor().submit(
                     Operations.Requests.create().setPath(v.getDescriptor().getRoot()).build()).get();
             assertFalse(response instanceof Operation.Error);
         }

@@ -62,7 +62,7 @@ public class RegionConnectionsService extends AbstractIdleService {
             return RegionConnectionsService.newInstance(
                             peer.getView().id(),
                             ensemble.getEnsemble(),
-                            peerToEnsemble.get().asLookup().first(),
+                            peerToEnsemble.get().asLookup().cached(),
                             peerConnections, 
                             control);
         }
@@ -75,14 +75,14 @@ public class RegionConnectionsService extends AbstractIdleService {
 
     public static RegionConnectionsService newInstance(
             Identifier myId,
-            Identifier myEnsemble,
+            Identifier myRegion,
             Function<? super Identifier, Identifier> peerToEnsemble,
             ClientPeerConnections peerConnections,
             ControlMaterializerService control) {
         CachedLookup<Identifier, Identifier> selectedPeers = 
                 CachedLookup.create(
                         SelectSelfTask.create(
-                                myId, myEnsemble, control.materializer()));
+                                myId, myRegion, control.materializer()));
         return new RegionConnectionsService(
                 selectedPeers,
                 peerToEnsemble,
@@ -179,9 +179,9 @@ public class RegionConnectionsService extends AbstractIdleService {
                         @Override
                         public @Nullable
                         ClientPeerConnection<Connection<? super MessagePacket>> apply(Identifier ensemble) {
-                            Identifier peer = peers.first().apply(ensemble);
+                            Identifier peer = peers.cached().apply(ensemble);
                             if (peer != null) {
-                                return connectFunction.first().apply(peer);
+                                return connectFunction.cached().apply(peer);
                             } else {
                                 return null;
                             }
@@ -284,8 +284,9 @@ public class RegionConnectionsService extends AbstractIdleService {
         @Override
         public ListenableFuture<Identifier> apply(Identifier ensemble)
                 throws Exception {
+            // never used cached members
             return Futures.transform(
-                    memberLookup.apply(ensemble), 
+                    memberLookup.async().apply(ensemble), 
                     selector, 
                     sameThreadExecutor);
         }

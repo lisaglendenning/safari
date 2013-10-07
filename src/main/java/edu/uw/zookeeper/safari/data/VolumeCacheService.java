@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.data;
 
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
@@ -13,7 +14,9 @@ import com.google.common.base.Optional;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -72,12 +75,14 @@ public class VolumeCacheService extends AbstractIdleService {
         return new VolumeCacheService(client, cache);
     }
     
+    protected static final Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
     protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
     protected final Logger logger;
     protected final Materializer<?> materializer;
     protected final VolumeCache cache;
-    protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
+    protected final CachedFunction<ZNodeLabel.Path, Volume> byPath;
+    protected final CachedFunction<Identifier, Volume> byId;
     
     protected VolumeCacheService(
             final Materializer<?> materializer,
@@ -85,7 +90,7 @@ public class VolumeCacheService extends AbstractIdleService {
         this.logger = LogManager.getLogger(getClass());
         this.materializer = materializer;
         this.cache = cache;
-        this.lookup = CachedFunction.create(
+        this.byPath = CachedFunction.create(
                 new Function<ZNodeLabel.Path, Volume>() {
                     @Override
                     public @Nullable
@@ -134,14 +139,42 @@ public class VolumeCacheService extends AbstractIdleService {
                             return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, materializer);
                         }
                     }));
+        this.byId = CachedFunction.create(
+                new Function<Identifier, Volume>() {
+                    @Override
+                    public @Nullable
+                    Volume apply(@Nullable Identifier input) {
+                        return cache.get(input);
+                    }
+                },
+                SharedLookup.create(
+                    new AsyncFunction<Identifier, Volume>() {
+                        @Override
+                        public ListenableFuture<Volume> apply(final Identifier input)
+                                throws Exception {
+                            final ControlSchema.Volumes.Entity entity = ControlSchema.Volumes.Entity.of(input);
+                            return Futures.transform(ControlSchema.Volumes.Entity.Volume.get(entity, materializer),
+                                    new Function<ControlSchema.Volumes.Entity.Volume, Volume>() {
+                                        @Override
+                                        public Volume apply(
+                                                ControlSchema.Volumes.Entity.Volume input) {
+                                            return Volume.of(entity.get(), input.get());
+                                        }
+                            }, sameThreadExecutor);
+                        }
+                    }));
     }
     
-    public VolumeCache asCache() {
+    public VolumeCache cache() {
         return cache;
     }
     
-    public CachedFunction<ZNodeLabel.Path, Volume> asLookup() {
-        return lookup;
+    public CachedFunction<ZNodeLabel.Path, Volume> byPath() {
+        return byPath;
+    }
+            
+    public CachedFunction<Identifier, Volume> byId() {
+        return byId;
     }
     
     @Subscribe

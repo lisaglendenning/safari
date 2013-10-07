@@ -23,14 +23,13 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
-import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.Operation.Request;
+import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.client.AssignXidCodec;
-import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
+import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
 
-public class SimpleControlConnectionsService extends ControlConnectionsService<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> {
+public class SimpleControlConnectionsService extends ControlConnectionsService<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> {
 
     public static com.google.inject.Module module() {
         return new Module();
@@ -70,9 +69,9 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
         ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getConnectionBuilder().getTimeOut());
         @SuppressWarnings("unchecked")
-        ClientConnectionFactory<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> connections = 
-                (ClientConnectionFactory<ProtocolCodecConnection<Request, AssignXidCodec, Connection<Request>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
-        EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>>> factory = 
+        ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
+            (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
+        EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>>> factory = 
                 EnsembleViewFactory.fromSession(
                         connections,
                         configuration.getEnsemble(), 
@@ -87,8 +86,8 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
     protected SimpleControlConnectionsService(
             ControlConfiguration configuration,
             SimpleServerBuilder server,
-            ClientConnectionFactory<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> connections,
-            EnsembleViewFactory<ServerViewFactory<Session, ClientConnectionExecutor<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>>> factory) {
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections,
+            EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>>> factory) {
         super(connections, factory);
         this.configuration = configuration;
         this.server = server;

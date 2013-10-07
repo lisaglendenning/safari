@@ -33,6 +33,7 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.LinkedIterator;
 import edu.uw.zookeeper.safari.common.LinkedQueue;
+import edu.uw.zookeeper.safari.common.OperationFuture;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
@@ -89,8 +90,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         this.publisher = publisher;
         this.executor = executor;
         this.mailbox = LinkedQueue.create();
-        this.finger = null;
         this.pending = mailbox.iterator();
+        this.finger = null;
     }
     
     public Identifier getEnsemble() {
@@ -120,11 +121,11 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
     }
 
     @Override
-    public boolean send(BackendRequestFuture request) {
+    public boolean send(BackendRequestFuture message) {
         synchronized (mailbox) {
-            synchronized (request) {
+            synchronized (message) {
                 // ensure that queue order is same as submit order...
-                if (! super.send(request)) {
+                if (! super.send(message)) {
                     return false;
                 }
                 
@@ -132,11 +133,11 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
                     pending = mailbox.iterator();
                 }
                 
-                if (request.state() == OperationFuture.State.WAITING) {
+                if (message.state() == OperationFuture.State.WAITING) {
                     try {
-                        request.call();
+                        message.call();
                     } catch (Exception e) {
-                        mailbox.remove(request);
+                        mailbox.remove(message);
                         return false;
                     }
                 }

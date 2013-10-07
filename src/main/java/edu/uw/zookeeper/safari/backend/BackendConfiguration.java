@@ -60,7 +60,7 @@ public class BackendConfiguration {
                 }
                 EnsembleView<ServerInetAddressView> ensemble = ConfigurableEnsembleView.get(configuration);
                 if (ensemble == null) {
-                    ensemble = BackendEnsembleViewFactory.get();
+                    ensemble = BackendEnsembleViewDiscovery.get();
                 }
                 view = BackendView.of(clientAddress, ensemble);
             }

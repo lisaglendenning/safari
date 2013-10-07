@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import java.util.List;
 import java.util.concurrent.Callable;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -32,7 +33,8 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
 import edu.uw.zookeeper.protocol.proto.IExistsResponse;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.frontend.FrontendConfiguration;
@@ -95,7 +97,7 @@ public class MultipleClientTest {
             }
 
             // create root
-            ClientConnectionExecutor<?> connection = client.getClientConnectionExecutors().get().get();
+            ConnectionClientExecutor<Operation.Request,?,?> connection = client.getClientConnectionExecutors().get().get();
             connection.submit(Operations.Requests.create().build());
             connection.submit(Operations.Requests.disconnect().build()).get();
         }

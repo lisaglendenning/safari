@@ -2,10 +2,8 @@ package edu.uw.zookeeper.safari.backend;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -15,6 +13,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -25,32 +24,27 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
+import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
-import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.client.ClientConnectionExecutor;
-import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
+import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.protocol.proto.OpCode;
-import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
-import edu.uw.zookeeper.safari.data.Volume;
-import edu.uw.zookeeper.safari.data.VolumeCache;
+import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
@@ -85,7 +79,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 Injector injector,
                 BackendConnectionsService<?> connections,
                 ServerPeerConnections peers,
-                VolumeCache volumes,
+                VolumeCacheService volumes,
                 ScheduledExecutorService executor) throws Exception {
             return BackendRequestService.newInstance(
                     injector, volumes, connections, peers, executor);
@@ -99,7 +93,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
     
     public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> BackendRequestService<C> newInstance(
             Injector injector,
-            VolumeCache volumes,
+            VolumeCacheService volumes,
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
             ScheduledExecutorService executor) {
@@ -107,30 +101,19 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 injector,
                 connections, 
                 peers, 
-                newVolumePathLookup(volumes), 
-                VolumeShardedOperationTranslators.of(
-                        newVolumeIdLookup(volumes)),
+                newVolumePathLookup(), 
+                CachedLookup.create(VolumeShardedOperationTranslators.of(
+                        volumes.byId())),
                 executor);
         instance.new Advertiser(injector, MoreExecutors.sameThreadExecutor());
         return instance;
     }
     
-    public static Function<ZNodeLabel.Path, Identifier> newVolumePathLookup(
-            final VolumeCache volumes) {
+    public static Function<ZNodeLabel.Path, Identifier> newVolumePathLookup() {
         return new Function<ZNodeLabel.Path, Identifier>() {
             @Override
             public Identifier apply(ZNodeLabel.Path input) {
-                return volumes.get(input).getId();
-            }
-        };
-    }
-    
-    public static Function<Identifier, Volume> newVolumeIdLookup(
-            final VolumeCache volumes) {
-        return new Function<Identifier, Volume>() {
-            @Override
-            public Volume apply(Identifier input) {
-                return volumes.get(input);
+                return BackendSchema.Volumes.Root.getShard(input);
             }
         };
     }
@@ -140,9 +123,9 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
     protected final Logger logger;
     protected final BackendConnectionsService<C> connections;
     protected final ConcurrentMap<ServerPeerConnection<?>, ServerPeerConnectionListener> peers;
-    protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendClient> clients;
-    protected final ShardedOperationTranslators translator;
+    protected final ConcurrentMap<Long, ShardedClientExecutor<C>> clients;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
+    protected final CachedLookup<Identifier, OperationPrefixTranslator> translator;
     protected final ServerPeerConnectionListener listener;
     protected final ScheduledExecutorService executor;
     
@@ -151,7 +134,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
             Function<ZNodeLabel.Path, Identifier> lookup,
-            ShardedOperationTranslators translator,
+            CachedLookup<Identifier, OperationPrefixTranslator> translator,
             ScheduledExecutorService executor) {
         super(injector);
         this.logger = LogManager.getLogger(getClass());
@@ -164,7 +147,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         this.listener = new ServerPeerConnectionListener(peers);
     }
     
-    public ServerPeerConnectionDispatcher.BackendClient get(Long sessionId) {
+    public ShardedClientExecutor<C> get(Long sessionId) {
         return clients.get(sessionId);
     }
 
@@ -172,7 +155,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
     protected void startUp() throws Exception {
         super.startUp();
         
-        ClientConnectionExecutor<C> client = ClientConnectionExecutor.newInstance(
+        OperationClientExecutor<C> client = OperationClientExecutor.newInstance(
                 ConnectMessage.Request.NewRequest.newInstance(), 
                 connections.get().get(),
                 executor);
@@ -180,8 +163,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 BackendSchema.getInstance().get(), 
                 JacksonModule.getSerializer(),
                 client));
-        client.submit(Records.newInstance(IDisconnectRequest.class)).get();
-        client.stop();
+        ConnectionClientExecutorService.disconnect(client);
         
         listener.start();
     }
@@ -193,46 +175,6 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         super.shutDown();
     }
     
-    protected ListenableFuture<ShardedClientConnectionExecutor<C>> connect(
-            MessageSessionOpenRequest request) {
-        return Futures.transform(
-                connections.get(), 
-                new SessionOpenTask(request),
-                sameThreadExecutor);
-    }
-
-    protected class SessionOpenTask implements Function<C, ShardedClientConnectionExecutor<C>> {
-
-        protected final MessageSessionOpenRequest task;
-        
-        public SessionOpenTask(
-                MessageSessionOpenRequest task) {
-            this.task = task;
-        }
-        
-        @Override
-        public ShardedClientConnectionExecutor<C> apply(C connection) {
-            ConnectMessage.Request request;
-            if (task.getValue() instanceof ConnectMessage.Request.NewRequest) {
-                request = ConnectMessage.Request.NewRequest.newInstance(
-                        TimeValue.create(
-                                Long.valueOf(task.getValue().getTimeOut()), 
-                                TimeUnit.MILLISECONDS), 
-                            connections.zxids().get());
-            } else {
-                request = ConnectMessage.Request.RenewRequest.newInstance(
-                        task.getValue().toSession(), connections.zxids().get());
-            }
-            
-            return ShardedClientConnectionExecutor.newInstance(
-                    translator, 
-                    lookup, 
-                    request, 
-                    connection,
-                    executor);
-        }
-    }
-
     public class Advertiser extends Service.Listener {
 
         protected final Injector injector;
@@ -322,172 +264,149 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         }
         
         protected void handleMessageSessionOpen(MessageSessionOpenRequest message) {
-            long sessionId = message.getIdentifier();
-            BackendClient client = clients.get(sessionId);
+            Long sessionId = message.getIdentifier();
+            ShardedClientExecutor<C> client = clients.get(sessionId);
             if (client == null) {
-                ListenableFuture<ShardedClientConnectionExecutor<C>> connection = connect(message);
-                client = new BackendClient(message, connection);
-                BackendClient prev = clients.putIfAbsent(sessionId, client);
-                if (prev != null) {
-                    throw new AssertionError();
-                }
+                new ClientCallback(message);
+            } else {
+                Futures.addCallback(
+                        client.session(), 
+                        new SessionOpenResponseTask(message),
+                        sameThreadExecutor);
             }
-            SessionOpenResponseTask.create(message, get(), client.getClient());
         }
-
+        
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
             logger.debug("{}", message);
-            BackendClient client = clients.get(message.getIdentifier());
+            ShardedClientExecutor<C> client = clients.get(message.getIdentifier());
             if (client != null) {
-                ListenableFuture<Message.ServerResponse<?>> future;
-                try {
-                    future = client.submit(message.getValue());
-                } catch (Exception e) {
-                    throw Throwables.propagate(e);
-                }
-                if (message.getValue().record().opcode() == OpCode.CLOSE_SESSION) {
-                    future.addListener(client.new RemoveTask(), sameThreadExecutor);
-                }
+                client.submit(message.getValue());
             } else {
-                // TODO
+                // FIXME
                 throw new UnsupportedOperationException();
             }
         }
 
-        protected class BackendClient {
+        protected class ClientCallback extends ForwardingListenableFuture<ShardedClientExecutor<C>>
+                implements FutureCallback<ShardedResponseMessage<?>>, Runnable {
+
+            protected final MessageSessionOpenRequest session;
+            protected final ListenableFuture<ShardedClientExecutor<C>> client;
             
-            protected final MessageSessionOpenRequest frontend;
-            protected final ListenableFuture<ShardedClientConnectionExecutor<C>> client;
-            
-            public BackendClient(
-                    MessageSessionOpenRequest frontend,
-                    ListenableFuture<ShardedClientConnectionExecutor<C>> client) {
-                this.frontend = frontend;
-                this.client = client;
-                
-                client.addListener(new RegisterTask(), sameThreadExecutor);
+            public ClientCallback(
+                    MessageSessionOpenRequest session) {
+                this.session = session;
+                this.client = Futures.transform(
+                        connections.get(), 
+                        new SessionOpenTask(),
+                        sameThreadExecutor);
             }
             
-            public MessageSessionOpenRequest getFrontend() {
-                return frontend;
+            public MessageSessionOpenRequest session() {
+                return session;
             }
+
+            @Override
+            public void run() {
+                try {
+                    ShardedClientExecutor<C> client = get();
+                    if (clients.putIfAbsent(session.getIdentifier(), client) == null) {
+                        Futures.addCallback(
+                                client.session(), 
+                                new SessionOpenResponseTask(session),
+                                sameThreadExecutor);
+                    } else {
+                        throw new AssertionError(String.valueOf(session));
+                    }
+                    // client.register(this);
+                } catch (Exception e) {
+                    onFailure(e);
+                }
+            }
+
+            @Override
+            public void onSuccess(ShardedResponseMessage<?> result) {
+                instance.write(MessagePacket.of(MessageSessionResponse.of(
+                        session.getIdentifier(), result)));
+                if (result.record().opcode() == OpCode.CLOSE_SESSION) {
+                    try {
+                        clients.remove(session.getIdentifier(), client.get());
+                    } catch (Exception e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                // FIXME
+                throw new AssertionError(t);
+            }
+
+            /*@Subscribe
+            public void handleTransition(Automaton.Transition<?> event) {
+                if (Connection.State.CONNECTION_CLOSED == event.to()) {
+                    try {
+                        client.unregister(this);
+                    } catch (Exception e) {
+                    }
+                }
+            }*/
             
-            public ListenableFuture<ShardedClientConnectionExecutor<C>> getClient() {
+            @Override
+            protected ListenableFuture<ShardedClientExecutor<C>> delegate() {
                 return client;
             }
 
-            public ListenableFuture<Message.ServerResponse<?>> submit(Operation.Request request) throws InterruptedException, ExecutionException {
-                return client.get().submit(request);
-            }
-    
-            @Subscribe
-            public void handleTransition(Automaton.Transition<?> event) {
-                if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                    if (client.isDone()) {
-                        try {
-                            client.get().unregister(this);
-                        } catch (Exception e) {
-                        }
-                    }
-                }
-            }
+            protected class SessionOpenTask implements Function<C, ShardedClientExecutor<C>> {
             
-            @Subscribe
-            public void handleResponse(ShardedResponseMessage<?> message) {
-                get().write(MessagePacket.of(MessageSessionResponse.of(getFrontend().getIdentifier(), message)));
-            }
-
-            protected class RegisterTask implements Runnable {
+                public SessionOpenTask() {}
+                
                 @Override
-                public void run() {
-                    ShardedClientConnectionExecutor<C> result;
-                    try {
-                        result = client.get();
-                    } catch (Exception e) {
-                        // TODO
-                        throw Throwables.propagate(e);
+                public ShardedClientExecutor<C> apply(C connection) {
+                    ConnectMessage.Request request;
+                    if (session.getValue() instanceof ConnectMessage.Request.NewRequest) {
+                        request = ConnectMessage.Request.NewRequest.newInstance(
+                                TimeValue.milliseconds(session.getValue().getTimeOut()), 
+                                    connections.zxids().get());
+                    } else {
+                        request = ConnectMessage.Request.RenewRequest.newInstance(
+                                session.getValue().toSession(), connections.zxids().get());
                     }
-                    result.register(BackendClient.this);
+                    
+                    return ShardedClientExecutor.newInstance(
+                            ClientCallback.this,
+                            lookup, 
+                            translator.asLookup(), 
+                            request, 
+                            connection,
+                            executor);
                 }
             }
-            
-            protected class RemoveTask implements Runnable {
-                @Override
-                public void run() {
-                    clients.remove(frontend.getIdentifier(), BackendClient.this);
-                }
-            }
-        
-        }
-    } 
-    
-    protected static class SessionOpenResponseTask<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends PromiseTask<MessageSessionOpenRequest, MessagePacket> implements Runnable, FutureCallback<MessagePacket> {
-        
-        public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>>
-        SessionOpenResponseTask<C> create(
-                MessageSessionOpenRequest request,
-                Connection<MessagePacket> connection,
-                ListenableFuture<ShardedClientConnectionExecutor<C>> client) {
-            Promise<MessagePacket> promise = SettableFuturePromise.create();
-            return new SessionOpenResponseTask<C>(request, connection, client, promise);
-        }
-        
-        protected final Connection<MessagePacket> connection;
-        protected final ListenableFuture<ShardedClientConnectionExecutor<C>> client;
-        
-        public SessionOpenResponseTask(
-                MessageSessionOpenRequest request,
-                Connection<MessagePacket> connection,
-                ListenableFuture<ShardedClientConnectionExecutor<C>> client,
-                Promise<MessagePacket> promise) {
-            super(request, promise);
-            this.connection = connection;
-            this.client = client;
-            
-            client.addListener(this, sameThreadExecutor);
-        }
-        
-        @Override
-        public void run() {
-            if (isDone()) {
-                return;
-            }
-            if (! this.client.isDone()) {
-                return;
-            }
-            ShardedClientConnectionExecutor<C> client;
-            try {
-                client = this.client.get();
-            } catch (Exception e) { 
-                setException(e);
-                return;
-            }
-            if (! client.session().isDone()) {
-                client.session().addListener(this, sameThreadExecutor);
-                return;
-            }
-            ConnectMessage.Response response;
-            try {
-                response = client.session().get();
-            } catch (Exception e) { 
-                setException(e);
-                return;
-            }
-            ListenableFuture<MessagePacket> future = connection.write(
-                    MessagePacket.of(
-                            MessageSessionOpenResponse.of(
-                                    task().getIdentifier(), response)));
-            Futures.addCallback(future, this, sameThreadExecutor);
         }
 
-        @Override
-        public void onSuccess(MessagePacket result) {
-            set(result);
-        }
+        protected class SessionOpenResponseTask implements FutureCallback<ConnectMessage.Response> {
 
-        @Override
-        public void onFailure(Throwable t) {
-            setException(t);
+            protected final MessageSessionOpenRequest request;
+            
+            public SessionOpenResponseTask(
+                    MessageSessionOpenRequest request) {
+                this.request = request;
+            }
+
+            @Override
+            public void onSuccess(ConnectMessage.Response result) {
+                instance.write(
+                        MessagePacket.of(
+                                MessageSessionOpenResponse.of(
+                                        request.getIdentifier(), result)));
+            }
+        
+            @Override
+            public void onFailure(Throwable t) {
+                // FIXME
+                throw new AssertionError(t);
+            }
         }
     }
 }

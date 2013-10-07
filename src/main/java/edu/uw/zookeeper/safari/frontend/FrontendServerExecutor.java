@@ -248,9 +248,9 @@ public class FrontendServerExecutor extends DependentService {
                     ServerTaskExecutor.ProcessorExecutor.of(
                             new ConnectProcessor(
                                 handlers,
-                                volumes.asLookup(),
+                                volumes.byPath(),
                                 assignments.get().asLookup(),
-                                peerToEnsemble.get().asLookup().first(),
+                                peerToEnsemble.get().asLookup().cached(),
                                 connections.getConnectionForEnsemble(),
                                 ConnectTableProcessor.create(sessions, zxids),
                                 ResponseProcessor.create(handlers, sessions, zxids),

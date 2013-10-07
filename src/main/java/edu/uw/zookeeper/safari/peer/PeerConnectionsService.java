@@ -70,11 +70,11 @@ public class PeerConnectionsService extends DependentService {
             };
         }
         
-        public static ParameterizedFactory<Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>> connectionFactory() {
-            return new ParameterizedFactory<Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>>() {
+        public static ParameterizedFactory<Pair<? extends Pair<Class<MessagePacket>, ? extends FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>> connectionFactory() {
+            return new ParameterizedFactory<Pair<? extends Pair<Class<MessagePacket>, ? extends FramedMessagePacketCodec>, Connection<MessagePacket>>, Connection<MessagePacket>>() {
                 @Override
                 public Connection<MessagePacket> get(
-                        Pair<Pair<Class<MessagePacket>, FramedMessagePacketCodec>, Connection<MessagePacket>> value) {
+                        Pair<? extends Pair<Class<MessagePacket>, ? extends FramedMessagePacketCodec>, Connection<MessagePacket>> value) {
                     return value.second();
                 }
             };

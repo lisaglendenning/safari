@@ -21,10 +21,8 @@ import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 import edu.uw.zookeeper.safari.common.DependentModule;
 
@@ -50,8 +48,8 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
                 BackendConfiguration configuration,
                 NetClientModule clientModule,
                 ListeningExecutorServiceFactory executors) throws Exception {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> connections = getClientConnectionFactory(runtime, configuration, clientModule);
-            BackendConnectionsService<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> instance = 
+            ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = getClientConnectionFactory(runtime, configuration, clientModule);
+            BackendConnectionsService<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> instance = 
                     BackendConnectionsService.newInstance(configuration, connections);
             return instance;
         }
@@ -61,7 +59,7 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
             return ImmutableList.<com.google.inject.Module>of(BackendConfiguration.module());
         }
 
-        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request,AssignXidCodec,Connection<Operation.Request>>> getClientConnectionFactory(                
+        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> getClientConnectionFactory(                
                 RuntimeModule runtime,
                 BackendConfiguration configuration,
                 NetClientModule clientModule) {

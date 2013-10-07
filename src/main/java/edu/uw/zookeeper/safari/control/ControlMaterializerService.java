@@ -7,18 +7,19 @@ import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.client.ClientConnectionExecutorService;
+import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 
 @DependsOn(ControlConnectionsService.class)
-public class ControlMaterializerService extends ClientConnectionExecutorService {
+public class ControlMaterializerService extends ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> {
 
     public static Module module() {
         return new Module();

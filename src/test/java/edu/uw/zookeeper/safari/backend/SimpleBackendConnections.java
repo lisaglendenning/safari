@@ -18,16 +18,15 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
-import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.Operation.Request;
+import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.safari.backend.BackendConfiguration;
 import edu.uw.zookeeper.safari.backend.BackendConnectionsService;
 import edu.uw.zookeeper.safari.backend.BackendView;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
 
-public class SimpleBackendConnections extends BackendConnectionsService<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> {
+public class SimpleBackendConnections extends BackendConnectionsService<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> {
 
     public static com.google.inject.Module module() {
         return new Module();
@@ -64,11 +63,11 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
                 .setRuntimeModule(runtime)
                 .setDefaults();
         @SuppressWarnings("unchecked")
-        ClientConnectionFactory<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> connections = 
-                (ClientConnectionFactory<ProtocolCodecConnection<Request, AssignXidCodec, Connection<Request>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
+        ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
+            (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
         BackendConfiguration configuration = new BackendConfiguration(BackendView.of(address, ensemble), server.getConnectionBuilder().getTimeOut());
-        FixedClientConnectionFactory<ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> factory = 
+        FixedClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> factory = 
                 FixedClientConnectionFactory.create(
                         configuration.getView().getClientAddress().get(), connections);
         return new SimpleBackendConnections(configuration, server, factory);
@@ -80,7 +79,7 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
     protected SimpleBackendConnections(
             BackendConfiguration configuration,
             SimpleServerBuilder server,
-            FixedClientConnectionFactory<ProtocolCodecConnection<Request, AssignXidCodec, Connection<Request>>> connections) {
+            FixedClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections) {
         super(connections);
         this.configuration = configuration;
         this.server = server;

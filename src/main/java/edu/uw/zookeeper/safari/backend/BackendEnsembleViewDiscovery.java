@@ -22,10 +22,10 @@ import edu.uw.zookeeper.clients.jmx.ServerViewJmxQuery;
 import edu.uw.zookeeper.clients.jmx.SunAttachQueryJmx;
 import edu.uw.zookeeper.common.DefaultsFactory;
 
-public class BackendEnsembleViewFactory implements Callable<EnsembleView<ServerInetAddressView>> {
+public class BackendEnsembleViewDiscovery implements Callable<EnsembleView<ServerInetAddressView>> {
 
     public static EnsembleView<ServerInetAddressView> get() {
-        return new BackendEnsembleViewFactory().call();
+        return new BackendEnsembleViewDiscovery().call();
     }
     
     @Override

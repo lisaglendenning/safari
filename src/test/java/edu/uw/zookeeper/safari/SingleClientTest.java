@@ -109,7 +109,7 @@ public class SingleClientTest {
         monitor.startAsync().awaitRunning();
 
         // create root
-        client.getClient().getClientConnectionExecutor().submit(
+        client.getClient().getConnectionClientExecutor().submit(
                 Operations.Requests.create().build());
         
         int iterations = 32;
@@ -119,7 +119,7 @@ public class SingleClientTest {
                     SubmitCallable.create(
                             PathedRequestGenerator.exists(
                                     ConstantGenerator.of(ZNodeLabel.Path.root())), 
-                            client.getClient().getClientConnectionExecutor())));
+                            client.getClient().getConnectionClientExecutor())));
         Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result = callable.call();
         assertTrue(result.second().get().record() instanceof IExistsResponse);
         

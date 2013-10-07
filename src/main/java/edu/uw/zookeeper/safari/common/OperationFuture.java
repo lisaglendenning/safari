@@ -1,4 +1,4 @@
-package edu.uw.zookeeper.safari.frontend;
+package edu.uw.zookeeper.safari.common;
 
 import java.util.concurrent.Callable;
 
