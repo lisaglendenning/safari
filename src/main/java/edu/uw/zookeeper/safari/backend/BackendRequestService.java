@@ -300,6 +300,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                         connections.get(), 
                         new SessionOpenTask(),
                         sameThreadExecutor);
+                this.client.addListener(this, sameThreadExecutor);
             }
             
             public MessageSessionOpenRequest session() {
