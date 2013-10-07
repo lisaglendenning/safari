@@ -1,7 +1,5 @@
 package edu.uw.zookeeper.safari;
 
-import static org.junit.Assert.*;
-
 import java.util.List;
 import java.util.concurrent.Callable;
 
@@ -22,9 +20,9 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.clients.SimpleClientsBuilder;
 import edu.uw.zookeeper.clients.common.CallUntilPresent;
+import edu.uw.zookeeper.clients.common.Generators;
 import edu.uw.zookeeper.clients.common.IterationCallable;
 import edu.uw.zookeeper.clients.common.SubmitCallable;
-import edu.uw.zookeeper.clients.random.ConstantGenerator;
 import edu.uw.zookeeper.clients.random.PathedRequestGenerator;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.RuntimeModule;
@@ -35,7 +33,6 @@ import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
-import edu.uw.zookeeper.protocol.proto.IExistsResponse;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.frontend.FrontendConfiguration;
 
@@ -97,7 +94,7 @@ public class MultipleClientTest {
             }
 
             // create root
-            ConnectionClientExecutor<Operation.Request,?,?> connection = client.getClientConnectionExecutors().get().get();
+            ConnectionClientExecutor<Operation.Request,?,?> connection = client.getConnectionClientExecutors().get().get();
             connection.submit(Operations.Requests.create().build());
             connection.submit(Operations.Requests.disconnect().build()).get();
         }
@@ -117,16 +114,17 @@ public class MultipleClientTest {
         List<ListenableFuture<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>>> futures = Lists.newArrayListWithCapacity(nclients);
         for (int i=0; i<nclients; ++i) {
             Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 
-                    CallUntilPresent.create(IterationCallable.create(iterations, logInterval, 
+                CallUntilPresent.create(
+                        IterationCallable.create(iterations, logInterval, 
                         SubmitCallable.create(
                                 PathedRequestGenerator.exists(
-                                        ConstantGenerator.of(ZNodeLabel.Path.root())), 
-                                client.getClient().getClientConnectionExecutors().get().get())));
+                                        Generators.constant(ZNodeLabel.Path.root())), 
+                                client.getClient().getConnectionClientExecutors().get().get())));
             futures.add(injector.getInstance(ListeningExecutorService.class).submit(callable));
         }
         List<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> results = Futures.allAsList(futures).get();
         for (Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result: results) {
-            assertTrue(result.second().get().record() instanceof IExistsResponse);
+            Operations.unlessError(result.second().get().record());
         }
         
         monitor.stopAsync().awaitTerminated();

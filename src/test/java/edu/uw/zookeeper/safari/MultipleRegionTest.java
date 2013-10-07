@@ -2,19 +2,33 @@ package edu.uw.zookeeper.safari;
 
 import static org.junit.Assert.*;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.Callable;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 
 import edu.uw.zookeeper.DefaultRuntimeModule;
+import edu.uw.zookeeper.clients.common.Generators;
+import edu.uw.zookeeper.clients.common.IterationCallable;
+import edu.uw.zookeeper.clients.common.SubmitCallable;
+import edu.uw.zookeeper.clients.random.PathedRequestGenerator;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.SingleClientTest.SingleClientService;
 import edu.uw.zookeeper.safari.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
@@ -65,7 +79,7 @@ public class MultipleRegionTest {
                     control.materializer()).get().get());
         
         Injector[] regionInjectors = new Injector[num_regions];
-        for (int i=0; i<num_regions; ++i){ 
+        for (int i=0; i<num_regions; ++i) { 
             regionInjectors[i] = injector(rootInjector);
         }
         for (Injector injector: regionInjectors) {
@@ -80,7 +94,7 @@ public class MultipleRegionTest {
         
         // Create and assign a volume for each region
         Volume[] volumes = new Volume[num_regions];
-        for (int i=0; i<num_regions; ++i){ 
+        for (int i=0; i<num_regions; ++i) { 
             Identifier id = regionInjectors[i].getInstance(EnsembleConfiguration.class).getEnsemble();
             VolumeDescriptor vd = VolumeDescriptor.of(((ZNodeLabel.Path) ZNodeLabel.joined(ZNodeLabel.Path.root(), id.toString())));
 
@@ -118,7 +132,7 @@ public class MultipleRegionTest {
         }
 
         SingleClientService[] clients = new SingleClientService[regionInjectors.length];
-        for (int i=0; i<num_regions; ++i){ 
+        for (int i=0; i<num_regions; ++i) { 
             clients[i] = regionInjectors[i].getInstance(SingleClientService.class);
             clients[i].startAsync().awaitRunning();
         }
@@ -126,15 +140,101 @@ public class MultipleRegionTest {
         // create root
         Message.ServerResponse<?> response = clients[0].getClient().getConnectionClientExecutor().submit(
                 Operations.Requests.create().setPath(ZNodeLabel.Path.root()).build()).get();
-        assertFalse(response instanceof Operation.Error);
+        Operations.unlessError(response.record());
         
         // create all volume roots
         for (Volume v: volumes) {
             response = clients[0].getClient().getConnectionClientExecutor().submit(
                     Operations.Requests.create().setPath(v.getDescriptor().getRoot()).build()).get();
-            assertFalse(response instanceof Operation.Error);
+            Operations.unlessError(response.record());
         }
 
+        // alternate volume operations for both clients
+        int iterations = 4;
+        int logInterval = 4;
+        List<Callable<Optional<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>>>> callables = Lists.newArrayListWithCapacity(num_regions);
+        for (int i=0; i<num_regions; ++i) {
+            callables.add(
+                IterationCallable.create(iterations, logInterval,
+                    SubmitCallable.create(
+                        PathedRequestGenerator.exists(
+                                Generators.cycle(
+                                        Iterables.transform(
+                                            Arrays.asList(volumes),
+                                            new Function<Volume, ZNodeLabel.Path>() {
+                                                @Override
+                                                public ZNodeLabel.Path apply(Volume input) {
+                                                    return input.getDescriptor().getRoot();
+                                                }}))), 
+                                clients[i].getClient().getConnectionClientExecutor().get().get())));
+        }
+        List<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> results =
+            CallUntilAllPresent.create(
+                    ListCallable.create(callables)).call();
+        for (Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result: results) {
+            Operations.unlessError(result.second().get().record());
+        }
+        
         monitor.stopAsync().awaitTerminated();
+    }
+    
+    public static class CallUntilAllPresent<V> implements Callable<List<V>> {
+
+        public static <V> CallUntilAllPresent<V> create(
+                Callable<List<Optional<V>>> callable) {
+            return new CallUntilAllPresent<V>(callable);
+        }
+        
+        private final Callable<List<Optional<V>>> callable;
+        
+        public CallUntilAllPresent(
+                Callable<List<Optional<V>>> callable) {
+            this.callable = callable;
+        }
+        
+        @Override
+        public List<V> call() throws Exception {
+            List<V> results = null;
+            while (results == null) {
+                boolean absent = false;
+                List<Optional<V>> partial = callable.call();
+                for (Optional<V> e: partial) {
+                    if (! e.isPresent()) {
+                        absent = true;
+                        break;
+                    }
+                }
+                if (! absent) {
+                    results = Lists.newArrayListWithCapacity(partial.size());
+                    for (Optional<V> e: partial) {
+                        results.add(e.get());
+                    }
+                }
+            }
+            return results;
+        }
+    }
+    
+    public static class ListCallable<V> implements Callable<List<V>> {
+
+        public static <V> ListCallable<V> create (List<Callable<V>> callables) {
+            return new ListCallable<V>(callables);
+        }
+        
+        private final List<Callable<V>> callables;
+        
+        public ListCallable(List<Callable<V>> callables) {
+            this.callables = callables;
+        }
+        
+        @Override
+        public List<V> call() throws Exception {
+            List<V> results = Lists.newArrayListWithCapacity(callables.size());
+            for (Callable<V> callable: callables) {
+                results.add(callable.call());
+            }
+            return results;
+        }
+        
     }
 }

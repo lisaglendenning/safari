@@ -160,10 +160,6 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                     return false;
                 }
                 
-                if (! pending.hasNext()) {
-                    pending = mailbox.iterator();
-                }
-                
                 if (message.state() == OperationFuture.State.WAITING) {
                     try {
                         message.call();

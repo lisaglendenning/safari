@@ -122,15 +122,12 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
 
     @Override
     public boolean send(BackendRequestFuture message) {
+        logger.debug("{}", message);
         synchronized (mailbox) {
             synchronized (message) {
                 // ensure that queue order is same as submit order...
                 if (! super.send(message)) {
                     return false;
-                }
-                
-                if (! pending.hasNext()) {
-                    pending = mailbox.iterator();
                 }
                 
                 if (message.state() == OperationFuture.State.WAITING) {
@@ -190,6 +187,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
                     }
                 }
             }
+            logger.debug("{}", pending);
         }
         
         run();

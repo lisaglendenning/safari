@@ -18,9 +18,9 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.SimpleClientBuilder;
 import edu.uw.zookeeper.clients.common.CallUntilPresent;
+import edu.uw.zookeeper.clients.common.Generators;
 import edu.uw.zookeeper.clients.common.IterationCallable;
 import edu.uw.zookeeper.clients.common.SubmitCallable;
-import edu.uw.zookeeper.clients.random.ConstantGenerator;
 import edu.uw.zookeeper.clients.random.PathedRequestGenerator;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.RuntimeModule;
@@ -118,7 +118,7 @@ public class SingleClientTest {
                 CallUntilPresent.create(IterationCallable.create(iterations, logInterval, 
                     SubmitCallable.create(
                             PathedRequestGenerator.exists(
-                                    ConstantGenerator.of(ZNodeLabel.Path.root())), 
+                                    Generators.constant(ZNodeLabel.Path.root())), 
                             client.getClient().getConnectionClientExecutor())));
         Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result = callable.call();
         assertTrue(result.second().get().record() instanceof IExistsResponse);

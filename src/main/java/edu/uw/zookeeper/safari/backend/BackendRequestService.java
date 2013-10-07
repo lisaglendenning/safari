@@ -102,7 +102,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 connections, 
                 peers, 
                 newVolumePathLookup(), 
-                CachedLookup.create(VolumeShardedOperationTranslators.of(
+                CachedLookup.create(ShardedOperationTranslators.of(
                         volumes.byId())),
                 executor);
         instance.new Advertiser(injector, MoreExecutors.sameThreadExecutor());

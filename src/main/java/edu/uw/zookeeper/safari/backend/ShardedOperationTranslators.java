@@ -16,10 +16,10 @@ import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.data.Volume;
 
-public class VolumeShardedOperationTranslators implements AsyncFunction<Identifier, OperationPrefixTranslator> {
+public class ShardedOperationTranslators implements AsyncFunction<Identifier, OperationPrefixTranslator> {
 
-    public static VolumeShardedOperationTranslators of(CachedFunction<Identifier, Volume> lookup) {
-        return new VolumeShardedOperationTranslators(lookup);
+    public static ShardedOperationTranslators of(CachedFunction<Identifier, Volume> lookup) {
+        return new ShardedOperationTranslators(lookup);
     }
     
     public static ZNodeLabel.Path rootOf(Identifier id) {
@@ -35,7 +35,7 @@ public class VolumeShardedOperationTranslators implements AsyncFunction<Identifi
     protected final VolumeToTranslator constructor;
     protected final CachedFunction<Identifier, Volume> lookup;
     
-    public VolumeShardedOperationTranslators(CachedFunction<Identifier, Volume> lookup) {
+    public ShardedOperationTranslators(CachedFunction<Identifier, Volume> lookup) {
         this.constructor = new VolumeToTranslator();
         this.lookup = lookup;
     }
