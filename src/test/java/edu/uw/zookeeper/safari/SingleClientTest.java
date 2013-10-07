@@ -100,7 +100,7 @@ public class SingleClientTest {
         }
     }
 
-    @Test(timeout=60000)
+    @Test(timeout=30000)
     public void testPipeline() throws Exception {
         Injector injector = SingleClientService.Module.injector();
         SingleClientService client = injector.getInstance(SingleClientService.class);

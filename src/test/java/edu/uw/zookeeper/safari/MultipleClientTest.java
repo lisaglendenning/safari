@@ -100,7 +100,7 @@ public class MultipleClientTest {
         }
     }
 
-    @Test(timeout=60000)
+    @Test(timeout=30000)
     public void testPipeline() throws Exception {
         Injector injector = MultipleClientService.Module.injector();
         MultipleClientService client = injector.getInstance(MultipleClientService.class);

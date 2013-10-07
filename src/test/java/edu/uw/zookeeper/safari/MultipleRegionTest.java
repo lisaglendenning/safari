@@ -70,7 +70,7 @@ public class MultipleRegionTest {
 
     protected final Logger logger = LogManager.getLogger(getClass());
     
-    @Test(timeout=10000)
+    @Test(timeout=30000)
     public void test() throws Exception {
         Injector rootInjector = injector();
         int num_regions = 2;
