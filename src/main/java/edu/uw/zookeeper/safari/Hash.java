@@ -4,7 +4,6 @@ import com.google.common.base.Function;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.HashFunction;
 import com.google.common.hash.Hashing;
-import com.google.common.primitives.Ints;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Reference;
@@ -17,14 +16,20 @@ public enum Hash implements Function<String, Hash.Hashed>, Reference<HashFunctio
     }
     
     public class Hashed extends Pair<String, HashCode> {
+
+        public Hashed(String first) {
+            this(first, hashFunction.hashUnencodedChars(first));
+        }
+        
         public Hashed(String first, HashCode second) {
             super(first, second);
         }
         
         public Hashed rehash() {
-            int inputBytes = Ints.fromByteArray(first().getBytes());
-            int h = second().asInt() ^ inputBytes;
-            return new Hashed(first(), get().hashInt(h));
+            return new Hashed(first, 
+                    hashFunction.newHasher()
+                        .putUnencodedChars(first)
+                        .putBytes(second.asBytes()).hash());
         }
         
         public Identifier asIdentifier() {
@@ -44,7 +49,7 @@ public enum Hash implements Function<String, Hash.Hashed>, Reference<HashFunctio
     
     @Override
     public Hashed apply(String input) {
-        return new Hashed(input, get().hashUnencodedChars(input));
+        return new Hashed(input);
     }
 
     @Override
