@@ -66,7 +66,7 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
         ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
             (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
-        BackendConfiguration configuration = new BackendConfiguration(BackendView.of(address, ensemble), server.getConnectionBuilder().getTimeOut());
+        BackendConfiguration configuration = new BackendConfiguration(BackendView.of(address, ensemble), server.getTimeOut());
         FixedClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> factory = 
                 FixedClientConnectionFactory.create(
                         configuration.getView().getClientAddress().get(), connections);

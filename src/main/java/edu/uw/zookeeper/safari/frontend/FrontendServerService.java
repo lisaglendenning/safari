@@ -80,7 +80,6 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             return ServerConnectionFactoryBuilder.defaults()
                     .setAddress(configuration.getAddress())
                     .setServerModule(serverModule)
-                    .setTimeOut(configuration.getTimeOut())
                     .setRuntimeModule(runtime)
                     .build();
         }

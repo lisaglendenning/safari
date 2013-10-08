@@ -67,7 +67,7 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
                 .setRuntimeModule(runtime)
                 .setDefaults();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
-        ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getConnectionBuilder().getTimeOut());
+        ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getTimeOut());
         @SuppressWarnings("unchecked")
         ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
             (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
