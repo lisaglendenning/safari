@@ -7,6 +7,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
@@ -52,9 +53,10 @@ public class ControlTest {
         @Provides @Singleton
         public ControlMaterializerService getControlMaterializerService(
                 Injector injector,
-                JacksonSerializer serializer,
+                ObjectMapper mapper,
                 ControlConnectionsService<?> connections) {
-            return ControlMaterializerService.newInstance(injector, serializer, connections);
+            return ControlMaterializerService.newInstance(
+                    injector, JacksonSerializer.create(mapper), connections);
         }
     }
     

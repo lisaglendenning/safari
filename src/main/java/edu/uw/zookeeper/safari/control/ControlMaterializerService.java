@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.control;
 
 import java.util.List;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
@@ -34,10 +35,10 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
         @Provides @Singleton
         public ControlMaterializerService getControlMaterializerService(
                 Injector injector,
-                JacksonSerializer serializer,
+                ObjectMapper mapper,
                 ControlConnectionsService<?> connections) {
             return ControlMaterializerService.newInstance(
-                    injector, serializer, connections);
+                    injector, JacksonSerializer.create(mapper), connections);
         }
         
         @Override

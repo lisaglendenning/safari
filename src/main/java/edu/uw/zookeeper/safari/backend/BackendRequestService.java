@@ -8,6 +8,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -162,7 +163,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         Control.createPrefix(
                 Materializer.newInstance(
                 BackendSchema.getInstance().get(), 
-                injector.getInstance(JacksonSerializer.class),
+                JacksonSerializer.create(injector.getInstance(ObjectMapper.class)),
                 client));
         ConnectionClientExecutorService.disconnect(client);
         

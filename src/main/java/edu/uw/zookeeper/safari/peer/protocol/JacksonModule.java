@@ -21,10 +21,4 @@ public class JacksonModule extends AbstractModule {
     public ObjectMapper getObjectMapper() {
         return ObjectMapperBuilder.defaults().build();
     }
-
-    @Provides @Singleton
-    public JacksonSerializer getJacksonSerializer(
-            ObjectMapper mapper) {
-        return JacksonSerializer.create(mapper);
-    }
 }
