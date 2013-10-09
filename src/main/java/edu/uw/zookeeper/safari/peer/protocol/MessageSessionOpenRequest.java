@@ -1,13 +1,10 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
-import java.io.IOException;
-
-import io.netty.buffer.Unpooled;
-
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.protocol.ConnectMessage;
+import edu.uw.zookeeper.protocol.proto.Records;
 
 @MessageBodyType(MessageType.MESSAGE_TYPE_SESSION_OPEN_REQUEST)
 public class MessageSessionOpenRequest extends OpenSessionMessage<ConnectMessage.Request> {
@@ -21,8 +18,8 @@ public class MessageSessionOpenRequest extends OpenSessionMessage<ConnectMessage
     @JsonCreator
     public MessageSessionOpenRequest(
             @JsonProperty("identifier") Long identifier,
-            @JsonProperty("payload") byte[] payload) throws IOException {
-        this(identifier, ConnectMessage.Request.decode(Unpooled.wrappedBuffer(payload)));
+            @JsonProperty("value") Records.Request value) {
+        this(identifier, (ConnectMessage.Request) value);
     }
 
     public MessageSessionOpenRequest(

@@ -6,10 +6,14 @@ import io.netty.buffer.ByteBufOutputStream;
 
 import java.io.IOException;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 
 import edu.uw.zookeeper.protocol.Codec;
+import edu.uw.zookeeper.protocol.LoggingMarker;
 
 public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
 
@@ -29,9 +33,11 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
         }
     }
     
+    protected final Logger logger;
     protected final ObjectMapper mapper;
     
     public MessagePacketCodec(ObjectMapper mapper) {
+        this.logger = LogManager.getLogger(getClass());
         this.mapper = mapper;
     }
     
@@ -45,16 +51,27 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
         } finally {
             stream.close();
         }
+        if (logger.isTraceEnabled()) {
+            byte[] bytes = new byte[output.readableBytes()];
+            output.getBytes(output.readerIndex(), bytes);
+            logger.trace(LoggingMarker.PROTOCOL_MARKER.get(), "Encoded: {}", new String(bytes));
+        }
     }
 
     @Override
     public MessagePacket decode(ByteBuf input) throws IOException {
+        if (logger.isTraceEnabled()) {
+            byte[] bytes = new byte[input.readableBytes()];
+            input.getBytes(input.readerIndex(), bytes);
+            logger.trace(LoggingMarker.PROTOCOL_MARKER.get(), "Decoding: {}", new String(bytes));
+        }
         ByteBufInputStream stream = new ByteBufInputStream(input);
         try {
-            MessageHeader first = MessageHeader.decode(input);
-            Class<? extends MessageBody> bodyType = MessageTypes.registeredType(first.type());
-            MessageBody second = mapper.readValue(stream, bodyType);
-            return MessagePacket.of(first, second);
+            MessageHeader header = MessageHeader.decode(input);
+            Class<? extends MessageBody> bodyType = MessageTypes.registeredType(header.type());
+            MessageBody body = mapper.readValue(stream, bodyType);
+            MessagePacket message = MessagePacket.of(header, body);
+            return message;
         } finally {
             stream.close();
         }

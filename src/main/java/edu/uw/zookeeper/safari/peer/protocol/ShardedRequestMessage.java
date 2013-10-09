@@ -1,20 +1,16 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
-import io.netty.buffer.Unpooled;
-
-import java.io.IOException;
-
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 
-@JsonIgnoreProperties({"value", "request", "xid", "record"})
-public class ShardedRequestMessage<V extends Records.Request> extends ShardedMessage<Message.ClientRequest<V>> implements Message.ClientRequest<V>, ShardedOperation.Request<Message.ClientRequest<V>> {
+@JsonIgnoreProperties({"request", "xid", "record"})
+public class ShardedRequestMessage<V extends Records.Request> extends ShardedMessage<Message.ClientRequest<V>> implements Operation.ProtocolRequest<V>, ShardedOperation.Request<Message.ClientRequest<V>> {
 
     public static <V extends Records.Request> ShardedRequestMessage<V> of(
             Identifier identifier,
@@ -22,15 +18,10 @@ public class ShardedRequestMessage<V extends Records.Request> extends ShardedMes
         return new ShardedRequestMessage<V>(identifier, message);
     }
 
-    @SuppressWarnings("unchecked")
     @JsonCreator
     public ShardedRequestMessage(
             @JsonProperty("identifier") Identifier identifier,
-            @JsonProperty("payload") byte[] payload) throws IOException {
-        this(identifier, (Message.ClientRequest<V>) ProtocolRequestMessage.decode(Unpooled.wrappedBuffer(payload)));
-    }
-
-    public ShardedRequestMessage(Identifier identifier, Message.ClientRequest<V> message) {
+            @JsonProperty("value") Message.ClientRequest<V> message) {
         super(identifier, message);
     }
     

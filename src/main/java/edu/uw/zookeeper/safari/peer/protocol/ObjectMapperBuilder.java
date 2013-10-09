@@ -6,8 +6,6 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.Module;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
@@ -16,8 +14,18 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerAddressView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerView;
+import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderDeserializer;
+import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderSerializer;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.jackson.databind.ProtocolRequestDeserializer;
+import edu.uw.zookeeper.jackson.databind.ProtocolRequestSerializer;
+import edu.uw.zookeeper.jackson.databind.RequestRecordDeserializer;
+import edu.uw.zookeeper.jackson.databind.RequestRecordSerializer;
+import edu.uw.zookeeper.jackson.databind.ResponseRecordDeserializer;
+import edu.uw.zookeeper.jackson.databind.ResponseRecordSerializer;
+import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.Version;
 
@@ -29,13 +37,6 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
     
     public ObjectMapperBuilder() {}
 
-    @Override
-    protected ObjectMapper getDefaultObjectMapper() {
-        ObjectMapper mapper = super.getDefaultObjectMapper();
-        mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-        return mapper;
-    }
-    
     @Override
     protected List<Module> getDefaultModules() {
         return ImmutableList.<Module>of(new JacksonModuleBuilder().build());
@@ -64,11 +65,16 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
         
         @Override
         protected List<JsonSerializer<?>> getDefaultSerializers() {
+            Serializers.getInstance().add(ServerAddressView.class);
             ImmutableList.Builder<JsonSerializer<?>> serializers = ImmutableList.builder();
             for (Class<?> cls: getRegistryClasses()) {
                 serializers.add(ToStringRegistrySerializer.create(cls));
             }
-            Serializers.getInstance().add(ServerAddressView.class);
+            serializers
+                .add(RequestRecordSerializer.create())
+                .add(ResponseRecordSerializer.create())
+                .add(ProtocolRequestSerializer.create())
+                .add(ProtocolResponseHeaderSerializer.create());
             return serializers.build();
         }
 
@@ -79,6 +85,11 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 deserializers.put(cls,
                     new FromStringRegistryDeserializer(cls));
             }
+            deserializers
+                .put(Records.Request.class, RequestRecordDeserializer.create())
+                .put(Records.Response.class, ResponseRecordDeserializer.create())
+                .put(Message.ClientRequest.class, ProtocolRequestDeserializer.create())
+                .put(Message.ServerResponse.class, ProtocolResponseHeaderDeserializer.create());
             return deserializers.build();
         }
         

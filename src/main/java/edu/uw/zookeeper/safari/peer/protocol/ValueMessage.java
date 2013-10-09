@@ -10,7 +10,7 @@ public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
         super(identifier);
         this.value = value;
     }
-
+    
     public V getValue() {
         return value;
     }
@@ -19,7 +19,7 @@ public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
     public String toString() {
         return Objects.toStringHelper(this)
                 .add("identifier", getIdentifier())
-                .add("value", getValue())
+                .add("value", value)
                 .toString();
     }
     
@@ -33,11 +33,11 @@ public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
         }
         ValueMessage<?,?> other = (ValueMessage<?,?>) obj;
         return Objects.equal(getIdentifier(), other.getIdentifier())
-                && Objects.equal(getValue(), other.getValue());
+                && Objects.equal(value, other.value);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(getIdentifier(), getValue());
+        return Objects.hashCode(getIdentifier(), value);
     }
 }
