@@ -166,11 +166,13 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
 
     @Override
     public void onSuccess(ShardedResponseMessage<?> result) {
-        post(processor().apply(
-                Pair.create(session().id(),
-                        Pair.create(
-                                Optional.<Operation.ProtocolRequest<?>>absent(),
-                                (Records.Response) result.record()))));
+        if (result.xid() == OpCodeXid.NOTIFICATION.xid()) {
+            post(processor().apply(
+                    Pair.create(session().id(),
+                            Pair.create(
+                                    Optional.<Operation.ProtocolRequest<?>>absent(),
+                                    (Records.Response) result.record()))));
+        }
     }
     
     @Override
