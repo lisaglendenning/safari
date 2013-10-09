@@ -249,16 +249,16 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         }
         
         @Subscribe
-        public void handlePeerMessage(MessagePacket message) {
-            switch (message.first().type()) {
+        public void handlePeerMessage(MessagePacket<?> message) {
+            switch (message.getHeader().type()) {
             case MESSAGE_TYPE_HANDSHAKE:
             case MESSAGE_TYPE_HEARTBEAT:
                 break;
             case MESSAGE_TYPE_SESSION_OPEN_REQUEST:
-                handleMessageSessionOpen(message.getBody(MessageSessionOpenRequest.class));
+                handleMessageSessionOpen((MessageSessionOpenRequest) message.getBody());
                 break;
             case MESSAGE_TYPE_SESSION_REQUEST:
-                handleMessageSessionRequest(message.getBody(MessageSessionRequest.class));
+                handleMessageSessionRequest((MessageSessionRequest) message.getBody());
                 break;
             default:
                 throw new AssertionError(message.toString());

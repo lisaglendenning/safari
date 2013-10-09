@@ -115,7 +115,7 @@ public class RegionConnectionsService extends AbstractIdleService {
         return selectedPeers;
     }
 
-    public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> getConnectionForEnsemble() {
+    public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> getConnectionForEnsemble() {
         return ensembleConnections;
     }
 
@@ -169,16 +169,16 @@ public class RegionConnectionsService extends AbstractIdleService {
         }
     }
 
-    public static class RegionConnections extends CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> {
+    public static class RegionConnections extends CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> {
     
         public static RegionConnections create(
                 final CachedFunction<Identifier, Identifier> peers,
-                final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectFunction) {
+                final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectFunction) {
             return new RegionConnections(
-                    new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                    new Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>>() {
                         @Override
                         public @Nullable
-                        ClientPeerConnection<Connection<? super MessagePacket>> apply(Identifier ensemble) {
+                        ClientPeerConnection<Connection<? super MessagePacket<?>>> apply(Identifier ensemble) {
                             Identifier peer = peers.cached().apply(ensemble);
                             if (peer != null) {
                                 return connectFunction.cached().apply(peer);
@@ -187,10 +187,10 @@ public class RegionConnectionsService extends AbstractIdleService {
                             }
                         }
                     }, 
-                    SharedLookup.<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>create(
-                            new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                    SharedLookup.<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>>create(
+                            new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>>() {
                                 @Override
-                                public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
+                                public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> apply(
                                         Identifier ensemble) throws Exception {
                                     return Futures.transform(
                                             peers.apply(ensemble),
@@ -201,8 +201,8 @@ public class RegionConnectionsService extends AbstractIdleService {
         }
         
         protected RegionConnections(
-                Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> first,
-                AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> second) {
+                Function<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> first,
+                AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> second) {
             super(first, second, LogManager.getLogger(RegionConnections.class));
         }
     }

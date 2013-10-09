@@ -28,7 +28,7 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Message.Server;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.server.ServerConnectionExecutor;
+import edu.uw.zookeeper.protocol.server.ConnectionServerExecutor;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
 import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.safari.Identifier;
@@ -39,11 +39,11 @@ import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
-import edu.uw.zookeeper.server.ServerConnectionExecutorsService;
+import edu.uw.zookeeper.server.ConnectionServerExecutorsService;
 import edu.uw.zookeeper.server.ServerConnectionFactoryBuilder;
 
 @DependsOn({FrontendServerExecutor.class})
-public class FrontendServerService<T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ServerConnectionExecutorsService<T> {
+public class FrontendServerService<T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ConnectionServerExecutorsService<T> {
 
     public static Module module() {
         return new Module();
@@ -101,7 +101,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             Injector injector) {
         FrontendServerService<T> instance = new FrontendServerService<T>(
                 connections,             
-                ServerConnectionExecutor.<T>factory(
+                ConnectionServerExecutor.<T>factory(
                         timeOut,
                         executor,
                         server.getAnonymousExecutor(), 
@@ -152,7 +152,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
     
     protected FrontendServerService(
             ServerConnectionFactory<T> connections,
-            ParameterizedFactory<T, ServerConnectionExecutor<T>> factory,
+            ParameterizedFactory<T, ConnectionServerExecutor<T>> factory,
             Injector injector) {
         super(connections, factory);
         this.injector = injector;

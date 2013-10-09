@@ -15,7 +15,7 @@ import com.google.common.collect.ImmutableList;
 import edu.uw.zookeeper.protocol.Codec;
 import edu.uw.zookeeper.protocol.LoggingMarker;
 
-public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
+public class MessagePacketCodec implements Codec<MessagePacket<?>, MessagePacket<?>> {
 
     public static MessagePacketCodec newInstance(ObjectMapper mapper) {
         return new MessagePacketCodec(mapper);
@@ -42,12 +42,12 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
     }
     
     @Override
-    public void encode(MessagePacket input, ByteBuf output)
+    public void encode(MessagePacket<?> input, ByteBuf output)
             throws IOException {
-        input.first().encode(output);
+        input.getHeader().encode(output);
         ByteBufOutputStream stream = new ByteBufOutputStream(output);
         try {
-            mapper.writeValue(stream, input.second());
+            mapper.writeValue(stream, input.getBody());
         } finally {
             stream.close();
         }
@@ -59,7 +59,7 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
     }
 
     @Override
-    public MessagePacket decode(ByteBuf input) throws IOException {
+    public MessagePacket<?> decode(ByteBuf input) throws IOException {
         if (logger.isTraceEnabled()) {
             byte[] bytes = new byte[input.readableBytes()];
             input.getBytes(input.readerIndex(), bytes);
@@ -70,7 +70,7 @@ public class MessagePacketCodec implements Codec<MessagePacket, MessagePacket> {
             MessageHeader header = MessageHeader.decode(input);
             Class<? extends MessageBody> bodyType = MessageTypes.registeredType(header.type());
             MessageBody body = mapper.readValue(stream, bodyType);
-            MessagePacket message = MessagePacket.of(header, body);
+            MessagePacket<?> message = MessagePacket.of(header, body);
             return message;
         } finally {
             stream.close();

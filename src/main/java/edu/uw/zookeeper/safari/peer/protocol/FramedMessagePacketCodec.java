@@ -11,15 +11,15 @@ import edu.uw.zookeeper.protocol.Decoder;
 import edu.uw.zookeeper.protocol.Encoder;
 import edu.uw.zookeeper.protocol.Frame;
 
-public class FramedMessagePacketCodec implements Codec<MessagePacket, Optional<MessagePacket>> {
+public class FramedMessagePacketCodec implements Codec<MessagePacket<?>, Optional<MessagePacket<?>>> {
 
     public static FramedMessagePacketCodec newInstance(MessagePacketCodec codec) {
         return new FramedMessagePacketCodec(codec);
     }
     
     protected final MessagePacketCodec codec;
-    protected final Encoder<MessagePacket> encoder;
-    protected final Decoder<Optional<MessagePacket>> decoder;
+    protected final Encoder<MessagePacket<?>> encoder;
+    protected final Decoder<Optional<MessagePacket<?>>> decoder;
     
     public FramedMessagePacketCodec(MessagePacketCodec codec) {
         this.codec = codec;
@@ -30,13 +30,13 @@ public class FramedMessagePacketCodec implements Codec<MessagePacket, Optional<M
     }
     
     @Override
-    public void encode(MessagePacket input, ByteBuf output)
+    public void encode(MessagePacket<?> input, ByteBuf output)
             throws IOException {
         encoder.encode(input, output);
     }
 
     @Override
-    public Optional<MessagePacket> decode(ByteBuf input) throws IOException {
+    public Optional<MessagePacket<?>> decode(ByteBuf input) throws IOException {
         return decoder.decode(input);
     }
 }

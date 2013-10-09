@@ -325,7 +325,7 @@ public class FrontendServerExecutor extends DependentService {
         protected final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup;
         protected final CachedFunction<Identifier, Identifier> assignmentLookup;
         protected final Function<? super Identifier, Identifier> ensembleForPeer;
-        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
+        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup;
         protected final Executor executor;
         
         public ConnectProcessor(
@@ -333,7 +333,7 @@ public class FrontendServerExecutor extends DependentService {
                 CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
                 CachedFunction<Identifier, Identifier> assignmentLookup,
                 Function<? super Identifier, Identifier> ensembleForPeer,
-                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
+                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
                 ConnectTableProcessor connector,
                 Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
                 Executor executor) {
@@ -426,11 +426,11 @@ public class FrontendServerExecutor extends DependentService {
             }
             
             @Subscribe
-            public void handleMessage(MessagePacket message) {
-                switch (message.first().type()) {
+            public void handleMessage(MessagePacket<?> message) {
+                switch (message.getHeader().type()) {
                 case MESSAGE_TYPE_SESSION_RESPONSE:
                 {
-                    MessageSessionResponse body = message.getBody(MessageSessionResponse.class);
+                    MessageSessionResponse body = (MessageSessionResponse) message.getBody();
                     FrontendSessionExecutor e = executors.get(body.getIdentifier());
                     e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getValue()));
                     break;

@@ -20,20 +20,20 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.safari.Identifier;
 
-public abstract class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket>>> extends ForwardingService implements ConnectionFactory<V> {
+public abstract class PeerConnections<V extends PeerConnection<Connection<? super MessagePacket<?>>>> extends ForwardingService implements ConnectionFactory<V> {
 
     protected final Logger logger = LogManager.getLogger(getClass());
     protected final Identifier identifier;
     protected final TimeValue timeOut;
     protected final ScheduledExecutorService executor;
-    protected final ConnectionFactory<? extends Connection<? super MessagePacket>> connections;
+    protected final ConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections;
     protected final ConcurrentMap<Identifier, V> peers;
     
     protected PeerConnections(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+            ConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
         this.identifier = identifier;
         this.timeOut = timeOut;
         this.executor = executor;

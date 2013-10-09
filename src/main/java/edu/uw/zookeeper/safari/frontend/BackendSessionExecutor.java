@@ -1,97 +1,85 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import static com.google.common.base.Preconditions.checkState;
-
+import java.util.Collections;
+import java.util.Queue;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Objects;
+import com.google.common.collect.Queues;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
-
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Session;
+import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ExecutedActor;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.LinkedIterator;
-import edu.uw.zookeeper.safari.common.LinkedQueue;
-import edu.uw.zookeeper.safari.common.OperationFuture;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 
-public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor.BackendRequestFuture> implements TaskExecutor<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> {
+public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor.BackendResponseTask> implements TaskExecutor<Pair<? extends ListenableFuture<?>, MessageSessionRequest>, ShardedResponseMessage<?>> {
 
-    public static interface BackendRequestFuture extends OperationFuture<ShardedResponseMessage<?>> {
-        BackendSessionExecutor executor();
-
-        @Override
-        State call() throws ExecutionException;
+    public static interface BackendRequestFuture extends ListenableFuture<ShardedResponseMessage<?>>, Operation.RequestId {
     }
     
     public static BackendSessionExecutor create(
-            long frontend,
             Identifier ensemble,
             Session session,
             ClientPeerConnection<?> connection,
-            Publisher publisher,
+            FutureCallback<? super ShardedResponseMessage<?>> callback,
             Executor executor) {
         return new BackendSessionExecutor(
-                frontend, ensemble, session, connection, publisher, executor);
+                ensemble, session, connection, callback, executor);
     }
     
     protected static final Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
     
     protected final Logger logger;
-    protected final long frontend;
     protected final Identifier ensemble;
     protected final Session session;
     protected final ClientPeerConnection<?> connection;
-    protected final Publisher publisher;
+    protected final FutureCallback<? super ShardedResponseMessage<?>> callback;
     protected final Executor executor;
-    protected final LinkedQueue<BackendRequestFuture> mailbox;
-    // not thread safe
-    protected volatile LinkedIterator<BackendRequestFuture> pending;
-    protected volatile LinkedIterator<BackendRequestFuture> finger;
+    protected final Queue<BackendResponseTask> mailbox;
+    protected final PendingProcessor pending;
+    protected final CompletedProcessor completed;
 
-    public BackendSessionExecutor(
-            long frontend,
+    protected BackendSessionExecutor(
             Identifier ensemble,
             Session session,
             ClientPeerConnection<?> connection,
-            Publisher publisher,
+            FutureCallback<? super ShardedResponseMessage<?>> callback,
             Executor executor) {
         super();
         this.logger = LogManager.getLogger(getClass());
-        this.frontend = frontend;
         this.ensemble = ensemble;
         this.session = session;
         this.connection = connection;
-        this.publisher = publisher;
+        this.callback = callback;
         this.executor = executor;
-        this.mailbox = LinkedQueue.create();
-        this.pending = mailbox.iterator();
-        this.finger = null;
+        this.mailbox = Queues.newConcurrentLinkedQueue();
+        this.pending = new PendingProcessor();
+        this.completed = new CompletedProcessor();
     }
     
     public Identifier getEnsemble() {
@@ -107,9 +95,12 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
     }
     
     @Override
-    public BackendRequestFuture submit(
-            Pair<OperationFuture<?>, ShardedRequestMessage<?>> request) {
-        BackendResponseTask task = new BackendResponseTask(request);
+    public ListenableFuture<ShardedResponseMessage<?>> submit(
+            Pair<? extends ListenableFuture<?>, MessageSessionRequest> request) {
+        BackendResponseTask task = new BackendResponseTask(request,
+                LoggingPromise.create(logger, 
+                        SettableFuturePromise.<ShardedResponseMessage<?>>create()),
+                LoggingPromise.create(logger, SettableFuturePromise.<ShardedResponseMessage<?>>create()));
         try {
             if (! send(task)) {
                 task.cancel(true);
@@ -117,80 +108,15 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         } catch (Exception e) {
             task.setException(e);
         }
-        return task;
+        return task.getResponse();
     }
 
-    @Override
-    public boolean send(BackendRequestFuture message) {
-        logger.debug("Submitting: {}", message);
-        synchronized (mailbox) {
-            synchronized (message) {
-                // ensure that queue order is same as submit order...
-                if (! super.send(message)) {
-                    return false;
-                }
-                
-                if (message.state() == OperationFuture.State.WAITING) {
-                    try {
-                        message.call();
-                    } catch (Exception e) {
-                        mailbox.remove(message);
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
-    }
-    
     @Subscribe
     public void handleResponse(ShardedResponseMessage<?> message) {
         if (state() == State.TERMINATED) {
             return;
         }
-        logger.debug("{}", message);
-        synchronized (mailbox) {
-            if (! pending.hasNext()) {
-                pending = mailbox.iterator();
-            }
-            logger.trace("{}", pending);
-            int xid = message.xid();
-            if (xid == OpCodeXid.NOTIFICATION.xid()) {
-                while (pending.hasNext() && pending.peekNext().isDone()) {
-                    pending.next();
-                }
-                pending.add(new BackendNotification(message));
-            } else {
-                BackendResponseTask task = null;
-                OperationFuture<ShardedResponseMessage<?>> next;
-                while ((next = pending.peekNext()) != null) {
-                    int nextXid = next.xid();
-                    if (nextXid == OpCodeXid.NOTIFICATION.xid()) {
-                        pending.next();
-                    } else if (nextXid == xid) {
-                        task = (BackendResponseTask) pending.next();
-                        break;
-                    } else if (pending.peekNext().isDone()) {
-                        pending.next();
-                    } else {
-                        // FIXME
-                        throw new AssertionError(String.format("%s != %s",  message, pending));
-                    }
-                }
-                if (task == null) {
-                    // FIXME
-                    throw new AssertionError();
-                } else {
-                    if (! task.set(message)) {
-                        // FIXME
-                        throw new AssertionError();
-                    }
-                }
-            }
-            logger.trace("{}", pending);
-        }
-        
-        run();
+        pending.send(message);
     }
     
     @Subscribe
@@ -211,7 +137,8 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         }
     }
     
-    protected LinkedQueue<BackendRequestFuture> mailbox() {
+    @Override
+    protected Queue<BackendResponseTask> mailbox() {
         return mailbox;
     }
 
@@ -226,89 +153,43 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
     }
 
     @Override
-    protected void doRun() throws ExecutionException {
-        finger = mailbox.iterator();
-        BackendRequestFuture next;
-        while ((next = finger.peekNext()) != null) {
-            if (!apply(next) || (finger.peekNext() == next)) {
-                break;
-            }
+    protected boolean apply(BackendResponseTask input) {
+        // add to pending before write
+        if (!pending.enqueue(input)) {
+            return false;
         }
-        finger = null;
-    }
-    
-    @Override
-    protected boolean apply(BackendRequestFuture input) throws ExecutionException {
-        synchronized (input) {
-            for (;;) {
-                OperationFuture.State state = input.state();
-                if (OperationFuture.State.PUBLISHED == state) {
-                    assert (finger.peekNext() != pending.peekNext());
-                    finger.next();
-                    finger.remove();
-                    break;
-                } else if ((OperationFuture.State.COMPLETE == state)
-                        && (finger.hasPrevious() && (finger.peekPrevious().state().compareTo(state) <= 0))) {
-                    // tasks can only publish when predecessors have published
-                    break;
-                } else if (input.call() == state) {
-                    break;
-                }
-            }
-        }
+        MessagePacket<MessageSessionRequest> message = MessagePacket.of(input.task().second());
+        ListenableFuture<MessagePacket<MessageSessionRequest>> future = getConnection().write(message);
+        Futures.addCallback(future, input, sameThreadExecutor);
         return (state() != State.TERMINATED);
     }
-    
+
     @Override
-    protected void runExit() {
-        if (state.compareAndSet(State.RUNNING, State.WAITING)) {
-            // TODO ??
-            //BackendRequestFuture head = mailbox.peek();
-            //if ((head != null) && head.isDone()) {
-                // TODO ??
-            //}
-        }
-    }
-    
     protected void doStop() {
         // FIXME
         BackendRequestFuture next;
         while ((next = mailbox.poll()) != null) {
             next.cancel(true);
         }
+        pending.stop();
+        completed.stop();
     }
 
-    protected class BackendNotification implements BackendRequestFuture {
+    protected static class BackendNotification implements BackendRequestFuture {
 
-        protected final AtomicReference<State> state;
         protected final ShardedResponseMessage<?> message;
 
         public BackendNotification(
                 ShardedResponseMessage<?> message) {
-            this(State.COMPLETE, message);
-        }
-        public BackendNotification(
-                State state,
-                ShardedResponseMessage<?> message) {
-            checkState(OpCodeXid.NOTIFICATION.xid() == message.xid());
-            this.state = new AtomicReference<State>(state);
+            assert(OpCodeXid.NOTIFICATION.xid() == message.xid());
             this.message = message;
-        }
-        
-        @Override
-        public BackendSessionExecutor executor() {
-            return BackendSessionExecutor.this;
         }
         
         @Override
         public int xid() {
             return OpCodeXid.NOTIFICATION.xid();
         }
-        @Override
-        public State state() {
-            return state.get();
-        }
-
+        
         @Override
         public void addListener(Runnable listener, Executor executor) {
             executor.execute(listener);
@@ -340,162 +221,229 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         }
 
         @Override
-        public State call() { 
-            logger.entry(this);
-            
-            State state = state();
-            switch (state) {
-            case WAITING:
-            case SUBMITTING:
-            {
-                this.state.compareAndSet(state, State.COMPLETE);
-                break;
-            }
-            case COMPLETE:
-            {
-                if (this.state.compareAndSet(State.COMPLETE, State.PUBLISHED)) {
-                    publisher.post(get());
-                }
-                break;
-            }
-            default:
-                break;
-            }
-            return logger.exit(state());
-        }
-
-        @Override
         public String toString() {
             return Objects.toStringHelper(this)
-                    .add("state", state())
                     .add("message", message)
                     .toString();
         }
     }
     
-    protected class BackendResponseTask 
-            extends PromiseTask<Pair<OperationFuture<?>, ShardedRequestMessage<?>>, ShardedResponseMessage<?>> 
-            implements FutureCallback<MessagePacket>, BackendRequestFuture {
+    protected static class BackendResponseTask 
+            extends PromiseTask<Pair<? extends ListenableFuture<?>, MessageSessionRequest>, ShardedResponseMessage<?>> 
+            implements FutureCallback<MessagePacket<MessageSessionRequest>>, BackendRequestFuture, Runnable {
 
-        protected final AtomicReference<State> state;
-        protected volatile ListenableFuture<MessagePacket> writeFuture;
+        protected final Promise<ShardedResponseMessage<?>> response;
 
         public BackendResponseTask(
-                Pair<OperationFuture<?>, ShardedRequestMessage<?>> task) {
-            this(State.WAITING, 
-                    task, 
-                    LoggingPromise.create(logger, 
-                            SettableFuturePromise.<ShardedResponseMessage<?>>create()));
+                Pair<? extends ListenableFuture<?>, MessageSessionRequest> task,
+                Promise<ShardedResponseMessage<?>> promise,
+                Promise<ShardedResponseMessage<?>> response) {
+            super(task, promise);
+            this.response = response;
+            
+            this.response.addListener(this, sameThreadExecutor);
+            this.task.first().addListener(this, sameThreadExecutor);
         }
         
-        public BackendResponseTask(
-                State state,
-                Pair<OperationFuture<?>, ShardedRequestMessage<?>> task,
-                Promise<ShardedResponseMessage<?>> delegate) {
-            super(task, delegate);
-            this.state = new AtomicReference<State>(state);
-            this.writeFuture = null;
+        public ListenableFuture<ShardedResponseMessage<?>> getResponse() {
+            return response;
         }
-
+        
+        protected boolean setResponse(ShardedResponseMessage<?> response) {
+            assert(response.xid() == xid());
+            return this.response.set(response);
+        }
+        
         @Override
-        public BackendSessionExecutor executor() {
-            return BackendSessionExecutor.this;
+        public void run() {
+            if (! isDone()) {
+                if (task.first().isDone() && response.isDone()) {
+                    if (response.isCancelled()) {
+                        cancel(true);
+                    } else {
+                        try {
+                            set(response.get());
+                        } catch (InterruptedException e) {
+                            throw new AssertionError(e);
+                        } catch (ExecutionException e) {
+                            setException(e);
+                        }
+                    }
+                }
+            }
         }
         
         @Override
         public int xid() {
-            return task().second().xid();
+            return task.second().getValue().xid();
         }
 
         @Override
-        public State state() {
-            return state.get();
-        }
-        
-        @Override
-        public State call() throws ExecutionException {
-            logger.entry(this);
-            
-            switch (state()) {
-            case WAITING:
-            {
-                if (state.compareAndSet(State.WAITING, State.SUBMITTING)) {
-                    MessagePacket message = MessagePacket.of(
-                            MessageSessionRequest.of(frontend, task().second()));
-                    writeFuture = getConnection().write(message);
-                    Futures.addCallback(writeFuture, this, sameThreadExecutor);
-                }
-                break;
-            }
-            case COMPLETE:
-            {
-                assert (isDone());
-                Futures.get(this, ExecutionException.class);
-                if (task().first().state() == State.PUBLISHED) {
-                    this.state.compareAndSet(State.COMPLETE, State.PUBLISHED);
-                }
-                break;
-            }
-            default:
-                break;
-            }
-            
-            return logger.exit(state());
-        }
-        
-        @Override
-        public boolean set(ShardedResponseMessage<?> result) {
-            if (result.xid() != xid()) {
-                throw new IllegalArgumentException(result.toString());
-            }
-            boolean set = super.set(result);
-            if (set) {
-                state.compareAndSet(State.SUBMITTING, State.COMPLETE);
-            }
-            return set;
-        }
-        
-        @Override
-        public boolean cancel(boolean mayInterruptIfRunning) {
-            boolean cancel = super.cancel(mayInterruptIfRunning);
-            if (cancel) {
-                if (writeFuture != null) {
-                    writeFuture.cancel(mayInterruptIfRunning);
-                }
-                state.compareAndSet(State.WAITING, State.COMPLETE);
-                state.compareAndSet(State.SUBMITTING, State.COMPLETE);
-                run();
-            }
-            return cancel;
-        }
-        
-        @Override
-        public boolean setException(Throwable t) {
-            boolean setException = super.setException(t);
-            if (setException) {
-                state.compareAndSet(State.WAITING, State.COMPLETE);
-                state.compareAndSet(State.SUBMITTING, State.COMPLETE);
-                run();
-            }
-            return setException;
-        }
-
-        @Override
-        public void onSuccess(MessagePacket result) {
+        public void onSuccess(MessagePacket<MessageSessionRequest> result) {
         }
 
         @Override
         public void onFailure(Throwable t) {
-            setException(t);
+            response.setException(t);
         }
 
         @Override
-        public String toString() {
-            return Objects.toStringHelper(this)
-                    .add("state", state())
-                    .add("task", task().second())
-                    .add("future", delegate())
-                    .toString();
+        protected Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
+            return toString.add("task", task.second())
+                    .add("response", response).add("future", delegate);
+        }
+    }
+    
+    protected class PendingProcessor extends AbstractActor<ShardedResponseMessage<?>> {
+
+        protected final Queue<BackendResponseTask> mailbox;
+
+        public PendingProcessor() {
+            this.mailbox = Queues.newConcurrentLinkedQueue();
+        }
+        
+        public boolean enqueue(BackendResponseTask task) {
+            mailbox.add(task);
+            if (state() == State.TERMINATED) {
+                mailbox.remove(task);
+                return false;
+            } else {
+                return true;
+            }
+        }
+        
+        @Override
+        protected Logger logger() {
+            return logger;
+        }
+
+        @Override
+        protected boolean doSend(ShardedResponseMessage<?> message) {
+            int xid = message.xid();
+            if (xid == OpCodeXid.NOTIFICATION.xid()) {
+                return completed.send(new BackendNotification(message));
+            } else {
+                BackendResponseTask task = mailbox.peek();
+                assert(task != null);
+                if (! task.setResponse(message)) {
+                    throw new AssertionError(String.valueOf(task));
+                }
+                if (!schedule() && (state() == State.TERMINATED)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        protected void doRun() {
+            BackendResponseTask next;
+            while ((next = mailbox.peek()) != null) {
+                if (next.getResponse().isDone()) {
+                    mailbox.remove(next);
+                    completed.send(next);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        @Override
+        protected void runExit() {
+            if (state.compareAndSet(State.RUNNING, State.WAITING)) {
+                BackendResponseTask next = mailbox.peek();
+                if ((next != null) && (next.getResponse().isDone())) {
+                    schedule();
+                }
+            }
+        }
+        
+        @Override
+        protected void doStop() {
+            BackendResponseTask next;
+            while ((next = mailbox.poll()) != null) {
+                next.cancel(true);
+            }
+        }
+    }
+
+    // hang on to completed requests to ensure that notification
+    // messages are sent in order
+    // because frontend requests may be waiting on multiple backend requests
+    protected class CompletedProcessor extends ExecutedActor<BackendRequestFuture> {
+
+        protected final Queue<BackendRequestFuture> mailbox;
+        // not thread-safe
+        protected final Set<BackendRequestFuture> futures;
+        
+        public CompletedProcessor() {
+            mailbox = Queues.newConcurrentLinkedQueue();
+            this.futures = Collections.newSetFromMap(
+                    new WeakHashMap<BackendRequestFuture, Boolean>());
+        }
+        
+        @Override
+        protected Executor executor() {
+            return executor;
+        }
+
+        @Override
+        protected Logger logger() {
+            return logger;
+        }
+
+        @Override
+        protected Queue<BackendRequestFuture> mailbox() {
+            return mailbox;
+        }
+        
+        @Override
+        protected void doRun() {
+            BackendRequestFuture next;
+            while ((next = mailbox.peek()) != null) {
+                if (next.isDone()) {
+                    mailbox.remove(next);
+                    if (! apply(next)) {
+                        break;
+                    }
+                } else {
+                    if (futures.add(next)) {
+                        next.addListener(this, sameThreadExecutor);
+                    }
+                    break;
+                }
+            }
+        }
+
+        @Override
+        protected boolean apply(BackendRequestFuture input) {
+            try {
+                callback.onSuccess(input.get());
+            } catch (ExecutionException e) {
+                // FIXME 
+                throw new AssertionError(e);
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+            return (state() != State.TERMINATED);
+        }
+
+        @Override
+        protected void runExit() {
+            if (state.compareAndSet(State.RUNNING, State.WAITING)) {
+                BackendRequestFuture next = mailbox.peek();
+                if ((next != null) && (next.isDone())) {
+                    schedule();
+                }
+            }
+        }
+        
+        @Override
+        protected void doStop() {
+            BackendRequestFuture next;
+            while ((next = mailbox.poll()) != null) {
+                next.cancel(true);
+            }
         }
     }
 }

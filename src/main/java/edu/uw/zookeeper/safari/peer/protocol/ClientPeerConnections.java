@@ -23,36 +23,36 @@ import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
-public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<Connection<? super MessagePacket>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket>>> {
+public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<Connection<? super MessagePacket<?>>>> implements ClientConnectionFactory<ClientPeerConnection<Connection<? super MessagePacket<?>>>> {
 
     public static ClientPeerConnections newInstance(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
             CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
-            ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+            ClientConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
         return new ClientPeerConnections(identifier, timeOut, executor, lookup, connections);
     }
     
-    protected final MessagePacket handshake;
+    protected final MessagePacket<MessageHandshake> handshake;
     protected final CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> addressLookup;
-    protected final CachedLookup<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> lookups;
+    protected final CachedLookup<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> lookups;
     
     public ClientPeerConnections(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
             CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
-            ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+            ClientConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
         super(identifier, timeOut, executor, connections);
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
         this.addressLookup = lookup;
         this.lookups = CachedLookup.create(
                 peers, 
                 SharedLookup.create(
-                        new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>>() {
+                        new AsyncFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>>() {
                             @Override
-                            public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> apply(
+                            public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> apply(
                                     Identifier peer) throws Exception {
                                 ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> lookupFuture = addressLookup.apply(peer);
                                 ConnectionTask connection = new ConnectionTask(lookupFuture);
@@ -67,17 +67,17 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
     }
 
     @Override
-    public ClientConnectionFactory<? extends Connection<? super MessagePacket>> connections() {
-        return (ClientConnectionFactory<? extends Connection<? super MessagePacket>>) connections;
+    public ClientConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections() {
+        return (ClientConnectionFactory<? extends Connection<? super MessagePacket<?>>>) connections;
     }
     
     @Override
-    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connect(
+    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> connect(
             SocketAddress remoteAddress) {
         return connect(((IdentifierSocketAddress) remoteAddress).getIdentifier());
     }
 
-    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connect(Identifier peer) {
+    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> connect(Identifier peer) {
         try {
             return asLookup().apply(peer);
         } catch (Exception e) {
@@ -85,42 +85,42 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         }
     }
 
-    public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> asLookup() {
+    public CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> asLookup() {
         return lookups.asLookup();
     }
 
-    protected ListenableFuture<MessagePacket> handshake(ClientPeerConnection<Connection<? super MessagePacket>> peer) {
+    protected ListenableFuture<MessagePacket<MessageHandshake>> handshake(ClientPeerConnection<Connection<? super MessagePacket<?>>> peer) {
         return peer.write(handshake);
     }
 
     @Override
-    public ClientPeerConnection<Connection<? super MessagePacket>> put(ClientPeerConnection<Connection<? super MessagePacket>> v) {
-        ClientPeerConnection<Connection<? super MessagePacket>> prev = super.put(v);
+    public ClientPeerConnection<Connection<? super MessagePacket<?>>> put(ClientPeerConnection<Connection<? super MessagePacket<?>>> v) {
+        ClientPeerConnection<Connection<? super MessagePacket<?>>> prev = super.put(v);
         handshake(v);
         return prev;
     }
 
     @Override
-    public ClientPeerConnection<Connection<? super MessagePacket>> putIfAbsent(ClientPeerConnection<Connection<? super MessagePacket>> v) {
-        ClientPeerConnection<Connection<? super MessagePacket>> prev = super.putIfAbsent(v);
+    public ClientPeerConnection<Connection<? super MessagePacket<?>>> putIfAbsent(ClientPeerConnection<Connection<? super MessagePacket<?>>> v) {
+        ClientPeerConnection<Connection<? super MessagePacket<?>>> prev = super.putIfAbsent(v);
         if (prev == null) {
             handshake(v);
         }
         return prev;
     }
 
-    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ControlSchema.Peers.Entity.PeerAddress>, Connection<? super MessagePacket>> implements FutureCallback<Connection<? super MessagePacket>> {
+    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ControlSchema.Peers.Entity.PeerAddress>, Connection<? super MessagePacket<?>>> implements FutureCallback<Connection<? super MessagePacket<?>>> {
         
-        protected ListenableFuture<? extends Connection<? super MessagePacket>> future;
+        protected ListenableFuture<? extends Connection<? super MessagePacket<?>>> future;
 
         public ConnectionTask(
                 ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> task) {
-            this(task, PromiseTask.<Connection<? super MessagePacket>>newPromise());
+            this(task, PromiseTask.<Connection<? super MessagePacket<?>>>newPromise());
         }
         
         public ConnectionTask(
                 ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> task, 
-                Promise<Connection<? super MessagePacket>> delegate) {
+                Promise<Connection<? super MessagePacket<?>>> delegate) {
             super(task, delegate);
             this.future = null;
             
@@ -152,7 +152,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         }
         
         @Override
-        public synchronized Optional<Connection<? super MessagePacket>> call() throws Exception {
+        public synchronized Optional<Connection<? super MessagePacket<?>>> call() throws Exception {
             if (task().isDone()) {
                 if (task().isCancelled()) {
                     cancel(true);
@@ -168,7 +168,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         }
 
         @Override
-        public void onSuccess(Connection<? super MessagePacket> result) {
+        public void onSuccess(Connection<? super MessagePacket<?>> result) {
             if (! set(result)) {
                 result.close();
             }
@@ -180,20 +180,20 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         }
     }
 
-    protected class ConnectTask extends PromiseTask<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> implements FutureCallback<Connection<? super MessagePacket>> {
+    protected class ConnectTask extends PromiseTask<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> implements FutureCallback<Connection<? super MessagePacket<?>>> {
     
         protected final ConnectionTask connection;
         
         public ConnectTask(
                 Identifier task,
                 ConnectionTask connection) {
-            this(task, connection, PromiseTask.<ClientPeerConnection<Connection<? super MessagePacket>>>newPromise());
+            this(task, connection, PromiseTask.<ClientPeerConnection<Connection<? super MessagePacket<?>>>>newPromise());
         }
 
         public ConnectTask(
                 Identifier task,
                 ConnectionTask connection,
-                Promise<ClientPeerConnection<Connection<? super MessagePacket>>> delegate) {
+                Promise<ClientPeerConnection<Connection<? super MessagePacket<?>>>> delegate) {
             super(task, delegate);
             this.connection = connection;
             
@@ -210,9 +210,9 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         }
     
         @Override
-        public boolean set(ClientPeerConnection<Connection<? super MessagePacket>> result) {
+        public boolean set(ClientPeerConnection<Connection<? super MessagePacket<?>>> result) {
             boolean set;
-            ClientPeerConnection<Connection<? super MessagePacket>> prev = putIfAbsent(result);
+            ClientPeerConnection<Connection<? super MessagePacket<?>>> prev = putIfAbsent(result);
             if (prev != null) {
                 if (result.delegate() != prev.delegate()) {
                     result.close();
@@ -225,10 +225,10 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         }
 
         @Override
-        public void onSuccess(Connection<? super MessagePacket> result) {
+        public void onSuccess(Connection<? super MessagePacket<?>> result) {
             try {
                 if (! isDone()) {
-                    set(ClientPeerConnection.<Connection<? super MessagePacket>>create(
+                    set(ClientPeerConnection.<Connection<? super MessagePacket<?>>>create(
                             identifier(), task(), result, timeOut, executor));
                 } else {
                     result.close();

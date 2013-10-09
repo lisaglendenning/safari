@@ -1,12 +1,15 @@
 package edu.uw.zookeeper.safari.backend;
 
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -127,7 +130,10 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
             unsharded = ShardedResponseMessage.of(Identifier.zero(), message);
         }
         
-        super.handleResponse(unsharded);
+        synchronized (pending) {
+            super.handleResponse(unsharded);
+            runPending();
+        }
 
         if (response.xid() == OpCodeXid.NOTIFICATION.xid()) {
             callback.onSuccess(unsharded);
@@ -138,7 +144,7 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
     protected void doRun() throws Exception {
         ShardedRequestTask next;
         while ((next = mailbox.peek()) != null) {
-            if (next.translator().isDone()) {
+            if (next.isReady()) {
                 mailbox.remove(next);
                 if (!apply(next)) {
                     break;
@@ -153,11 +159,32 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
     }
     
     @Override
-    protected boolean apply(ShardedRequestTask input) throws Exception {
+    protected boolean apply(ShardedRequestTask input) {
         assert (input.translator().isDone());
         if (! input.isDone()) {
             if (state() != State.TERMINATED) {
-                write(input.shard(), input.promise());
+                Message.ClientRequest<?> sharded = null;
+                try {
+                    sharded = input.shard();
+                } catch (ExecutionException e) {
+                    // we add failed requests to the pending queue
+                    // to ensure that the future is set with respect
+                    // to request ordering
+                    FailedRequestTask failed = new FailedRequestTask(
+                            new ShardedRequestException(input.task(), e.getCause()),
+                            input.task().xid(),
+                            this,
+                            input.promise());
+                    Futures.addCallback(failed, callback, sameThreadExecutor);
+                    pending.add(failed);
+                    runPending();
+                    sharded = null;
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+                if (sharded != null) {
+                    write(sharded, input.promise());
+                }
             } else {
                 input.cancel(true);
             }
@@ -166,6 +193,45 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
         return (state() != State.TERMINATED);
     }
     
+    @Override
+    protected void runExit() {
+        if (state.compareAndSet(State.RUNNING, State.WAITING)) {
+            ShardedRequestTask next = mailbox.peek();
+            if ((next != null) && (next.isReady())) {
+                schedule();
+            }
+        }
+    }
+    
+    protected void runPending() {
+        synchronized (pending) {
+            Iterator<PendingTask<ShardedResponseMessage<?>>> itr = pending.iterator();
+            while (itr.hasNext()) {
+                PendingTask<ShardedResponseMessage<?>> next = itr.next();
+                if (next instanceof Runnable) {
+                    itr.remove();
+                    ((Runnable) next).run();
+                }
+            }
+        }
+    }
+    
+    public static class ShardedRequestException extends Exception {
+    
+        private static final long serialVersionUID = -6523271323477641540L;
+        
+        private final ShardedRequestMessage<?> request;
+        
+        public ShardedRequestException(ShardedRequestMessage<?> request, Throwable cause) {
+            super(String.format("%s failed", request), cause);
+            this.request = request;
+        }
+        
+        public ShardedRequestMessage<?> request() {
+            return request;
+        }
+    }
+
     protected static class ShardedRequestTask extends PendingQueueClientExecutor.RequestTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> {
 
         protected final ListenableFuture<OperationPrefixTranslator> translator;
@@ -175,7 +241,12 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                 ShardedRequestMessage<?> task,
                 Promise<ShardedResponseMessage<?>> promise) {
             super(task, promise);
+            assert(task.xid() != OpCodeXid.PING.xid());
             this.translator = translator;
+        }
+        
+        public boolean isReady() {
+            return translator.isDone();
         }
         
         public ListenableFuture<OperationPrefixTranslator> translator() {
@@ -184,6 +255,30 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
         
         public Message.ClientRequest<?> shard() throws InterruptedException, ExecutionException {
             return translator.get().apply(task.getRequest());
+        }
+    }
+    
+    protected static class FailedRequestTask extends PendingQueueClientExecutor.PendingTask<ShardedResponseMessage<?>> implements Runnable {
+
+        protected final Exception failure;
+        
+        public FailedRequestTask(
+                Exception failure,
+                int xid,
+                FutureCallback<? super PendingTask<ShardedResponseMessage<?>>> callback,
+                Promise<ShardedResponseMessage<?>> promise) {
+            super(xid, callback, promise);
+            this.failure = failure;
+        }
+
+        @Override
+        public void run() {
+            setException(failure);
+        }
+
+        @Override
+        protected Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
+            return super.toString(toString.add("failure", failure));
         }
     }
 }

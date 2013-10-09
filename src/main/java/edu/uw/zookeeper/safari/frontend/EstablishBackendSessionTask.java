@@ -24,13 +24,13 @@ import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
 
-public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session> implements Runnable, FutureCallback<MessagePacket> {
+public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session> implements Runnable, FutureCallback<MessagePacket<MessageSessionOpenRequest>> {
     
     public static EstablishBackendSessionTask create(
             Session frontend,
             Optional<Session> existing,
             Identifier ensemble,
-            ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection,
+            ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> connection,
             Promise<Session> promise) {
         EstablishBackendSessionTask instance = new EstablishBackendSessionTask(frontend, existing, ensemble, connection, promise);
         connection.addListener(instance, sameThreadExecutor);
@@ -41,14 +41,14 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
     
     protected final Session frontend;
     protected final Optional<Session> existing;
-    protected final ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection;
-    protected volatile ListenableFuture<MessagePacket> writeFuture;
+    protected final ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> connection;
+    protected volatile ListenableFuture<MessagePacket<MessageSessionOpenRequest>> writeFuture;
     
     protected EstablishBackendSessionTask(
             Session frontend,
             Optional<Session> existing,
             Identifier ensemble,
-            ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection,
+            ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> connection,
             Promise<Session> promise) {
         super(ensemble, promise);
         this.frontend = frontend;
@@ -65,7 +65,7 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
         return existing;
     }
 
-    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket>>> connection() {
+    public ListenableFuture<ClientPeerConnection<Connection<? super MessagePacket<?>>>> connection() {
         return connection;
     }
     
@@ -95,12 +95,12 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
     }
     
     @Subscribe
-    public void handleMessage(MessagePacket message) {
+    public void handleMessage(MessagePacket<?> message) {
         assert(connection.isDone());
-        switch (message.first().type()) {
+        switch (message.getHeader().type()) {
         case MESSAGE_TYPE_SESSION_OPEN_RESPONSE:
         {
-            MessageSessionOpenResponse response = message.getBody(MessageSessionOpenResponse.class);
+            MessageSessionOpenResponse response = (MessageSessionOpenResponse) message.getBody();
             if (response.getIdentifier() != frontend.id()) {
                 break;
             }
@@ -153,7 +153,7 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
     }
 
     @Override
-    public void onSuccess(MessagePacket result) {
+    public void onSuccess(MessagePacket<MessageSessionOpenRequest> result) {
     }
 
     @Override

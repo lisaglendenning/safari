@@ -1,24 +1,28 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
 import static com.google.common.base.Preconditions.checkNotNull;
-import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.AbstractPair;
 
-public class MessagePacket extends Pair<MessageHeader, MessageBody> {
+public class MessagePacket<T extends MessageBody> extends AbstractPair<MessageHeader, T> {
 
-    public static <T extends MessageBody> MessagePacket of(T second) {
-        MessageHeader first = MessageHeader.of(MessageTypes.typeOf(second.getClass()));
-        return of(first, second);
+    public static <T extends MessageBody> MessagePacket<T> of(T body) {
+        MessageHeader header = MessageHeader.of(MessageTypes.typeOf(body.getClass()));
+        return of(header, body);
     }
     
-    public static MessagePacket of(MessageHeader first, MessageBody second) {
-        return new MessagePacket(first, second);
+    public static <T extends MessageBody> MessagePacket<T> of(MessageHeader header, T body) {
+        return new MessagePacket<T>(header, body);
     }
     
-    public MessagePacket(MessageHeader first, MessageBody second) {
-        super(checkNotNull(first), checkNotNull(second));
+    public MessagePacket(MessageHeader header, T body) {
+        super(checkNotNull(header), checkNotNull(body));
     }
     
-    public <T extends MessageBody> T getBody(Class<T> cls) {
-        return cls.cast(second());
+    public MessageHeader getHeader() {
+        return first;
+    }
+    
+    public MessageBody getBody() {
+        return second;
     }
 }

@@ -9,6 +9,10 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 
+// TODO: For now, this doesn't implement Message.ClientRequest
+// because then the wrong serializer/deserializer is chosen by Jackson
+// (this is probably fixable...)
+// same goes for ShardedResponseMessage
 @JsonIgnoreProperties({"request", "xid", "record"})
 public class ShardedRequestMessage<V extends Records.Request> extends ShardedMessage<Message.ClientRequest<V>> implements Operation.ProtocolRequest<V>, ShardedOperation.Request<Message.ClientRequest<V>> {
 

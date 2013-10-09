@@ -12,13 +12,13 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
-public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<Connection<? super MessagePacket>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket>>> {
+public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<Connection<? super MessagePacket<?>>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket<?>>>> {
 
     public static ServerPeerConnections newInstance(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+            ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
         return new ServerPeerConnections(identifier, timeOut, executor, connections);
     }
     
@@ -26,17 +26,17 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections) {
+            ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
         super(identifier, timeOut, executor, connections);
     }
 
     @Override
-    public ServerConnectionFactory<? extends Connection<? super MessagePacket>> connections() {
-        return (ServerConnectionFactory<? extends Connection<? super MessagePacket>>) connections;
+    public ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections() {
+        return (ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>>) connections;
     }
 
     @Subscribe
-    public void handleServerConnection(Connection<? super MessagePacket> connection) {
+    public void handleServerConnection(Connection<? super MessagePacket<?>> connection) {
         if (! (connection instanceof ServerPeerConnection)) {
             new ServerAcceptTask(connection);
         }
@@ -65,19 +65,19 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
 
     protected class ServerAcceptTask {
 
-        protected final Connection<? super MessagePacket> connection;
+        protected final Connection<? super MessagePacket<?>> connection;
         
-        protected ServerAcceptTask(Connection<? super MessagePacket> connection) {
+        protected ServerAcceptTask(Connection<? super MessagePacket<?>> connection) {
             this.connection = connection;
             
             connection.register(this);
         }
         
         @Subscribe
-        public void handleMessage(MessagePacket event) {
-            if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.first().type()) {
-                MessageHandshake body = event.getBody(MessageHandshake.class);
-                ServerPeerConnection<Connection<? super MessagePacket>> peer = ServerPeerConnection.<Connection<? super MessagePacket>>create(identifier(), body.getIdentifier(), connection, timeOut, executor);
+        public void handleMessage(MessagePacket<?> event) {
+            if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.getHeader().type()) {
+                MessageHandshake body = (MessageHandshake) event.getBody();
+                ServerPeerConnection<Connection<? super MessagePacket<?>>> peer = ServerPeerConnection.<Connection<? super MessagePacket<?>>>create(identifier(), body.getIdentifier(), connection, timeOut, executor);
                 connection.unregister(this);
                 put(peer);
             } else {

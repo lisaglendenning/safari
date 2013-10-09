@@ -30,6 +30,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -71,10 +72,11 @@ import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
+import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 
-public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher {
+public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestFuture> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher, FutureCallback<ShardedResponseMessage<?>> {
     
     public static FrontendSessionExecutor newInstance(
             Session session,
@@ -83,7 +85,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
             Function<? super Identifier, Identifier> ensembleForPeer,
-            CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
+            CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
             Executor executor) {
         return new FrontendSessionExecutor(session, publisher, processor, volumeLookup, assignmentLookup, ensembleForPeer, connectionLookup, executor);
     }
@@ -111,7 +113,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             CachedFunction<ZNodeLabel.Path, Volume> volumes,
             CachedFunction<Identifier, Identifier> assignments,
             Function<? super Identifier, Identifier> ensembleForPeer,
-            CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
+            CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
             Executor executor) {
         super();
         this.logger = LogManager.getLogger(getClass());
@@ -166,6 +168,21 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                             Pair.create(Optional.<Operation.ProtocolRequest<?>>absent(), response)));
         }
         publisher.post(event);
+    }
+
+    @Override
+    public void onSuccess(ShardedResponseMessage<?> result) {
+        post(processor().apply(
+                Pair.create(session().id(),
+                        Pair.create(
+                                Optional.<Operation.ProtocolRequest<?>>absent(),
+                                (Records.Response) result.record()))));
+    }
+    
+    @Override
+    public void onFailure(Throwable t) {
+        // FIXME
+        throw new AssertionError(t);
     }
     
     public Session session() {
@@ -375,19 +392,19 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     // TODO handle disconnects and reconnects
     protected class BackendLookup extends CachedLookup<Identifier, BackendSessionExecutor> {
     
-        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup;
+        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup;
         protected final Function<? super Identifier, Identifier> ensembleForPeer;
         
         public BackendLookup(
                 Function<? super Identifier, Identifier> ensembleForPeer,
-                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup) {
+                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup) {
             this(ensembleForPeer, connectionLookup, 
                     new MapMaker().<Identifier, BackendSessionExecutor>makeMap());
         }
         
         public BackendLookup(
                 final Function<? super Identifier, Identifier> ensembleForPeer,
-                final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket>>> connectionLookup,
+                final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
                 final ConcurrentMap<Identifier, BackendSessionExecutor> cache) {
             super(cache, CachedFunction.<Identifier, BackendSessionExecutor>create(
                         new Function<Identifier, BackendSessionExecutor>() {
@@ -423,7 +440,6 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                                 @Nullable
                                                 public BackendSessionExecutor apply(Session input) {
                                                     BackendSessionExecutor backend = BackendSessionExecutor.create(
-                                                            self.session().id(), 
                                                             task.task(),
                                                             input,
                                                             Futures.getUnchecked(task.connection()),
@@ -605,7 +621,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         protected final ImmutableSet<ZNodeLabel.Path> paths;
         protected final Map<ZNodeLabel.Path, Volume> volumes;
         protected final Map<Volume, ShardedRequestMessage<?>> shards;
-        protected final Map<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> submitted;
+        protected final Map<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>> submitted;
         protected final Set<ListenableFuture<?>> pending;
 
         public BackendRequestTask(
@@ -616,7 +632,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             this.paths = ImmutableSet.copyOf(PathsOfRequest.getPathsOfRequest(task.record()));
             this.volumes = Maps.<ZNodeLabel.Path, Volume>newHashMap();
             this.shards = Maps.<Volume, ShardedRequestMessage<?>>newHashMap();
-            this.submitted = Maps.<Volume, Set<BackendSessionExecutor.BackendRequestFuture>>newHashMap();
+            this.submitted = Maps.<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>>newHashMap();
             this.pending = Sets.<ListenableFuture<?>>newHashSet();
         }
         
@@ -630,8 +646,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
                 synchronized (this) {
-                    for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
-                        for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                    for (Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>> backends: submitted.values()) {
+                        for (ListenableFuture<ShardedResponseMessage<?>> e: backends.values()) {
                             e.cancel(mayInterruptIfRunning);
                         }
                     }
@@ -646,8 +662,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean set = super.set(result);
             if (set) {
                 synchronized (this) {
-                    for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
-                        for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                    for (Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>> backends: submitted.values()) {
+                        for (ListenableFuture<ShardedResponseMessage<?>> e: backends.values()) {
                             e.cancel(true);
                         }
                     }
@@ -662,8 +678,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean setException = super.setException(t);
             if (setException) {
                 synchronized (this) {
-                    for (Set<BackendSessionExecutor.BackendRequestFuture> backends: submitted.values()) {
-                        for (BackendSessionExecutor.BackendRequestFuture e: backends) {
+                    for (Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>> backends: submitted.values()) {
+                        for (ListenableFuture<ShardedResponseMessage<?>> e: backends.values()) {
                             e.cancel(true);
                         }
                     }
@@ -855,7 +871,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             }
         }
         
-        protected Optional<Map<Volume, Set<BackendSessionExecutor.BackendRequestFuture>>> submit() throws Exception {
+        protected Optional<Map<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>>> submit() throws Exception {
             Optional<Map<ZNodeLabel.Path, Volume>> volumes = getVolumes(paths);
             if (! volumes.isPresent()) {
                 return Optional.absent();
@@ -876,22 +892,22 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             return Optional.of(submit(shards, backends.get()));
         }
         
-        protected Map<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> submit(
+        protected Map<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>> submit(
                 Map<Volume, ShardedRequestMessage<?>> shards,
                 Map<Volume, Set<BackendSessionExecutor>> backends) {
             this.state.compareAndSet(OperationFuture.State.WAITING, OperationFuture.State.SUBMITTING);
             for (Map.Entry<Volume, ShardedRequestMessage<?>> shard: shards.entrySet()) {
                 Volume k = shard.getKey();
                 Set<BackendSessionExecutor> volumeBackends = backends.get(k);
-                Set<BackendSessionExecutor.BackendRequestFuture> requests = submitted.get(k);
+                Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>> requests = submitted.get(k);
                 if (requests == null) {
-                    requests = Sets.newHashSetWithExpectedSize(volumeBackends.size());
+                    requests = Maps.newHashMap();
                     submitted.put(k, requests);
                 }
                 for (BackendSessionExecutor backend: volumeBackends) {
                     boolean submitted = false;
-                    for (BackendSessionExecutor.BackendRequestFuture e: requests) {
-                        if (e.executor() == backend) {
+                    for (Map.Entry<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>> e: requests.entrySet()) {
+                        if (e.getKey() == backend) {
                             submitted = true;
                             break;
                         }
@@ -899,11 +915,11 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     if (submitted) {
                         continue;
                     }
-                    BackendSessionExecutor.BackendRequestFuture task = backend.submit(
-                                Pair.<OperationFuture<?>, ShardedRequestMessage<?>>create(this, shard.getValue()));
-                    requests.add(task);
-                    pending.add(task);
-                    task.addListener(FrontendSessionExecutor.this, executor);
+                    ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
+                                Pair.create(this, MessageSessionRequest.of(session().id(), shard.getValue())));
+                    requests.put(backend, future);
+                    pending.add(future);
+                    future.addListener(FrontendSessionExecutor.this, executor);
                 }
             }
             return submitted;
@@ -926,8 +942,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             Records.Response result = null;
             if (OpCode.MULTI == task().record().opcode()) {
                 Map<Volume, ListIterator<Records.MultiOpResponse>> responses = Maps.newHashMapWithExpectedSize(shards.size());
-                for (Map.Entry<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> e: submitted.entrySet()) {
-                    BackendSessionExecutor.BackendRequestFuture request = Iterables.getOnlyElement(e.getValue());
+                for (Map.Entry<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>> e: submitted.entrySet()) {
+                    ListenableFuture<ShardedResponseMessage<?>> request = Iterables.getOnlyElement(e.getValue().values());
                     if (! request.isDone()) {
                         return this;
                     } else {
@@ -969,13 +985,13 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     result = new IMultiResponse(ops);
                 }
             } else {
-                Pair<Volume, BackendSessionExecutor.BackendRequestFuture> selected = null;
-                for (Map.Entry<Volume, Set<BackendSessionExecutor.BackendRequestFuture>> requests: submitted.entrySet()) {
+                Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> selected = null;
+                for (Map.Entry<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>> requests: submitted.entrySet()) {
                     Volume v = requests.getKey();
                     if (requests.getValue().isEmpty()) {
                         return this;
                     }
-                    for (BackendSessionExecutor.BackendRequestFuture request: requests.getValue()) {
+                    for (ListenableFuture<ShardedResponseMessage<?>> request: requests.getValue().values()) {
                         if (! request.isDone()) {
                             return this;
                         } else {
@@ -1018,9 +1034,9 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         protected boolean publish() {
             boolean published = super.publish();
             if (published) {
-                for (Set<BackendSessionExecutor.BackendRequestFuture> e: submitted.values()) {
-                    for (BackendSessionExecutor.BackendRequestFuture request: e) {
-                        request.executor().run();
+                for (Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>> e: submitted.values()) {
+                    for (BackendSessionExecutor executor: e.keySet()) {
+                        executor.run();
                     }
                 }
             }

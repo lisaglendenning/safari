@@ -6,9 +6,9 @@ import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
 
-public class ClientPeerConnection<C extends Connection<? super MessagePacket>> extends PeerConnection<C> {
+public class ClientPeerConnection<C extends Connection<? super MessagePacket<?>>> extends PeerConnection<C> {
 
-    public static <C extends Connection<? super MessagePacket>> ClientPeerConnection<C> create(
+    public static <C extends Connection<? super MessagePacket<?>>> ClientPeerConnection<C> create(
             Identifier localIdentifier,
             Identifier remoteIdentifier,
             C connection,

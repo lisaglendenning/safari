@@ -16,7 +16,7 @@ import edu.uw.zookeeper.protocol.TimeOutParameters;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
-public class PeerConnection<C extends Connection<? super MessagePacket>> extends ForwardingConnection<MessagePacket> {
+public class PeerConnection<C extends Connection<? super MessagePacket<?>>> extends ForwardingConnection<MessagePacket<?>> {
 
     protected final C delegate;
     protected final Identifier localIdentifier;
@@ -58,7 +58,7 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
     }
 
     @Override
-    public <V extends MessagePacket> ListenableFuture<V> write(V input) {
+    public <V extends MessagePacket<?>> ListenableFuture<V> write(V input) {
         heartbeat.send(input);
         return super.write(input);
     }
@@ -73,7 +73,7 @@ public class PeerConnection<C extends Connection<? super MessagePacket>> extends
     }
     
     @Subscribe
-    public void handleMessage(MessagePacket message) {
+    public void handleMessage(MessagePacket<?> message) {
         timeOut.send(message);
     }
 
