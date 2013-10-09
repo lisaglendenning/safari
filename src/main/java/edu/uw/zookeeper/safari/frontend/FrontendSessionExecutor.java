@@ -216,7 +216,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 throw Throwables.propagate(e);
             }
         } else {
-            logger.trace("Submitting {}", message);
+            logger.debug("Submitting: {}", message);
             if (! super.send(message)) {
                 return false;
             }

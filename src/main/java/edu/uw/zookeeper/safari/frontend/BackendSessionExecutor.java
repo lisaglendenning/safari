@@ -122,7 +122,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
 
     @Override
     public boolean send(BackendRequestFuture message) {
-        logger.debug("{}", message);
+        logger.debug("Submitting: {}", message);
         synchronized (mailbox) {
             synchronized (message) {
                 // ensure that queue order is same as submit order...
@@ -153,7 +153,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
             if (! pending.hasNext()) {
                 pending = mailbox.iterator();
             }
-            logger.debug("{}", pending);
+            logger.trace("{}", pending);
             int xid = message.xid();
             if (xid == OpCodeXid.NOTIFICATION.xid()) {
                 while (pending.hasNext() && pending.peekNext().isDone()) {
@@ -187,7 +187,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
                     }
                 }
             }
-            logger.debug("{}", pending);
+            logger.trace("{}", pending);
         }
         
         run();

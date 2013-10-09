@@ -6,6 +6,9 @@ import com.google.common.collect.Lists;
 
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
+import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -39,30 +42,56 @@ public class OperationPrefixTranslator extends AbstractPair<RecordPrefixTranslat
         return second;
     }
 
-    public Records.Request apply(Records.Request input) {
-        Records.Request output = input;
-        if (input instanceof IMultiRequest) {
-            List<Records.MultiOpRequest> ops = Lists.newArrayListWithExpectedSize(((IMultiRequest) input).size());
-            for (Records.MultiOpRequest e: (IMultiRequest) input) {
+    public Message.ClientRequest<?> apply(Message.ClientRequest<?> unsharded) {
+        Records.Request record = unsharded.record();
+        Records.Request translated = apply(record);
+        Message.ClientRequest<?> sharded;
+        if (translated == record) {
+            sharded = unsharded;
+        } else {
+            sharded = ProtocolRequestMessage.of(
+                    unsharded.xid(), translated);
+        }
+        return sharded;
+    }
+
+    public Records.Request apply(Records.Request unsharded) {
+        Records.Request output = unsharded;
+        if (unsharded instanceof IMultiRequest) {
+            List<Records.MultiOpRequest> ops = Lists.newArrayListWithExpectedSize(((IMultiRequest) unsharded).size());
+            for (Records.MultiOpRequest e: (IMultiRequest) unsharded) {
                 ops.add((Records.MultiOpRequest) forward().apply(e));
             }
             output = new IMultiRequest(ops);
         } else {
-            output = forward().apply(input);
+            output = forward().apply(unsharded);
         }
         return output;
     }
     
-    public Records.Response apply(Records.Response input) {
-        Records.Response output = input;
-        if (input instanceof IMultiResponse) {
-            List<Records.MultiOpResponse> ops = Lists.newArrayListWithExpectedSize(((IMultiResponse) input).size());
-            for (Records.MultiOpResponse e: (IMultiResponse) input) {
+    public Message.ServerResponse<?> apply(Message.ServerResponse<?> sharded) {
+        Records.Response record = sharded.record();
+        Records.Response translated = apply(record);
+        Message.ServerResponse<?> unsharded;
+        if (translated == record) {
+            unsharded = sharded;
+        } else {
+            unsharded = ProtocolResponseMessage.of(
+                    sharded.xid(), sharded.zxid(), translated);
+        }
+        return unsharded;
+    }
+    
+    public Records.Response apply(Records.Response sharded) {
+        Records.Response output = sharded;
+        if (sharded instanceof IMultiResponse) {
+            List<Records.MultiOpResponse> ops = Lists.newArrayListWithExpectedSize(((IMultiResponse) sharded).size());
+            for (Records.MultiOpResponse e: (IMultiResponse) sharded) {
                 ops.add((Records.MultiOpResponse) reverse().apply(e));
             }
             output = new IMultiResponse(ops);
         } else {
-            output = reverse().apply(input);
+            output = reverse().apply(sharded);
         }
         return output;
     }
