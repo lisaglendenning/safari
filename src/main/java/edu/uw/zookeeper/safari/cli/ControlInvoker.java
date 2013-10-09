@@ -21,11 +21,11 @@ import edu.uw.zookeeper.client.cli.Invoker;
 import edu.uw.zookeeper.client.cli.Invokes;
 import edu.uw.zookeeper.client.cli.Shell;
 import edu.uw.zookeeper.client.cli.TokenType;
-import edu.uw.zookeeper.clients.trace.ObjectMapperBuilder;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.data.VolumeDescriptor;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
+import edu.uw.zookeeper.safari.peer.protocol.ObjectMapperBuilder;
 
 public class ControlInvoker extends AbstractIdleService implements Invoker<ControlInvoker.Command> {
 
