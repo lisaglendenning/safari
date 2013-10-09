@@ -10,6 +10,7 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.WatchEventPublisher;
+import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
@@ -17,6 +18,7 @@ import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
+import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 
 @DependsOn(ControlConnectionsService.class)
 public class ControlMaterializerService extends ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> {
@@ -30,22 +32,27 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
         public Module() {}
         
         @Provides @Singleton
-        public ControlMaterializerService getControlClientService(
+        public ControlMaterializerService getControlMaterializerService(
                 Injector injector,
+                JacksonSerializer serializer,
                 ControlConnectionsService<?> connections) {
-            return ControlMaterializerService.newInstance(injector, connections);
+            return ControlMaterializerService.newInstance(
+                    injector, serializer, connections);
         }
         
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(ControlConnectionsService.module());
+            return ImmutableList.<com.google.inject.Module>of(
+                    JacksonModule.create(),
+                    ControlConnectionsService.module());
         }
     }
     
     public static ControlMaterializerService newInstance(
             Injector injector,
+            Serializers.ByteCodec<Object> serializer, 
             ControlConnectionsService<?> connections) {
-        return new ControlMaterializerService(injector, connections);
+        return new ControlMaterializerService(injector, serializer, connections);
     }
 
     protected final Injector injector;
@@ -54,12 +61,13 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
 
     protected ControlMaterializerService(
             Injector injector,
+            Serializers.ByteCodec<Object> serializer, 
             ControlConnectionsService<?> connections) {
         super(connections.factory());
         this.injector = injector;
         this.materializer = Materializer.newInstance(
                         ControlSchema.getInstance().get(),
-                        JacksonModule.getSerializer(),
+                        serializer,
                         this);
         this.watches = WatchPromiseTrie.newInstance();
     }

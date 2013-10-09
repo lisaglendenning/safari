@@ -1,7 +1,9 @@
 package edu.uw.zookeeper.safari.cli;
 
 import java.io.IOException;
+
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -19,16 +21,18 @@ import edu.uw.zookeeper.client.cli.Invoker;
 import edu.uw.zookeeper.client.cli.Invokes;
 import edu.uw.zookeeper.client.cli.Shell;
 import edu.uw.zookeeper.client.cli.TokenType;
+import edu.uw.zookeeper.clients.trace.ObjectMapperBuilder;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.data.VolumeDescriptor;
-import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
+import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 
 public class ControlInvoker extends AbstractIdleService implements Invoker<ControlInvoker.Command> {
 
     @Invokes(commands={Command.class})
     public static ControlInvoker create(Shell shell) {
-        return new ControlInvoker(shell);
+        ObjectMapper mapper = ObjectMapperBuilder.defaults().build();
+        return new ControlInvoker(mapper, shell);
     }
 
     public static enum Command {
@@ -60,8 +64,12 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
     public static final Environment.Key<Materializer<?>> MATERIALIZER_KEY = Environment.Key.create("MATERIALIZER", Materializer.class);
 
     protected final Shell shell;
+    protected final ObjectMapper mapper;
     
-    public ControlInvoker(Shell shell) {
+    public ControlInvoker(
+            ObjectMapper mapper,
+            Shell shell) {
+        this.mapper = mapper;
         this.shell = shell;
     }
 
@@ -75,7 +83,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             switch ((EntityType) input.getArguments()[1]) {
             case VOLUME:
             {
-                final VolumeDescriptor vd = JacksonModule.getMapper().readValue((String) input.getArguments()[2], VolumeDescriptor.class);
+                final VolumeDescriptor vd = mapper.readValue((String) input.getArguments()[2], VolumeDescriptor.class);
                 ListenableFuture<ControlSchema.Volumes.Entity> future = ControlSchema.Volumes.Entity.create(vd, materializer);
                 Futures.addCallback(future, new FutureCallback<ControlSchema.Volumes.Entity>(){
                     @Override
@@ -97,7 +105,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             }
             case REGION:
             {
-                final EnsembleView<ServerInetAddressView> ensemble = JacksonModule.getMapper().readValue((String) input.getArguments()[2], new TypeReference<EnsembleView<ServerInetAddressView>>() {});
+                final EnsembleView<ServerInetAddressView> ensemble = mapper.readValue((String) input.getArguments()[2], new TypeReference<EnsembleView<ServerInetAddressView>>() {});
                 ListenableFuture<ControlSchema.Regions.Entity> future = ControlSchema.Regions.Entity.create(ensemble, materializer);
                 Futures.addCallback(future, new FutureCallback<ControlSchema.Regions.Entity>(){
                     @Override
@@ -131,7 +139,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
 
         Materializer<?> materializer = Materializer.newInstance(
                 ControlSchema.getInstance().get(),
-                JacksonModule.getSerializer(),
+                JacksonSerializer.create(mapper),
                 shell.getEnvironment().get(ClientExecutorInvoker.CLIENT_KEY).getConnectionClientExecutor());
         shell.getEnvironment().put(MATERIALIZER_KEY, materializer);
         

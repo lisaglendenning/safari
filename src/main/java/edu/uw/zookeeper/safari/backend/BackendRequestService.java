@@ -46,7 +46,7 @@ import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
-import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
+import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
@@ -159,9 +159,10 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 ConnectMessage.Request.NewRequest.newInstance(), 
                 connections.get().get(),
                 executor);
-        Control.createPrefix(Materializer.newInstance(
+        Control.createPrefix(
+                Materializer.newInstance(
                 BackendSchema.getInstance().get(), 
-                JacksonModule.getSerializer(),
+                injector.getInstance(JacksonSerializer.class),
                 client));
         ConnectionClientExecutorService.disconnect(client);
         

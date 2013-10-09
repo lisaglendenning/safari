@@ -41,7 +41,6 @@ import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.FramedMessagePacketCodec;
-import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacketCodec;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
@@ -84,6 +83,7 @@ public class PeerConnectionsService extends DependentService {
 
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
+                ObjectMapper mapper,
                 PeerConfiguration configuration,
                 ScheduledExecutorService scheduler,
                 Executor executor,
@@ -94,12 +94,12 @@ public class PeerConnectionsService extends DependentService {
                 Factory<? extends SocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
             ServerConnectionFactory<Connection<MessagePacket>> serverConnections = 
                     servers.getServerConnectionFactory(
-                            codecFactory(JacksonModule.getMapper()), 
+                            codecFactory(mapper), 
                             connectionFactory())
                     .get(configuration.getView().address().get());
             ClientConnectionFactory<Connection<MessagePacket>> clientConnections =  
                     clients.getClientConnectionFactory(
-                            codecFactory(JacksonModule.getMapper()), 
+                            codecFactory(mapper), 
                             connectionFactory()).get();
             IntraVmEndpointFactory<MessagePacket> endpoints = IntraVmEndpointFactory.create(
                     addresses, 
@@ -134,7 +134,8 @@ public class PeerConnectionsService extends DependentService {
 
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(PeerConfiguration.module());
+            return ImmutableList.<com.google.inject.Module>of(
+                    PeerConfiguration.module());
         }
     }
     

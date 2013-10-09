@@ -14,7 +14,6 @@ import org.junit.runners.JUnit4;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacketCodec;
@@ -23,7 +22,7 @@ import edu.uw.zookeeper.safari.peer.protocol.MessagePacketCodec;
 public class MessagePacketCodecTest {
     @Test
     public void test() throws IOException {
-        ObjectMapper mapper = JacksonModule.getMapper();
+        ObjectMapper mapper = ObjectMapperBuilder.defaults().build();
         MessagePacketCodec codec = MessagePacketCodec.newInstance(mapper);
         Identifier id = Identifier.valueOf(1);
         MessagePacket packet = MessagePacket.of(MessageHandshake.of(id));

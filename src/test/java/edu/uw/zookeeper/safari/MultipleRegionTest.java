@@ -50,6 +50,7 @@ import edu.uw.zookeeper.safari.data.VolumeDescriptor;
 import edu.uw.zookeeper.safari.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.safari.net.IntraVmAsNetModule;
 import edu.uw.zookeeper.safari.peer.EnsembleConfiguration;
+import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 
 @RunWith(JUnit4.class)
 public class MultipleRegionTest {
@@ -58,6 +59,7 @@ public class MultipleRegionTest {
         return Guice.createInjector(
                 GuiceRuntimeModule.create(DefaultRuntimeModule.defaults()),
                 IntraVmAsNetModule.create(),
+                JacksonModule.create(),
                 SimpleControlConnectionsService.module());
     }
     

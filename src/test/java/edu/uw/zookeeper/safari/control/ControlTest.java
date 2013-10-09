@@ -18,6 +18,8 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.safari.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.net.IntraVmAsNetModule;
+import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
+import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 
 @RunWith(JUnit4.class)
 public class ControlTest {
@@ -25,7 +27,8 @@ public class ControlTest {
     public static Injector injector() {
         return injector(Guice.createInjector(
                 GuiceRuntimeModule.create(DefaultRuntimeModule.defaults()),
-                IntraVmAsNetModule.create()));
+                IntraVmAsNetModule.create(),
+                JacksonModule.create()));
     }
 
     public static Injector injector(Injector parent) {
@@ -47,10 +50,11 @@ public class ControlTest {
         }
 
         @Provides @Singleton
-        public ControlMaterializerService getControlClientService(
+        public ControlMaterializerService getControlMaterializerService(
                 Injector injector,
+                JacksonSerializer serializer,
                 ControlConnectionsService<?> connections) {
-            return ControlMaterializerService.newInstance(injector, connections);
+            return ControlMaterializerService.newInstance(injector, serializer, connections);
         }
     }
     
