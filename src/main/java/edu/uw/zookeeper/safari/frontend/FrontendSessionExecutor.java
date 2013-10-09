@@ -161,12 +161,6 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
 
     @Override
     public void post(Object event) {
-        if (event instanceof ShardedResponseMessage<?>) {
-            Records.Response response = ((ShardedResponseMessage<?>) event).record();
-            event = processor().apply(
-                    Pair.create(session().id(),
-                            Pair.create(Optional.<Operation.ProtocolRequest<?>>absent(), response)));
-        }
         publisher.post(event);
     }
 
