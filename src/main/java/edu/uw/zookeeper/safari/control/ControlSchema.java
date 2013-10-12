@@ -72,7 +72,14 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 private final Control.EntityValue<ServerInetAddressView, Entity, PeerAddress> instance;
                 
                 private EntityHolder() {
-                    this.instance = Control.EntityValue.create(Entity.class, PeerAddress.class);
+                    this.instance = Control.EntityValue.create(
+                            Entity.class, PeerAddress.class,
+                            new Function<ServerInetAddressView, Hash.Hashed>() {
+                                @Override
+                                public Hash.Hashed apply(ServerInetAddressView value) {
+                                    return Hash.default32().apply(ServerInetAddressView.toString(value));
+                                }
+                            });
                 }
                 
                 @Override
@@ -84,9 +91,9 @@ public abstract class ControlSchema extends Control.ControlZNode {
             public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Peers.Entity> create(
                     final ServerInetAddressView value, 
                     final Materializer<O> materializer) {
-                Control.LookupHashedTask<Peers.Entity> task = Control.LookupHashedTask.create(
+                Control.LookupHashedTask<Peers.Entity> task = Control.LookupHashedTask.newInstance(
                         hashOf(value),
-                        CreateEntityTask.create(value, schema(), materializer));
+                        CreateEntityTask.newInstance(value, schema(), materializer));
                 task.run();
                 return task;
             }
@@ -107,20 +114,33 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 };
                 return CachedFunction.create(cached, lookup);
             }
-            
-            public static AsyncFunction<Identifier, Identifier> lookupEnsemble(
+
+            public static AsyncFunction<ServerInetAddressView, Entity> lookup(
                     final Materializer<?> materializer) {
-                final AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier> ensembleOfBackend = Regions.Entity.lookup(materializer);
-                return new AsyncFunction<Identifier, Identifier>() {
+                return new AsyncFunction<ServerInetAddressView, Entity>() {
+                        @Override
+                        public ListenableFuture<Entity> apply(
+                                final ServerInetAddressView value)
+                                throws Exception {
+                            return Control.LookupEntityTask.call(
+                                    value, schema(), materializer);
+                        }
+                };
+            }
+
+            public static AsyncFunction<Identifier, Regions.Entity> lookupEnsemble(
+                    final Materializer<?> materializer) {
+                final AsyncFunction<EnsembleView<ServerInetAddressView>, Regions.Entity> ensembleOfBackend = Regions.Entity.lookup(materializer);
+                return new AsyncFunction<Identifier, Regions.Entity>() {
                     @Override
-                    public ListenableFuture<Identifier> apply(
+                    public ListenableFuture<Regions.Entity> apply(
                             final Identifier peer)
                             throws Exception {
                         return Futures.transform(
                                 Entity.of(peer).backend(materializer), 
-                                new AsyncFunction<Peers.Entity.Backend, Identifier>() {
+                                new AsyncFunction<Peers.Entity.Backend, Regions.Entity>() {
                                     @Override
-                                    public ListenableFuture<Identifier> apply(Peers.Entity.Backend backend)
+                                    public ListenableFuture<Regions.Entity> apply(Peers.Entity.Backend backend)
                                             throws Exception {
                                         return ensembleOfBackend.apply(backend.get().getEnsemble());
                                     }
@@ -134,7 +154,7 @@ public abstract class ControlSchema extends Control.ControlZNode {
             }
             
             public static Hash.Hashed hashOf(ServerInetAddressView value) {
-                return Hash.default32().apply(ServerInetAddressView.toString(value));
+                return schema().getHasher().apply(value);
             }
             
             public static Peers.Entity of(Identifier identifier) {
@@ -359,7 +379,14 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 private final Control.EntityValue<EnsembleView<ServerInetAddressView>, Entity, Backend> instance;
                 
                 private EntityHolder() {
-                    this.instance = Control.EntityValue.create(Entity.class, Backend.class);
+                    this.instance = Control.EntityValue.create(
+                            Entity.class, Backend.class,
+                            new Function<EnsembleView<ServerInetAddressView>, Hash.Hashed>() {
+                                @Override
+                                public Hash.Hashed apply(EnsembleView<ServerInetAddressView> value) {
+                                    return Hash.default32().apply(EnsembleView.toString(value));
+                                }
+                            });
                 }
                 
                 @Override
@@ -371,49 +398,28 @@ public abstract class ControlSchema extends Control.ControlZNode {
             public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Regions.Entity> create(
                     final EnsembleView<ServerInetAddressView> value, 
                     final Materializer<O> materializer) {
-                Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.create(
+                Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.newInstance(
                         hashOf(value),
-                        CreateEntityTask.create(value, schema(), materializer));
+                        CreateEntityTask.newInstance(value, schema(), materializer));
                 task.run();
                 return task;
             }
             
-            public static AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier> lookup(
+            public static AsyncFunction<EnsembleView<ServerInetAddressView>, Entity> lookup(
                     final Materializer<?> materializer) {
-                return new AsyncFunction<EnsembleView<ServerInetAddressView>, Identifier>() {
+                return new AsyncFunction<EnsembleView<ServerInetAddressView>, Entity>() {
                         @Override
-                        public ListenableFuture<Identifier> apply(
-                                final EnsembleView<ServerInetAddressView> backend)
+                        public ListenableFuture<Entity> apply(
+                                final EnsembleView<ServerInetAddressView> value)
                                 throws Exception {
-                            return Control.LookupHashedTask.create(
-                                    ControlSchema.Regions.Entity.hashOf(backend),
-                                    new AsyncFunction<Identifier, Optional<Identifier>>() {
-                                        @Override
-                                        public ListenableFuture<Optional<Identifier>> apply(
-                                                final Identifier ensemble)
-                                                throws Exception {
-                                            return Futures.transform(
-                                                    Entity.of(ensemble).backend(materializer),
-                                                    new Function<Backend, Optional<Identifier>>() {
-                                                        @Override
-                                                        public @Nullable
-                                                        Optional<Identifier> apply(
-                                                                @Nullable Backend input) {
-                                                            if ((input == null) || !backend.equals(input.get())) {
-                                                                return Optional.absent();
-                                                            } else {
-                                                                return Optional.of(ensemble);
-                                                            }
-                                                        }
-                                                    });
-                                        }
-                                    });
+                            return Control.LookupEntityTask.call(
+                                    value, schema(), materializer);
                         }
                 };
             }
 
             public static Hash.Hashed hashOf(EnsembleView<ServerInetAddressView> value) {
-                return Hash.default32().apply(EnsembleView.toString(value));
+                return schema().getHasher().apply(value);
             }
             
             public static Regions.Entity valueOf(String label) {
@@ -680,7 +686,14 @@ public abstract class ControlSchema extends Control.ControlZNode {
                 private final Control.EntityValue<VolumeDescriptor, Entity, Entity.Volume> instance;
                 
                 private EntityHolder() {
-                    this.instance = Control.EntityValue.create(Entity.class, Entity.Volume.class);
+                    this.instance = Control.EntityValue.create(
+                            Entity.class, Entity.Volume.class,
+                            new Function<VolumeDescriptor, Hash.Hashed>() {
+                                @Override
+                                public Hash.Hashed apply(VolumeDescriptor value) {
+                                    return Hash.default32().apply(value.getRoot().toString());
+                                }
+                            });
                 }
                 
                 @Override
@@ -692,15 +705,28 @@ public abstract class ControlSchema extends Control.ControlZNode {
             public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Volumes.Entity> create(
                     final VolumeDescriptor value, 
                     final Materializer<O> materializer) {
-                Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.create(
+                Control.LookupHashedTask<Entity> task = Control.LookupHashedTask.newInstance(
                         hashOf(value),
-                        CreateEntityTask.create(value, schema(), materializer));
+                        CreateEntityTask.newInstance(value, schema(), materializer));
                 task.run();
                 return task;
             }
 
+            public static AsyncFunction<VolumeDescriptor, Entity> lookup(
+                    final Materializer<?> materializer) {
+                return new AsyncFunction<VolumeDescriptor, Entity>() {
+                        @Override
+                        public ListenableFuture<Entity> apply(
+                                final VolumeDescriptor value)
+                                throws Exception {
+                            return Control.LookupEntityTask.call(
+                                    value, schema(), materializer);
+                        }
+                };
+            }
+
             public static Hash.Hashed hashOf(VolumeDescriptor value) {
-                return Hash.default32().apply(value.getRoot().toString());
+                return schema().getHasher().apply(value);
             }
             
             public static Volumes.Entity valueOf(String label) {

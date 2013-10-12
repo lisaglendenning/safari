@@ -6,6 +6,9 @@ import java.util.concurrent.ConcurrentMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -43,13 +46,22 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
     }
     
     public static PeerToEnsembleLookup newInstance(
-            Materializer<?> materializer) {
+            final Materializer<?> materializer) {
         ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
+        final AsyncFunction<Identifier, ControlSchema.Regions.Entity> lookupEnsemble = ControlSchema.Peers.Entity.lookupEnsemble(materializer);
         CachedLookup<Identifier, Identifier> lookup = 
                 CachedLookup.create(
                         cache,
                         SharedLookup.create(
-                                ControlSchema.Peers.Entity.lookupEnsemble(materializer)));
+                                        new AsyncFunction<Identifier, Identifier>() {
+                                            @Override
+                                            public ListenableFuture<Identifier> apply(
+                                                    Identifier input)
+                                                    throws Exception {
+                                                return Futures.transform(lookupEnsemble.apply(input),
+                                                        Control.IdentifierZNode.<ControlSchema.Regions.Entity>valueOf());
+                                            }
+                                        }));
         return newInstance(materializer, lookup);
     }
     

@@ -8,12 +8,14 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
@@ -66,6 +68,8 @@ public abstract class Control {
     public static ZNodeLabel label(Object element) {
         return ControlZNode.label(element);
     }
+    
+    protected static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
     
     public static void createPrefix(Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
         // The prefix is small enough that there's no need to get fancy here
@@ -288,6 +292,15 @@ public abstract class Control {
                     });
         }
         
+        public static <T, C extends ValueZNode<T>> Function<C,T> valueOf() {
+            return new Function<C,T>() {
+                @Override
+                public T apply(C input) {
+                    return input.get();
+                }
+            };
+        }
+        
         protected final T value;
     
         protected ValueZNode(T value) {
@@ -316,6 +329,15 @@ public abstract class Control {
     }
     
     public static abstract class IdentifierZNode extends ValueZNode<Identifier> {
+
+        public static <C extends IdentifierZNode> Function<C,Identifier> valueOf() {
+            return new Function<C,Identifier>() {
+                @Override
+                public Identifier apply(C input) {
+                    return input.get();
+                }
+            };
+        }
         
         public static <C extends IdentifierZNode> ListenableFuture<C> getIdentifier(
                 final Class<C> cls, 
@@ -394,17 +416,24 @@ public abstract class Control {
     public static class EntityValue<V, T extends IdentifierZNode, U extends ValueZNode<V>> {
         
         public static <V, T extends IdentifierZNode, U extends ValueZNode<V>> EntityValue<V,T,U> create(
-                Class<T> entityType, Class<U> valueType) {
-            return new EntityValue<V,T,U>(entityType, valueType);
+                Class<T> entityType, 
+                Class<U> valueType,
+                Function<V, Hash.Hashed> hasher) {
+            return new EntityValue<V,T,U>(entityType, valueType, hasher);
         }
             
         protected final Class<T> entityType;
         protected final Class<U> valueType;
+        protected final Function<V, Hash.Hashed> hasher;
         
-        public EntityValue(Class<T> entityType, Class<U> valueType) {
+        public EntityValue(
+                Class<T> entityType, 
+                Class<U> valueType,
+                Function<V, Hash.Hashed> hasher) {
             super();
             this.entityType = entityType;
             this.valueType = valueType;
+            this.hasher = hasher;
         }
     
         public Class<T> getEntityType() {
@@ -413,6 +442,10 @@ public abstract class Control {
     
         public Class<U> getValueType() {
             return valueType;
+        }
+        
+        public Function<V, Hash.Hashed> getHasher() {
+            return hasher;
         }
     }
 
@@ -537,7 +570,7 @@ public abstract class Control {
 
     public static class LookupHashedTask<V> extends RunnablePromiseTask<AsyncFunction<Identifier, Optional<V>>, V> {
     
-        public static <V> LookupHashedTask<V> create(
+        public static <V> LookupHashedTask<V> newInstance(
                 Hash.Hashed hashed,
                 AsyncFunction<Identifier, Optional<V>> lookup) {
             Promise<V> promise = SettableFuturePromise.create();
@@ -576,7 +609,7 @@ public abstract class Control {
                     id = hashed.asIdentifier();
                 }
                 pending = task().apply(id);
-                pending.addListener(this, MoreExecutors.sameThreadExecutor());
+                pending.addListener(this, sameThreadExecutor);
                 return Optional.absent();
             }
             
@@ -597,28 +630,106 @@ public abstract class Control {
             return result;
         }
     }
-
-    public static class CreateEntityTask<O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>> implements Reference<V>, AsyncFunction<Identifier, Optional<T>> {
-
-        public static <O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>>
-        CreateEntityTask<O,V,T,U> create(
-                V value,
-                EntityValue<V,T,U> schema,
-                Materializer<O> materializer) {
-            return new CreateEntityTask<O,V,T,U>(value, schema, materializer);
-        }
+    
+    public static class EntityLookup<O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>> implements Reference<V> {
 
         protected final V value;
         protected final EntityValue<V,T,U> schema;
         protected final Materializer<O> materializer;
         
-        public CreateEntityTask(
+        public EntityLookup(
                 V value,
                 EntityValue<V,T,U> schema,
                 Materializer<O> materializer) {
             this.value = checkNotNull(value);
             this.materializer = checkNotNull(materializer);
             this.schema = checkNotNull(schema);
+        }
+        
+        @Override
+        public V get() {
+            return value;
+        }
+    }
+
+    public static class LookupEntityTask<O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>> extends EntityLookup<O,V,T,U> implements AsyncFunction<Identifier, Optional<T>> {
+
+        public static <O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>>
+        LookupHashedTask<T> call(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            LookupHashedTask<T> task = LookupHashedTask.newInstance(
+                    schema.getHasher().apply(value),
+                    LookupEntityTask.newInstance(value, schema, materializer));
+            task.run();
+            return task;
+        }
+
+        public static <O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>>
+        LookupEntityTask<O,V,T,U> newInstance(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            return new LookupEntityTask<O,V,T,U>(value, schema, materializer);
+        }
+
+        public LookupEntityTask(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            super(value, schema, materializer);
+        }
+
+        @Override
+        public ListenableFuture<Optional<T>> apply(Identifier id)
+                throws Exception {
+            final T entity = IdentifierZNode.newInstance(schema.getEntityType(), id);
+            return Futures.transform(
+                    ValueZNode.getValue(schema.getValueType(), entity, materializer),
+                    new Function<U, Optional<T>>() {
+                        @Override
+                        public @Nullable
+                        Optional<T> apply(
+                                @Nullable U input) {
+                            if ((input == null) || ! value.equals(input.get())) {
+                                return Optional.absent();
+                            } else {
+                                return Optional.of(entity);
+                            }
+                        }
+                    },
+                    sameThreadExecutor);
+        }
+    }
+    
+    public static class CreateEntityTask<O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>> extends EntityLookup<O,V,T,U> implements AsyncFunction<Identifier, Optional<T>> {
+
+        public static <O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>>
+        LookupHashedTask<T> call(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            LookupHashedTask<T> task = LookupHashedTask.newInstance(
+                    schema.getHasher().apply(value),
+                    CreateEntityTask.newInstance(value, schema, materializer));
+            task.run();
+            return task;
+        }
+
+        public static <O extends Operation.ProtocolResponse<?>, V, T extends IdentifierZNode, U extends ValueZNode<V>>
+        CreateEntityTask<O,V,T,U> newInstance(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            return new CreateEntityTask<O,V,T,U>(value, schema, materializer);
+        }
+
+        public CreateEntityTask(
+                V value,
+                EntityValue<V,T,U> schema,
+                Materializer<O> materializer) {
+            super(value, schema, materializer);
         }
         
         @Override
@@ -673,7 +784,7 @@ public abstract class Control {
                                         path(task(), schema.getValueType()), 
                                         CreateEntityTask.this.get()).get())
                                 .build());
-                    createFuture.addListener(this, MoreExecutors.sameThreadExecutor());
+                    createFuture.addListener(this, sameThreadExecutor);
                     return Optional.absent();
                 }
                 if (! createFuture.isDone()) {
@@ -707,7 +818,7 @@ public abstract class Control {
                     // check if the existing node is my value
                     
                     valueFuture = ValueZNode.getValue(schema.getValueType(), task(), materializer);
-                    valueFuture.addListener(this, MoreExecutors.sameThreadExecutor());
+                    valueFuture.addListener(this, sameThreadExecutor);
                     return Optional.absent();
                 }
                 if (! valueFuture.isDone()) {

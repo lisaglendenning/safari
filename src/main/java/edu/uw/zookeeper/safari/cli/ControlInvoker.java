@@ -40,7 +40,12 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
                 arguments = {
                         @ArgumentDescriptor(token = TokenType.ENUM, type = EntityType.class),
                         @ArgumentDescriptor(token = TokenType.STRING)})
-        ENTITY;
+        ENTITY,
+        @CommandDescriptor( 
+                arguments = {
+                        @ArgumentDescriptor(token = TokenType.ENUM, type = EntityType.class),
+                        @ArgumentDescriptor(token = TokenType.STRING)})
+        LOOKUP;
     }
     
     public static enum EntityType {
@@ -77,6 +82,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
     public void invoke(Invocation<Command> input)
             throws Exception {
         Materializer<?> materializer = shell.getEnvironment().get(MATERIALIZER_KEY);
+        // TODO: DRY
         switch (input.getCommand().second()) {
         case ENTITY:
         {
@@ -128,6 +134,58 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             }
             break;
         }
+        case LOOKUP:
+        {
+            switch ((EntityType) input.getArguments()[1]) {
+            case VOLUME:
+            {
+                final VolumeDescriptor vd = mapper.readValue((String) input.getArguments()[2], VolumeDescriptor.class);
+                ListenableFuture<ControlSchema.Volumes.Entity> future = ControlSchema.Volumes.Entity.lookup(materializer).apply(vd);
+                Futures.addCallback(future, new FutureCallback<ControlSchema.Volumes.Entity>(){
+                    @Override
+                    public void onSuccess(ControlSchema.Volumes.Entity result) {
+                        try {
+                            shell.println(String.format("Volume %s found => %s", vd, result.get()));
+                            shell.flush();
+                        } catch (IOException e) {
+                        }
+                    }
+                    @Override
+                    public void onFailure(Throwable t) {
+                        try {
+                            shell.printThrowable(t);
+                        } catch (IOException e) {
+                        }
+                    }});
+                break;
+            }
+            case REGION:
+            {
+                final EnsembleView<ServerInetAddressView> ensemble = mapper.readValue((String) input.getArguments()[2], new TypeReference<EnsembleView<ServerInetAddressView>>() {});
+                ListenableFuture<ControlSchema.Regions.Entity> future = ControlSchema.Regions.Entity.lookup(materializer).apply(ensemble);
+                Futures.addCallback(future, new FutureCallback<ControlSchema.Regions.Entity>(){
+                    @Override
+                    public void onSuccess(ControlSchema.Regions.Entity result) {
+                        try {
+                            shell.println(String.format("Region %s found => %s", ensemble, result.get()));
+                            shell.flush();
+                        } catch (IOException e) {
+                        }
+                    }
+                    @Override
+                    public void onFailure(Throwable t) {
+                        try {
+                            shell.printThrowable(t);
+                        } catch (IOException e) {
+                        }
+                    }});
+                break;
+            }
+            }
+            break;
+        }
+        default:
+            break;
         }
     }
 
