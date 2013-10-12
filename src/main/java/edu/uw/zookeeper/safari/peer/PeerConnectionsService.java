@@ -6,10 +6,11 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
@@ -164,6 +165,7 @@ public class PeerConnectionsService extends DependentService {
         return instance;
     }
 
+    protected final Logger logger;
     protected final Identifier identifier;
     protected final ServerPeerConnections servers;
     protected final ClientPeerConnections clients;
@@ -179,6 +181,7 @@ public class PeerConnectionsService extends DependentService {
             Materializer<?> control,
             Injector injector) {
         super(injector);
+        this.logger = LogManager.getLogger(getClass());
         this.identifier = identifier;
         this.servers = new ServerPeerConnections(identifier, timeOut, executor, serverConnectionFactory);
         this.clients = new ClientPeerConnections(identifier, timeOut, executor, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
@@ -212,7 +215,8 @@ public class PeerConnectionsService extends DependentService {
             try {
                 PeerConfiguration.advertise(identifier(), materializer);
             } catch (Exception e) {
-                throw Throwables.propagate(e);
+                logger.warn("", e);
+                injector.getInstance(PeerConnectionsService.class).stopAsync();
             }
         }
     }

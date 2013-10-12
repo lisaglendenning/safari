@@ -10,7 +10,6 @@ import org.apache.logging.log4j.Logger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.eventbus.Subscribe;
@@ -194,7 +193,8 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             try {
                 BackendConfiguration.advertise(myEntity, view, materializer);
             } catch (Exception e) {
-                throw Throwables.propagate(e);
+                logger.warn("", e);
+                injector.getInstance(BackendRequestService.class).stopAsync();
             }
         }
     }

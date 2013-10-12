@@ -4,8 +4,10 @@ import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.base.Optional;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -148,6 +150,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         }
     }
 
+    protected final Logger logger;
     protected final Injector injector;
     
     protected FrontendServerService(
@@ -155,6 +158,7 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             ParameterizedFactory<T, ConnectionServerExecutor<T>> factory,
             Injector injector) {
         super(connections, factory);
+        this.logger = LogManager.getLogger(getClass());
         this.injector = injector;
     }
     
@@ -187,7 +191,8 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
             try {
                 FrontendConfiguration.advertise(peerId, address, materializer);
             } catch (Exception e) {
-                throw Throwables.propagate(e);
+                logger.warn("", e);
+                injector.getInstance(FrontendServerService.class).stopAsync();
             }
         }
     }

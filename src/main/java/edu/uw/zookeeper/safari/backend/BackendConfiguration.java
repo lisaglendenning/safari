@@ -75,7 +75,7 @@ public class BackendConfiguration {
         ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.of(myEntity);
         ControlSchema.Peers.Entity.Backend valueNode = ControlSchema.Peers.Entity.Backend.create(view, entityNode, materializer).get();
         if (! view.equals(valueNode.get())) {
-            throw new IllegalStateException(String.valueOf(valueNode.get()));
+            throw new IllegalStateException(String.format("%s != %s", view, valueNode.get()));
         }
     }
     
