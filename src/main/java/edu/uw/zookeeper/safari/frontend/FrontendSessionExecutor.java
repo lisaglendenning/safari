@@ -981,7 +981,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     result = new IMultiResponse(ops);
                 }
             } else {
-                Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> selected = null;
+                Pair<Volume, ShardedResponseMessage<?>> selected = null;
                 for (Map.Entry<Volume, Map<BackendSessionExecutor, ListenableFuture<ShardedResponseMessage<?>>>> requests: submitted.entrySet()) {
                     Volume v = requests.getKey();
                     if (requests.getValue().isEmpty()) {
@@ -999,27 +999,34 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                 return this;
                             }
                             if (selected == null) {
-                               selected = Pair.create(v, request);
+                               selected = Pair.<Volume, ShardedResponseMessage<?>>create(v, response);
+                            } else if (task().record().opcode() == OpCode.CLOSE_SESSION) {
+                                // pick the error response for now
+                                if (response.record() instanceof Operation.Error) {
+                                    selected = Pair.<Volume, ShardedResponseMessage<?>>create(v, response);
+                                }
                             } else {
-                               if ((selected.second().get().record() instanceof Operation.Error) || (response.record() instanceof Operation.Error)) {
-                                   if (task().record().opcode() != OpCode.CLOSE_SESSION) {
-                                       throw new UnsupportedOperationException();
-                                   }
-                               } else {
-                                   // we should only get here for create, create2, and delete
-                                   // and only if the path is for a volume root
-                                   // in that case, pick the response that came from the volume root
-                                   if (selected.first().getDescriptor().getRoot().prefixOf(
-                                           v.getDescriptor().getRoot())) {
-                                       selected = Pair.create(v, request);
-                                   }
-                               }
+                                if (((selected.second().record() instanceof Operation.Error) ^ (response.record() instanceof Operation.Error))
+                                        || ((response.record() instanceof Operation.Error) && (((Operation.Error) response.record()).error() != ((Operation.Error) selected.second().record()).error()))) {
+                                    throw new UnsupportedOperationException();
+                                }
+                                // we should only get here for create, create2,
+                                // and delete
+                                // and only if the path is for a volume root
+                                // in that case, pick the response that came
+                                // from the volume root
+                                if (selected.first().getDescriptor().getRoot()
+                                        .prefixOf(v.getDescriptor().getRoot())) {
+                                    selected = Pair
+                                            .<Volume, ShardedResponseMessage<?>> create(
+                                                    v, response);
+                                }
                            }
                         }
                     }
                 }
                 assert (selected != null);
-                result = selected.second().get().record();
+                result = selected.second().record();
             }
             assert (result != null);
             super.complete(result);
