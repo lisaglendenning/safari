@@ -476,7 +476,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         
         @Override
         public int xid() {
-            return task().xid();
+            return task.xid();
         }
 
         @Override
@@ -912,7 +912,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                         continue;
                     }
                     ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
-                                Pair.create(this, MessageSessionRequest.of(session().id(), shard.getValue())));
+                                Pair.create(MessageSessionRequest.of(session().id(), shard.getValue()), this));
                     requests.put(backend, future);
                     pending.add(future);
                     future.addListener(FrontendSessionExecutor.this, executor);
