@@ -118,7 +118,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         };
     }
     
-    protected static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
+    protected static final Executor SAME_THREAD_EXECUTOR = MoreExecutors.sameThreadExecutor();
 
     protected final Logger logger;
     protected final BackendConnectionsService<C> connections;
@@ -274,7 +274,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 Futures.addCallback(
                         client.session(), 
                         new SessionOpenResponseTask(message),
-                        sameThreadExecutor);
+                        SAME_THREAD_EXECUTOR);
             }
         }
         
@@ -301,8 +301,8 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                 this.client = Futures.transform(
                         connections.get(), 
                         new SessionOpenTask(),
-                        sameThreadExecutor);
-                this.client.addListener(this, sameThreadExecutor);
+                        SAME_THREAD_EXECUTOR);
+                this.client.addListener(this, SAME_THREAD_EXECUTOR);
             }
             
             public MessageSessionOpenRequest session() {
@@ -317,7 +317,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                         Futures.addCallback(
                                 client.session(), 
                                 new SessionOpenResponseTask(session),
-                                sameThreadExecutor);
+                                SAME_THREAD_EXECUTOR);
                     } else {
                         throw new AssertionError(String.valueOf(session));
                     }

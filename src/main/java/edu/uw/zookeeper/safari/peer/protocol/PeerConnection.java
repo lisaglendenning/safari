@@ -1,11 +1,16 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.TimeValue;
@@ -18,6 +23,9 @@ import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
 public class PeerConnection<C extends Connection<? super MessagePacket<?>>> extends ForwardingConnection<MessagePacket<?>> {
 
+    protected static final Executor SAME_THREAD_EXECUTOR = MoreExecutors.sameThreadExecutor();
+    
+    protected final Logger logger;
     protected final C delegate;
     protected final Identifier localIdentifier;
     protected final Identifier remoteIdentifier;
@@ -30,6 +38,7 @@ public class PeerConnection<C extends Connection<? super MessagePacket<?>>> exte
             C delegate,
             TimeValue timeOut,
             ScheduledExecutorService executor) {
+        this.logger = LogManager.getLogger(getClass());
         this.delegate = delegate;
         this.localIdentifier = localIdentifier;
         this.remoteIdentifier = remoteIdentifier;
@@ -66,7 +75,9 @@ public class PeerConnection<C extends Connection<? super MessagePacket<?>>> exte
     @Subscribe
     public void handleTransitionEvent(Automaton.Transition<?> event) {
         if (Connection.State.CONNECTION_CLOSED == event.to()) {
-            unregister(this);
+            try {
+                unregister(this);
+            } catch (Exception e) {}
             heartbeat.stop();
             timeOut.stop();
         }
@@ -97,26 +108,31 @@ public class PeerConnection<C extends Connection<? super MessagePacket<?>>> exte
         @Override
         protected void doRun() {
             if (parameters.remaining() < parameters.getTimeOut() / 2) {
-                try {
-                    Futures.addCallback(
-                            write(MessagePacket.of(MessageHeartbeat.getInstance())), 
-                            this);
-                } catch (Exception e) {
-                    close();
-                    return;
-                }
                 parameters.touch();
+                Futures.addCallback(
+                        write(MessagePacket.of(MessageHeartbeat.getInstance())), 
+                        this,
+                        SAME_THREAD_EXECUTOR);
             }
         }
 
         @Override
         protected synchronized void doSchedule() {
             if (parameters.getTimeOut() != NEVER_TIMEOUT) {
-                long tick = Math.max(parameters.remaining() / 2, 0);
-                future = executor.schedule(this, tick, parameters.getUnit());
+                if (!executor.isShutdown()) {
+                    long tick = Math.max(parameters.remaining() / 2, 0);
+                    future = executor.schedule(this, tick, parameters.getUnit());
+                } else {
+                    stop();
+                }
             } else {
                 state.compareAndSet(State.SCHEDULED, State.WAITING);
             }
+        }
+
+        @Override
+        protected Logger logger() {
+            return logger;
         }
     }
     
@@ -133,6 +149,11 @@ public class PeerConnection<C extends Connection<? super MessagePacket<?>>> exte
             if (parameters.remaining() <= 0) {
                 close();
             }
+        }
+
+        @Override
+        protected Logger logger() {
+            return logger;
         }
     }
 }

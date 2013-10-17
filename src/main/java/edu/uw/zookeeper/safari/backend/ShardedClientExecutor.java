@@ -5,7 +5,6 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Function;
@@ -14,8 +13,6 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
-
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.TimeValue;
@@ -71,8 +68,6 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                 executor);
     }
 
-    protected static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
-
     protected final FutureCallback<ShardedResponseMessage<?>> callback;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     protected final CachedFunction<Identifier, OperationPrefixTranslator> translator;
@@ -108,7 +103,7 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                 future,
                 request, 
                 LoggingPromise.create(logger, promise));
-        Futures.addCallback(task, callback, sameThreadExecutor);
+        Futures.addCallback(task, callback, SAME_THREAD_EXECUTOR);
         if (! send(task)) {
             task.cancel(true);
         }
@@ -151,7 +146,7 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                 }
             } else {
                 if (futures.add(next.translator())) {
-                    next.translator().addListener(this, sameThreadExecutor);
+                    next.translator().addListener(this, SAME_THREAD_EXECUTOR);
                 }
                 break;
             }
@@ -175,7 +170,7 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                             input.task().xid(),
                             this,
                             input.promise());
-                    Futures.addCallback(failed, callback, sameThreadExecutor);
+                    Futures.addCallback(failed, callback, SAME_THREAD_EXECUTOR);
                     pending.add(failed);
                     runPending();
                     sharded = null;
@@ -211,6 +206,8 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                 if (next instanceof Runnable) {
                     itr.remove();
                     ((Runnable) next).run();
+                } else {
+                    break;
                 }
             }
         }
@@ -255,6 +252,11 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
         
         public Message.ClientRequest<?> shard() throws InterruptedException, ExecutionException {
             return translator.get().apply(task.getRequest());
+        }
+
+        @Override
+        protected Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
+            return super.toString(toString.add("translator", translator));
         }
     }
     
