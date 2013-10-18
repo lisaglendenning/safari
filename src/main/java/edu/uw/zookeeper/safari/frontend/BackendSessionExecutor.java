@@ -207,7 +207,7 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
 
         @Override
         protected Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
-            return toString.add("task", task.second())
+            return toString.add("task", task.first())
                     .add("future", delegate);
         }
     }
