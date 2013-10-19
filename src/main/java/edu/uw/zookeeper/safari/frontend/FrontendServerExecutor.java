@@ -5,6 +5,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
@@ -371,7 +374,8 @@ public class FrontendServerExecutor extends DependentService {
     }
     
     protected static class ClientPeerConnectionListener {
-        
+
+        protected final Logger logger = LogManager.getLogger(getClass());
         protected final ClientPeerConnections connections;
         protected final ConcurrentMap<Long, FrontendSessionExecutor> executors;
         protected final ConcurrentMap<ClientPeerConnection<?>, ClientPeerConnectionDispatcher> dispatchers;
@@ -432,7 +436,11 @@ public class FrontendServerExecutor extends DependentService {
                 {
                     MessageSessionResponse body = (MessageSessionResponse) message.getBody();
                     FrontendSessionExecutor e = executors.get(body.getIdentifier());
-                    e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getValue()));
+                    if (e != null) {
+                        e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getValue()));
+                    } else {
+                        logger.warn("Ignoring message {}", message);
+                    }
                     break;
                 }
                 default:

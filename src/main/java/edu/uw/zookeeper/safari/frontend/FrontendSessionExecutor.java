@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.safari.frontend;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.ListIterator;
@@ -51,6 +53,7 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
+import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.proto.IDisconnectResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
@@ -384,15 +387,12 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         return request;
     }
 
-    protected static final Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> EMPTY_RESPONSE = 
-            Pair.<Volume, ListenableFuture<ShardedResponseMessage<?>>>create(Volume.none(), null);
-
     // future is set after message is published
     protected class FrontendRequestTask extends PromiseTask<Message.ClientRequest<?>, Message.ServerResponse<?>> 
             implements Runnable, Callable<Records.Response> {
 
         protected volatile List<Pair<Volume, ShardedRequestMessage<?>>> shards;
-        protected volatile List<Pair<?, ListenableFuture<?>>> pending;
+        protected volatile List<Pair<?, ? extends ListenableFuture<?>>> pending;
         
         public FrontendRequestTask(
                 Message.ClientRequest<?> task,
@@ -484,6 +484,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
         
         public synchronized Records.Response unshard(List<Pair<?, ShardedResponseMessage<?>>> responses) {
+            checkArgument(! responses.isEmpty());
             Records.Response result = null;
             if (OpCode.MULTI == task.record().opcode()) {
                 List<Pair<Volume, ListIterator<Records.MultiOpResponse>>> opResponses = Lists.newArrayListWithCapacity(responses.size());
@@ -523,13 +524,6 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     ops.add(response.second());
                 }
                 result = new IMultiResponse(ops);
-            } else if (responses.isEmpty()) {
-                switch (task().record().opcode()) {
-                case CLOSE_SESSION:
-                    return Records.newInstance(IDisconnectResponse.class);
-                default:
-                    throw new AssertionError(this);
-                }
             } else {
                 Pair<?, ShardedResponseMessage<?>> selected = null;
                 for (Pair<?, ShardedResponseMessage<?>> e: responses) {
@@ -563,57 +557,40 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             return result;
         }
         
-        public List<Pair<?, ListenableFuture<?>>> pending() {
+        public List<Pair<?, ? extends ListenableFuture<?>>> pending() {
             return pending;
         }
         
-        public synchronized void pending(Object key, ListenableFuture<?> future) {
-            Pair<?, ListenableFuture<?>> value = Pair.<Object, ListenableFuture<?>>create(key, future);
+        public synchronized void pending(Pair<?, ? extends ListenableFuture<?>> future) {
             int i=0;
-            while (i<pending.size()) {
-                if (pending.get(i).first().equals(key)) {
+            while (i < pending.size()) {
+                if (pending.get(i).first().equals(future.first())) {
                     break;
                 }
                 i++;
             }
             if (i == pending.size()) {
-                pending.add(value);
+                pending.add(future);
             } else {
-                pending.set(i, value);
+                pending.set(i, future);
             }
-            if (future != null) {
-                future.addListener(this, SAME_THREAD_EXECUTOR);
-            } else if (key.equals(Volume.none())) {
-                run();
+            if (future.second() != null) {
+                future.second().addListener(this, SAME_THREAD_EXECUTOR);
             }
         }
 
         @Override
         public void run() {
-            if (! isDone()) {
-                Records.Response result;
-                try {
-                    result = call();
-                } catch (Exception e) {
-                    // FIXME
-                    throw new AssertionError(e);
-                }
-                logger.trace("{} {}", result, this);
-                if (result != null) {
-                    if (this == mailbox.peek()) {
-                        FrontendSessionExecutor.this.run();
-                    }
+            if (! isPending()) {
+                if (this == mailbox.peek()) {
+                    FrontendSessionExecutor.this.run();
                 }
             }
         }
         
         public synchronized boolean isPending() {
-            for (Pair<?, ListenableFuture<?>> e: pending) {
-                if (e.second() == null) {
-                    if (! e.first().equals(Volume.none())) {
-                        return true;
-                    }
-                } else if (!e.second().isDone()) {
+            for (Pair<?, ? extends ListenableFuture<?>> e: pending) {
+                if ((e.second() == null) || !e.second().isDone()) {
                     return true;
                 }
             }
@@ -626,7 +603,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 return null;
             }
             List<Pair<?, ShardedResponseMessage<?>>> results = Lists.newArrayListWithCapacity(pending.size());
-            for (Pair<?, ListenableFuture<?>> e: pending) {
+            for (Pair<?, ? extends ListenableFuture<?>> e: pending) {
                 if (e.second() != null) {
                     Object result = e.second().get();
                     if (result instanceof ShardedResponseMessage) {
@@ -634,7 +611,11 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     }
                 }
             }
-            return unshard(results);
+            if (! results.isEmpty()) {
+                return unshard(results);
+            } else {
+                return null;
+            }
         }
 
         @Override
@@ -649,7 +630,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
                 synchronized (this) {
-                    for (Pair<?, ListenableFuture<?>> e: pending) {
+                    for (Pair<?, ? extends ListenableFuture<?>> e: pending) {
                         if (e.second() != null) {
                             e.second().cancel(mayInterruptIfRunning);
                         }
@@ -664,7 +645,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean setException = super.setException(t);
             if (setException) {
                 synchronized (this) {
-                    for (Pair<?, ListenableFuture<?>> e: pending) {
+                    for (Pair<?, ? extends ListenableFuture<?>> e: pending) {
                         if (e.second() != null) {
                             e.second().cancel(false);
                         }
@@ -834,42 +815,43 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         protected boolean apply(FrontendRequestTask input) {
             if (input.shards().get(0).first().equals(Volume.none())) {
                 assert (input.shards().size() == 1);
-                assert (input.task().record().opcode() == OpCode.CLOSE_SESSION);
                 if (input.isPending()) {
                     return false;
                 } else if (input.pending().isEmpty()) {
+                    List<ListenableFuture<?>> flushed = Lists.newArrayListWithCapacity(processors.size());
                     for (Map.Entry<Volume, VolumeProcessor> e: processors.entrySet()) {
-                        SettableFuturePromise<VolumeProcessor> flushed = SettableFuturePromise.create();
-                        if (! e.getValue().send(flushed)) {
+                        SettableFuturePromise<VolumeProcessor> f = SettableFuturePromise.create();
+                        if (! e.getValue().send(f)) {
                             return false;
                         }
-                        input.pending(e.getKey(), flushed);
+                        flushed.add(f);
                     }
-                    if (input.pending().isEmpty()) {
+                    if (flushed.isEmpty()) {
                         // special case
-                        input.pending(Volume.none(), null);
+                        input.pending(Pair.create(Volume.none(), 
+                                Futures.immediateFuture(ShardedResponseMessage.of(Identifier.zero(), ProtocolResponseMessage.of(
+                                        input.task().xid(), 0L,
+                                        Records.Responses.getInstance().get(input.task().record().opcode()))))));
                         return true;
                     } else {
-                        List<ListenableFuture<?>> flushed = Lists.newArrayListWithCapacity(input.pending().size());
-                        for (Pair<?, ListenableFuture<?>> e: input.pending()) {
-                            flushed.add(e.second());
-                        }
-                        Futures.allAsList(flushed).addListener(this, SAME_THREAD_EXECUTOR);
+                        ListenableFuture<List<Object>> all = Futures.allAsList(flushed);
+                        input.pending(Pair.create(this, all));
+                        all.addListener(this, SAME_THREAD_EXECUTOR);
                         return false;
                     }
                 } else {
                     input.pending().clear();
                     for (BackendSessionExecutor backend: backends.asCache().values()) {
+                        input.pending(Pair.create(backend, (ListenableFuture<?>) null));
+                    }
+                    for (BackendSessionExecutor backend: backends.asCache().values()) {
                         ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
                                 Pair.create(MessageSessionRequest.of(session().id(), 
                                         input.shards().get(0).second()), 
                                         input));
-                        input.pending(backend, future);
+                        input.pending(Pair.create(backend, future));
                     }
-                    if (input.pending().isEmpty()) {
-                        // special case
-                        input.pending(Volume.none(), null);
-                    }
+                    assert(! input.pending().isEmpty());
                     return true;
                 }
             }
@@ -878,7 +860,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             for (Pair<Volume, ShardedRequestMessage<?>> shard: input.shards()) {
                 Volume volume = shard.first();
                 assert (! volume.equals(Volume.none()));
-                input.pending(volume, null);
+                input.pending(Pair.create(volume, (ListenableFuture<?>) null));
             }
             // we assume that between iterating over the keys and values of processors
             // that the map doesn't change (probably a bad assumption)
@@ -998,7 +980,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     }
                     ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
                                 Pair.create(MessageSessionRequest.of(session().id(), request.second()), request.first()));
-                    request.first().pending(volume, future);
+                    request.first().pending(Pair.create(volume, future));
                 } else if (input instanceof Promise<?>) {
                     ((Promise<? super VolumeProcessor>) input).set(this);
                 }
