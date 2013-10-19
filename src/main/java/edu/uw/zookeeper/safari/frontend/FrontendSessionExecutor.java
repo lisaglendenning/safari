@@ -3,12 +3,14 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.Collections;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+
 import javax.annotation.Nullable;
 
 import org.apache.zookeeper.KeeperException;
@@ -31,7 +33,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.protocol.Session;
-import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ExecutedActor;
@@ -390,15 +391,15 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     protected class FrontendRequestTask extends PromiseTask<Message.ClientRequest<?>, Message.ServerResponse<?>> 
             implements Runnable, Callable<Records.Response> {
 
-        protected List<Pair<Volume, ShardedRequestMessage<?>>> shards;
-        protected List<Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>>> responses;
+        protected volatile List<Pair<Volume, ShardedRequestMessage<?>>> shards;
+        protected volatile List<Pair<?, ListenableFuture<?>>> pending;
         
         public FrontendRequestTask(
                 Message.ClientRequest<?> task,
                 Promise<Message.ServerResponse<?>> promise) {
             super(task, promise);
             this.shards = ImmutableList.of();
-            this.responses = ImmutableList.of();
+            this.pending = Lists.newLinkedList();
         }
 
         public Pair<ZNodeLabel.Path[], ListenableFuture<Volume>[]> lookup(AsyncFunction<ZNodeLabel.Path, Volume> lookup) throws Exception {
@@ -409,6 +410,10 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 lookups[i] = lookup.apply(paths[i]);
             }
             return Pair.create(paths, lookups);
+        }
+        
+        public List<Pair<Volume, ShardedRequestMessage<?>>> shards() {
+            return shards;
         }
 
         public synchronized List<Pair<Volume, ShardedRequestMessage<?>>> shard(List<Pair<ZNodeLabel.Path, Volume>> volumes) throws KeeperException {
@@ -475,16 +480,15 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     }
                 }
             }
-            responses = Lists.newArrayListWithExpectedSize(shards.size());
             return shards;
         }
         
-        public synchronized Records.Response unshard(List<Pair<Volume, ShardedResponseMessage<?>>> responses) {
+        public synchronized Records.Response unshard(List<Pair<?, ShardedResponseMessage<?>>> responses) {
             Records.Response result = null;
             if (OpCode.MULTI == task.record().opcode()) {
                 List<Pair<Volume, ListIterator<Records.MultiOpResponse>>> opResponses = Lists.newArrayListWithCapacity(responses.size());
-                for (Pair<Volume, ShardedResponseMessage<?>> e: responses) {
-                    opResponses.add(Pair.<Volume, ListIterator<Records.MultiOpResponse>>create(e.first(), ((IMultiResponse) e.second().record()).listIterator()));
+                for (Pair<?, ShardedResponseMessage<?>> e: responses) {
+                    opResponses.add(Pair.<Volume, ListIterator<Records.MultiOpResponse>>create((Volume) e.first(), ((IMultiResponse) e.second().record()).listIterator()));
                 }
                 List<Pair<Volume, ListIterator<Records.MultiOpRequest>>> opRequests = Lists.newArrayListWithCapacity(shards.size());
                 for (Pair<Volume, ShardedRequestMessage<?>> e: shards) {
@@ -527,8 +531,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                     throw new AssertionError(this);
                 }
             } else {
-                Pair<Volume, ShardedResponseMessage<?>> selected = null;
-                for (Pair<Volume, ShardedResponseMessage<?>> e: responses) {
+                Pair<?, ShardedResponseMessage<?>> selected = null;
+                for (Pair<?, ShardedResponseMessage<?>> e: responses) {
                     if (selected == null) {
                         selected = e;
                     } else if (task().record().opcode() == OpCode.CLOSE_SESSION) {
@@ -546,8 +550,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                         // and only if the path is for a volume root
                         // in that case, pick the response that came
                         // from the volume root
-                        if (selected.first().getDescriptor().getRoot()
-                                .prefixOf(e.first().getDescriptor().getRoot())) {
+                        if (((Volume) selected.first()).getDescriptor().getRoot()
+                                .prefixOf(((Volume) e.first()).getDescriptor().getRoot())) {
                             selected = e;
                         }
                     }
@@ -559,23 +563,27 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             return result;
         }
         
-        public synchronized void addResponse(Volume volume, ListenableFuture<ShardedResponseMessage<?>> future) {
-            Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> value = Pair.<Volume, ListenableFuture<ShardedResponseMessage<?>>>create(volume, future);
+        public List<Pair<?, ListenableFuture<?>>> pending() {
+            return pending;
+        }
+        
+        public synchronized void pending(Object key, ListenableFuture<?> future) {
+            Pair<?, ListenableFuture<?>> value = Pair.<Object, ListenableFuture<?>>create(key, future);
             int i=0;
-            while (i<responses.size()) {
-                if (responses.get(i).first().equals(volume)) {
+            while (i<pending.size()) {
+                if (pending.get(i).first().equals(key)) {
                     break;
                 }
                 i++;
             }
-            if (i == responses.size()) {
-                responses.add(value);
+            if (i == pending.size()) {
+                pending.add(value);
             } else {
-                responses.set(i, value);
+                pending.set(i, value);
             }
             if (future != null) {
                 future.addListener(this, SAME_THREAD_EXECUTOR);
-            } else if (volume.equals(Volume.none())) {
+            } else if (key.equals(Volume.none())) {
                 run();
             }
         }
@@ -599,21 +607,32 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             }
         }
         
-        @Override
-        public synchronized Records.Response call() throws Exception {
-            if (responses.isEmpty()) {
-                return null;
-            }
-            for (Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> response: responses) {
-                if (response.equals(EMPTY_RESPONSE)) {
-                    return unshard(ImmutableList.<Pair<Volume, ShardedResponseMessage<?>>>of());
-                } else if ((response.second() == null) || !response.second().isDone()) {
-                    return null;
+        public synchronized boolean isPending() {
+            for (Pair<?, ListenableFuture<?>> e: pending) {
+                if (e.second() == null) {
+                    if (! e.first().equals(Volume.none())) {
+                        return true;
+                    }
+                } else if (!e.second().isDone()) {
+                    return true;
                 }
             }
-            List<Pair<Volume, ShardedResponseMessage<?>>> results = Lists.newArrayListWithCapacity(responses.size());
-            for (Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> response: responses) {
-                results.add(Pair.<Volume, ShardedResponseMessage<?>>create(response.first(), response.second().get()));
+            return false;
+        }
+        
+        @Override
+        public synchronized Records.Response call() throws Exception {
+            if (pending.isEmpty() || isPending()) {
+                return null;
+            }
+            List<Pair<?, ShardedResponseMessage<?>>> results = Lists.newArrayListWithCapacity(pending.size());
+            for (Pair<?, ListenableFuture<?>> e: pending) {
+                if (e.second() != null) {
+                    Object result = e.second().get();
+                    if (result instanceof ShardedResponseMessage) {
+                        results.add(Pair.<Object, ShardedResponseMessage<?>>create(e.first(), (ShardedResponseMessage<?>) result));
+                    }
+                }
             }
             return unshard(results);
         }
@@ -630,7 +649,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean cancel = super.cancel(mayInterruptIfRunning);
             if (cancel) {
                 synchronized (this) {
-                    for (Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> e: responses) {
+                    for (Pair<?, ListenableFuture<?>> e: pending) {
                         if (e.second() != null) {
                             e.second().cancel(mayInterruptIfRunning);
                         }
@@ -645,7 +664,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             boolean setException = super.setException(t);
             if (setException) {
                 synchronized (this) {
-                    for (Pair<Volume, ListenableFuture<ShardedResponseMessage<?>>> e: responses) {
+                    for (Pair<?, ListenableFuture<?>> e: pending) {
                         if (e.second() != null) {
                             e.second().cancel(false);
                         }
@@ -657,7 +676,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         
         @Override
         protected synchronized Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
-            return super.toString(toString).add("shards", shards).add("responses", responses);
+            return super.toString(toString).add("shards", shards).add("pending", pending);
         }
     }
     
@@ -682,7 +701,6 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             this.futures = Collections.newSetFromMap(
                     new WeakHashMap<ListenableFuture<?>, Boolean>());
         }
-        
 
         @Override
         protected boolean doSend(FrontendRequestTask message) {
@@ -743,8 +761,8 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                 for (int i=0; i<lookups.first().length; ++i) {
                     volumes.add(Pair.create(lookups.first()[i], lookups.second()[i].get()));
                 }
-                List<Pair<Volume, ShardedRequestMessage<?>>> shards = input.shard(volumes);
-                submitter.send(Pair.create(input, shards));
+                input.shard(volumes);
+                submitter.send(input);
             }
             return complete;
         }
@@ -760,9 +778,9 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
     }
     
+    protected class SubmitProcessor extends ExecutedActor<FrontendRequestTask> {
 
-    protected class SubmitProcessor extends AbstractActor<Pair<FrontendRequestTask, List<Pair<Volume, ShardedRequestMessage<?>>>>> {
-
+        protected final Queue<FrontendRequestTask> mailbox;
         protected final CachedFunction<Identifier, Identifier> assignments;
         protected final BackendLookup backends;
         protected final ConcurrentMap<Volume, VolumeProcessor> processors;
@@ -770,6 +788,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         public SubmitProcessor(
                 CachedFunction<Identifier, Identifier> assignments,
                 BackendLookup backends) {
+            this.mailbox = Queues.newConcurrentLinkedQueue();
             this.assignments = assignments;
             this.backends = backends;
             this.processors = new MapMaker().makeMap();
@@ -785,66 +804,122 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             }
             return backend;
         }
+
+        @Override
+        protected boolean schedule() {
+            FrontendRequestTask next = mailbox.peek();
+            if ((next == null) || next.isPending()) {
+                return false;
+            } else {
+                return super.schedule();
+            }
+        }
         
         @Override
-        protected boolean doSend(Pair<FrontendRequestTask, List<Pair<Volume, ShardedRequestMessage<?>>>> message) {
-            // create empty futures first!
-            for (Pair<Volume, ShardedRequestMessage<?>> shard: message.second()) {
-                Volume volume = shard.first();
-                if (volume.equals(Volume.none()) && ! processors.isEmpty()) {
-                    for (Volume v: processors.keySet()) {
-                        message.first().addResponse(v, null);
+        protected void doRun() throws Exception {
+            FrontendRequestTask next;
+            while ((next = mailbox().peek()) != null) {
+                synchronized (next) {
+                    logger().debug("Applying {}", next);
+                    if (apply(next)) {
+                        mailbox().remove(next);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        @Override
+        protected boolean apply(FrontendRequestTask input) {
+            if (input.shards().get(0).first().equals(Volume.none())) {
+                assert (input.shards().size() == 1);
+                assert (input.task().record().opcode() == OpCode.CLOSE_SESSION);
+                if (input.isPending()) {
+                    return false;
+                } else if (input.pending().isEmpty()) {
+                    for (Map.Entry<Volume, VolumeProcessor> e: processors.entrySet()) {
+                        SettableFuturePromise<VolumeProcessor> flushed = SettableFuturePromise.create();
+                        if (! e.getValue().send(flushed)) {
+                            return false;
+                        }
+                        input.pending(e.getKey(), flushed);
+                    }
+                    if (input.pending().isEmpty()) {
+                        // special case
+                        input.pending(Volume.none(), null);
+                        return true;
+                    } else {
+                        List<ListenableFuture<?>> flushed = Lists.newArrayListWithCapacity(input.pending().size());
+                        for (Pair<?, ListenableFuture<?>> e: input.pending()) {
+                            flushed.add(e.second());
+                        }
+                        Futures.allAsList(flushed).addListener(this, SAME_THREAD_EXECUTOR);
+                        return false;
                     }
                 } else {
-                    message.first().addResponse(volume, null);
+                    input.pending().clear();
+                    for (BackendSessionExecutor backend: backends.asCache().values()) {
+                        ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
+                                Pair.create(MessageSessionRequest.of(session().id(), 
+                                        input.shards().get(0).second()), 
+                                        input));
+                        input.pending(backend, future);
+                    }
+                    if (input.pending().isEmpty()) {
+                        // special case
+                        input.pending(Volume.none(), null);
+                    }
+                    return true;
                 }
+            }
+            
+            // create empty futures first!
+            for (Pair<Volume, ShardedRequestMessage<?>> shard: input.shards()) {
+                Volume volume = shard.first();
+                assert (! volume.equals(Volume.none()));
+                input.pending(volume, null);
             }
             // we assume that between iterating over the keys and values of processors
             // that the map doesn't change (probably a bad assumption)
-            for (Pair<Volume, ShardedRequestMessage<?>> shard: message.second()) {
+            for (Pair<Volume, ShardedRequestMessage<?>> shard: input.shards()) {
                 Volume volume = shard.first();
-                if (volume.equals(Volume.none())) {
-                    for (VolumeProcessor processor: processors.values()) {
-                        if (!processor.send(new ShardedRequest(message.first(), shard.second()))) {
-                            return false;
+                assert (! volume.equals(Volume.none()));
+                VolumeProcessor processor = processors.get(volume);
+                if (processor == null) {
+                    processor = new VolumeProcessor(volume);
+                    if (processors.putIfAbsent(volume, processor) == null) {
+                        ListenableFuture<BackendSessionExecutor> backend;
+                        try {
+                            backend = lookup(volume);
+                        } catch (Exception e) {
+                            // TODO
+                            throw Throwables.propagate(e);
                         }
-                    }
-                    return true;
-                } else {
-                    VolumeProcessor processor = processors.get(volume);
-                    if (processor == null) {
-                        processor = new VolumeProcessor(volume);
-                        if (processors.putIfAbsent(volume, processor) == null) {
-                            try {
-                                Futures.addCallback(lookup(volume), processor, SAME_THREAD_EXECUTOR);
-                            } catch (Exception e) {
-                                // TODO
-                                throw Throwables.propagate(e);
+                        if (logger.isTraceEnabled()) {
+                            if (! backend.isDone()) {
+                                logger.trace("Waiting on connection for volume {}", volume);
                             }
-                        } else {
-                            processor = processors.get(volume);
                         }
+                        Futures.addCallback(backend, processor, SAME_THREAD_EXECUTOR);
+                    } else {
+                        processor = processors.get(volume);
                     }
-                    if (!processor.send(new ShardedRequest(message.first(), shard.second()))) {
-                        return false;
-                    }
+                }
+                if (!processor.send(new ShardedRequest(input, shard.second()))) {
+                    return false;
                 }
             }
             return true;
         }
         
         @Override
-        protected void doRun() throws Exception {
-            for (VolumeProcessor processor: processors.values()) {
-                processor.run();
-            }
-        }
-
-        @Override
         protected void doStop() {
             for (VolumeProcessor processor: processors.values()) {
                 processor.stop();
             }
+            
+            super.doStop();
         }
 
         @Override
@@ -852,10 +927,20 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             return logger;
         }
 
-        protected class VolumeProcessor extends ExecutedActor<ShardedRequest> implements FutureCallback<BackendSessionExecutor> {
+        @Override
+        protected Executor executor() {
+            return FrontendSessionExecutor.this.executor();
+        }
+
+        @Override
+        protected Queue<FrontendRequestTask> mailbox() {
+            return mailbox;
+        }
+
+        protected class VolumeProcessor extends ExecutedActor<Object> implements FutureCallback<BackendSessionExecutor> {
 
             protected final Volume volume;
-            protected final Queue<ShardedRequest> mailbox;
+            protected final Queue<Object> mailbox;
             // not thread-safe
             protected final Set<ListenableFuture<?>> futures;
             protected volatile BackendSessionExecutor backend;
@@ -891,36 +976,48 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             
             @Override
             protected void doRun() throws Exception {
-                if (backend != null) {
-                    super.doRun();
+                Object next;
+                while ((next = mailbox().peek()) != null) {
+                    logger().debug("Applying {}", next);
+                    if (apply(next)) {
+                        mailbox().remove(next);
+                    } else {
+                        break;
+                    }
                 }
             }
 
+            @SuppressWarnings("unchecked")
             @Override
-            protected boolean apply(ShardedRequest input) throws Exception {
-                BackendSessionExecutor backend = this.backend;
-                if (backend == null) {
-                    return false;
+            protected boolean apply(Object input) throws Exception {
+                if (input instanceof ShardedRequest) {
+                    ShardedRequest request = (ShardedRequest) input;
+                    BackendSessionExecutor backend = this.backend;
+                    if (backend == null) {
+                        return false;
+                    }
+                    ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
+                                Pair.create(MessageSessionRequest.of(session().id(), request.second()), request.first()));
+                    request.first().pending(volume, future);
+                } else if (input instanceof Promise<?>) {
+                    ((Promise<? super VolumeProcessor>) input).set(this);
                 }
-                ListenableFuture<ShardedResponseMessage<?>> future = backend.submit(
-                            Pair.create(MessageSessionRequest.of(session().id(), input.second()), input.first()));
-                input.first().addResponse(volume, future);
                 return true;
             }
 
             @Override
             protected Executor executor() {
-                return FrontendSessionExecutor.this.executor();
+                return SubmitProcessor.this.executor();
             }
 
             @Override
-            protected Queue<ShardedRequest> mailbox() {
+            protected Queue<Object> mailbox() {
                 return mailbox;
             }
 
             @Override
             protected Logger logger() {
-                return logger;
+                return SubmitProcessor.this.logger();
             }   
         }
     }
