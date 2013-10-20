@@ -3,13 +3,14 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
@@ -91,7 +92,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         this.logger = LogManager.getLogger(getClass());
     }
 
-    @Subscribe
+    @Handler
     public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
         ZNodeLabel.Path path = event.path().get();
         if ((ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type()) 
@@ -116,7 +117,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         }
     }
 
-    @Subscribe
+    @Handler
     public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
         ZNodeLabel.Path path = event.path();
         if ((ZNodeViewCache.View.DATA != event.view())

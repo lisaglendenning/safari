@@ -12,6 +12,8 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
@@ -20,7 +22,6 @@ import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -484,12 +485,12 @@ public abstract class Control {
             this.root = root;
             this.materializer = materializer;
             
-            materializer.register(this);
+            materializer.subscribe(this);
             materializer.operator().sync(root).submit();
             new Updater(root);
         }
-    
-        @Subscribe
+
+        @Handler
         public void handleReply(Operation.ProtocolResponse<?> message) {
             if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
                 WatchEvent event = WatchEvent.fromRecord((IWatcherEvent) message.record());
@@ -524,7 +525,7 @@ public abstract class Control {
             boolean isSet = super.cancel(mayInterruptIfRunning);
             if (isSet) {
                 try {
-                    materializer.unregister(this);
+                    materializer.unsubscribe(this);
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;
@@ -535,7 +536,7 @@ public abstract class Control {
             boolean isSet = super.set(result);
             if (isSet) {
                 try {
-                    materializer.unregister(this);
+                    materializer.unsubscribe(this);
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;
@@ -546,7 +547,7 @@ public abstract class Control {
             boolean isSet = super.setException(t);
             if (isSet) {
                 try {
-                    materializer.unregister(this);
+                    materializer.unsubscribe(this);
                 } catch (IllegalArgumentException e) {}
             }
             return isSet;

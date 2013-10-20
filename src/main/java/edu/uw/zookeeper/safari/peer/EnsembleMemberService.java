@@ -5,13 +5,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -190,8 +191,8 @@ public class EnsembleMemberService extends AbstractIdleService {
             this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Regions.Entity.Leader>of(0L, null));
             this.proposer = ControlSchema.Regions.Entity.Leader.Proposer.of(
                     control.materializer());
-            myRole.register(this);
-            control.materializer().register(this);
+            myRole.subscribe(this);
+            control.materializer().subscribe(this);
             subscribeLeaderWatch();
         }
         
@@ -226,7 +227,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             // TODO
         }
 
-        @Subscribe
+        @Handler
         public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
             if (leaderPath.equals(event.path())) {
                 Materializer.MaterializedNode node = control.materializer().get(leaderPath);
@@ -235,7 +236,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             }
         }
 
-        @Subscribe
+        @Handler
         public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
             if (leaderPath.equals(event.path().get())) {
                 if (ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED == event.type()) {
@@ -243,8 +244,8 @@ public class EnsembleMemberService extends AbstractIdleService {
                 }
             }
         }
-        
-        @Subscribe
+
+        @Handler
         public void handleTransition(Automaton.Transition<?> transition) {
             if (transition.type().isAssignableFrom(EnsembleRole.class)) {
                 if (EnsembleRole.LOOKING == transition.to()) {

@@ -3,10 +3,11 @@ package edu.uw.zookeeper.safari.frontend;
 import java.nio.channels.ClosedChannelException;
 import java.util.concurrent.Executor;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Optional;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -82,19 +83,19 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
         }
         return doCancel;
     }
-    
-    @Subscribe
+
+    @Handler
     public void handleTransition(Automaton.Transition<?> event) {
         assert(connection.isDone());
         if (event.to() == Connection.State.CONNECTION_CLOSED) {
-            Futures.getUnchecked(connection).unregister(this);
+            Futures.getUnchecked(connection).unsubscribe(this);
             if (! isDone()) {
                 setException(new ClosedChannelException());
             }
         }
     }
-    
-    @Subscribe
+
+    @Handler
     public void handleMessage(MessagePacket<?> message) {
         assert(connection.isDone());
         switch (message.getHeader().type()) {
@@ -104,7 +105,7 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
             if (response.getIdentifier() != frontend.id()) {
                 break;
             }
-            Futures.getUnchecked(connection).unregister(this);
+            Futures.getUnchecked(connection).unsubscribe(this);
             if (! isDone()) {
                 if (response.getValue() instanceof ConnectMessage.Response.Valid) {
                     set(response.getValue().toSession());
@@ -132,7 +133,7 @@ public class EstablishBackendSessionTask extends PromiseTask<Identifier, Session
                 return;
             }
 
-            c.register(this);
+            c.subscribe(this);
             
             ConnectMessage.Request request;
             if (existing.isPresent()) {

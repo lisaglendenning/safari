@@ -87,7 +87,7 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
         
         super.startUp();
 
-        this.register(watches);
+        this.subscribe(watches);
         WatchEventPublisher.create(this, this);
         
         Control.createPrefix(materializer());

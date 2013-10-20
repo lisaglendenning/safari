@@ -5,6 +5,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import net.engio.mbassy.listener.Handler;
+import net.engio.mbassy.listener.References;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -12,7 +15,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -199,6 +201,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         }
     }
 
+    @net.engio.mbassy.listener.Listener(references = References.Strong)
     protected class ServerPeerConnectionListener {
         
         protected final ServerPeerConnections connections;
@@ -211,7 +214,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         }
         
         public void start() {
-            connections.register(this);
+            connections.subscribe(this);
             for (ServerPeerConnection<?> c: connections) {
                 handleConnection(c);
             }
@@ -219,36 +222,37 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
         
         public void stop() {
             try {
-                connections.unregister(this);
+                connections.unsubscribe(this);
             } catch (IllegalArgumentException e) {}
         }
-        
-        @Subscribe
+
+        @Handler
         public void handleConnection(ServerPeerConnection<?> connection) {
             ServerPeerConnectionDispatcher d = new ServerPeerConnectionDispatcher(connection);
             if (dispatchers.putIfAbsent(connection, d) == null) {
-                connection.register(d);
+                connection.subscribe(d);
             }
         }
     }
     
+    @net.engio.mbassy.listener.Listener(references = References.Strong)
     protected class ServerPeerConnectionDispatcher extends Factories.Holder<ServerPeerConnection<?>> {
     
         public ServerPeerConnectionDispatcher(ServerPeerConnection<?> connection) {
             super(connection);
         }
 
-        @Subscribe
+        @Handler
         public void handleTransition(Automaton.Transition<?> event) {
             if (Connection.State.CONNECTION_CLOSED == event.to()) {
                 try {
-                    get().unregister(this);
+                    get().unsubscribe(this);
                 } catch (IllegalArgumentException e) {}
                 listener.dispatchers.remove(get(), this);
             }
         }
-        
-        @Subscribe
+
+        @Handler
         public void handlePeerMessage(MessagePacket<?> message) {
             switch (message.getHeader().type()) {
             case MESSAGE_TYPE_HANDSHAKE:
@@ -321,7 +325,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
                     } else {
                         throw new AssertionError(String.valueOf(session));
                     }
-                    // client.register(this);
+                    // client.subscribe(this);
                 } catch (Exception e) {
                     onFailure(e);
                 }
@@ -350,7 +354,7 @@ public class BackendRequestService<C extends ProtocolCodecConnection<? super Mes
             public void handleTransition(Automaton.Transition<?> event) {
                 if (Connection.State.CONNECTION_CLOSED == event.to()) {
                     try {
-                        client.unregister(this);
+                        client.unsubscribe(this);
                     } catch (Exception e) {
                     }
                 }

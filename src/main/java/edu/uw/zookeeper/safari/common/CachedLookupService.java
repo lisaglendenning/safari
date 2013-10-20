@@ -23,11 +23,11 @@ public class CachedLookupService<K,V> extends AbstractIdleService implements Ref
 
     @Override
     protected void startUp() throws Exception {
-        materializer.register(this);
+        materializer.subscribe(this);
     }
     
     @Override
     protected void shutDown() throws Exception {
-        materializer.unregister(this);
+        materializer.unsubscribe(this);
     }
 }

@@ -6,11 +6,13 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
 
+import net.engio.mbassy.listener.Handler;
+import net.engio.mbassy.listener.References;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.MapMaker;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
@@ -71,20 +73,20 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
     }
 
     @Override
-    public void post(Object event) {
-        connections.post(event);
+    public void subscribe(Object listener) {
+        connections.subscribe(listener);
     }
 
     @Override
-    public void register(Object handler) {
-        connections.register(handler);
+    public boolean unsubscribe(Object listener) {
+        return connections.unsubscribe(listener);
     }
 
     @Override
-    public void unregister(Object handler) {
-        connections.unregister(handler);
+    public void publish(Object message) {
+        connections.publish(message);
+        
     }
-    
     protected boolean remove(V connection) {
         boolean removed = peers.remove(connection.remoteAddress().getIdentifier(), connection);
         if (removed) {
@@ -99,7 +101,7 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
         if (prev != null) {
             prev.close();
         }
-        post(v);
+        publish(v);
         return prev;
     }
 
@@ -109,25 +111,26 @@ public abstract class PeerConnections<V extends PeerConnection<Connection<? supe
             v.close();
         } else {
             new RemoveOnClose(v);
-            post(v);
+            publish(v);
         }
         return prev;
     }
-
+    
+    @net.engio.mbassy.listener.Listener(references = References.Strong)
     protected class RemoveOnClose {
         
         protected final V connection;
         
         public RemoveOnClose(V connection) {
             this.connection = connection;
-            connection.register(this);
+            connection.subscribe(this);
         }
     
-        @Subscribe
+        @Handler
         public void handleTransition(Automaton.Transition<?> event) {
             if (Connection.State.CONNECTION_CLOSED == event.to()) {
                 try {
-                    connection.unregister(this);
+                    connection.unsubscribe(this);
                 } catch (IllegalArgumentException e) {}
                 remove(connection);
             }

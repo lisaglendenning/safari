@@ -7,12 +7,14 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
+import net.engio.mbassy.listener.Handler;
+import net.engio.mbassy.listener.References;
+
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
@@ -119,14 +121,14 @@ public class RegionConnectionsService extends AbstractIdleService {
         return ensembleConnections;
     }
 
-    @Subscribe
+    @Handler
     public void handleClientPeerConnection(ClientPeerConnection<?> connection) {
         new UnselectOnClose(connection);
     }
 
     @Override
     protected void startUp() throws Exception {
-        peerConnections.register(this);
+        peerConnections.subscribe(this);
         for (ClientPeerConnection<?> c: peerConnections) {
             handleClientPeerConnection(c);
         }
@@ -136,20 +138,21 @@ public class RegionConnectionsService extends AbstractIdleService {
     protected void shutDown() throws Exception {
     }
     
+    @net.engio.mbassy.listener.Listener(references = References.Strong)
     protected class UnselectOnClose {
         protected final ClientPeerConnection<?> connection;
         
         public UnselectOnClose(ClientPeerConnection<?> connection) {
             this.connection = connection;
-            connection.register(this);
+            connection.subscribe(this);
         }
-        
-        @Subscribe
+
+        @Handler
         public void handleTransition(Automaton.Transition<?> event) {
             if ((event.to() == Connection.State.CONNECTION_CLOSING) ||
                     (event.to() == Connection.State.CONNECTION_CLOSED)) {
                 try {
-                    connection.unregister(this);
+                    connection.unsubscribe(this);
                 } catch (Exception e) {}
                 
                 Identifier peer = connection.remoteAddress().getIdentifier();

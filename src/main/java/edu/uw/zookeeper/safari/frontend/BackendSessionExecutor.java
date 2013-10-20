@@ -8,13 +8,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.Queues;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -109,15 +110,15 @@ public class BackendSessionExecutor extends ExecutedActor<BackendSessionExecutor
         return task;
     }
 
-    @Subscribe
+    @Handler
     public void handleResponse(ShardedResponseMessage<?> message) {
         if (state() == State.TERMINATED) {
             return;
         }
         pending.send(message);
     }
-    
-    @Subscribe
+
+    @Handler
     public void handleTransition(Automaton.Transition<?> event) {
         if (state() == State.TERMINATED) {
             return;

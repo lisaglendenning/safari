@@ -15,6 +15,9 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
+import net.engio.mbassy.PubSubSupport;
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.zookeeper.KeeperException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -27,7 +30,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Queues;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -43,7 +45,6 @@ import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.CreateFlag;
@@ -54,7 +55,6 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
-import edu.uw.zookeeper.protocol.proto.IDisconnectResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IPingResponse;
@@ -74,11 +74,11 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 
-public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestTask> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, Publisher, FutureCallback<ShardedResponseMessage<?>> {
+public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestTask> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, PubSubSupport<Object>, FutureCallback<ShardedResponseMessage<?>> {
     
     public static FrontendSessionExecutor newInstance(
             Session session,
-            Publisher publisher,
+            PubSubSupport<Object> publisher,
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
             CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
             CachedFunction<Identifier, Identifier> assignmentLookup,
@@ -95,7 +95,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     protected final Logger logger;
     protected final Executor executor;
     protected final LinkedQueue<FrontendRequestTask> mailbox;
-    protected final Publisher publisher;
+    protected final PubSubSupport<Object> publisher;
     protected final Session session;
     protected final ShardingProcessor sharder;
     protected final SubmitProcessor submitter;
@@ -103,7 +103,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
 
     public FrontendSessionExecutor(
             Session session,
-            Publisher publisher,
+            PubSubSupport<Object> publisher,
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
             CachedFunction<ZNodeLabel.Path, Volume> volumes,
             CachedFunction<Identifier, Identifier> assignments,
@@ -123,24 +123,24 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     }
     
     @Override
-    public void register(Object handler) {
-        publisher.register(handler);
+    public void subscribe(Object handler) {
+        publisher.subscribe(handler);
     }
 
     @Override
-    public void unregister(Object handler) {
-        publisher.unregister(handler);
+    public boolean unsubscribe(Object handler) {
+        return publisher.unsubscribe(handler);
     }
 
     @Override
-    public void post(Object event) {
-        publisher.post(event);
+    public void publish(Object event) {
+        publisher.publish(event);
     }
 
     @Override
     public void onSuccess(ShardedResponseMessage<?> result) {
         if (result.xid() == OpCodeXid.NOTIFICATION.xid()) {
-            post(processor.apply(
+            publish(processor.apply(
                     Pair.create(session().id(),
                             Pair.create(
                                     Optional.<Operation.ProtocolRequest<?>>absent(),
@@ -191,7 +191,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         return true;
     }
 
-    @Subscribe
+    @Handler
     public void handleTransition(Pair<Identifier, Automaton.Transition<?>> event) {
         if (state() == State.TERMINATED) {
             return;
@@ -208,7 +208,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
     }
 
-    @Subscribe
+    @Handler
     public void handleResponse(Pair<Identifier, ShardedResponseMessage<?>> message) {
         if (state() == State.TERMINATED) {
             return;
@@ -242,7 +242,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                     Pair.create(
                                             Optional.<Operation.ProtocolRequest<?>>of(input.task()), 
                                             response)));
-                    post(result);
+                    publish(result);
                     // set after post
                     input.set(result);
                     return true;

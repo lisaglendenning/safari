@@ -3,8 +3,8 @@ package edu.uw.zookeeper.safari.peer.protocol;
 import java.net.SocketAddress;
 import java.util.concurrent.ScheduledExecutorService;
 
-import com.google.common.eventbus.Subscribe;
-
+import net.engio.mbassy.listener.Handler;
+import net.engio.mbassy.listener.References;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
@@ -35,7 +35,7 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
         return (ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>>) connections;
     }
 
-    @Subscribe
+    @Handler
     public void handleServerConnection(Connection<? super MessagePacket<?>> connection) {
         if (! (connection instanceof ServerPeerConnection)) {
             new ServerAcceptTask(connection);
@@ -49,7 +49,7 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
 
     @Override
     protected void startUp() throws Exception {
-        connections().register(this);
+        connections().subscribe(this);
         
         super.startUp();
     }
@@ -57,12 +57,13 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
     @Override
     protected void shutDown() throws Exception {
         try {
-            connections().unregister(this);
+            connections().unsubscribe(this);
         } catch (IllegalArgumentException e) {}
         
         super.shutDown();
     }
-
+    
+    @net.engio.mbassy.listener.Listener(references = References.Strong)
     protected class ServerAcceptTask {
 
         protected final Connection<? super MessagePacket<?>> connection;
@@ -70,25 +71,25 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
         protected ServerAcceptTask(Connection<? super MessagePacket<?>> connection) {
             this.connection = connection;
             
-            connection.register(this);
+            connection.subscribe(this);
         }
         
-        @Subscribe
+        @Handler
         public void handleMessage(MessagePacket<?> event) {
             if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.getHeader().type()) {
                 MessageHandshake body = (MessageHandshake) event.getBody();
                 ServerPeerConnection<Connection<? super MessagePacket<?>>> peer = ServerPeerConnection.<Connection<? super MessagePacket<?>>>create(identifier(), body.getIdentifier(), connection, timeOut, executor);
-                connection.unregister(this);
+                connection.unsubscribe(this);
                 put(peer);
             } else {
                 throw new AssertionError(event);
             }
         }
 
-        @Subscribe
+        @Handler
         public void handleTransition(Automaton.Transition<?> event) {
             if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                connection.unregister(this);
+                connection.unsubscribe(this);
             }
         }
     }

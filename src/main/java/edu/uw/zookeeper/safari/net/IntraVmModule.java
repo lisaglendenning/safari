@@ -6,7 +6,6 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.common.EventBusPublisher;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.net.intravm.IntraVmCodecEndpointFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
@@ -41,6 +40,6 @@ public class IntraVmModule extends AbstractModule {
     public IntraVmFactory getIntraVmFactory(
             Factory<? extends SocketAddress> addresses) {
         return IntraVmFactory.newInstance(addresses,
-                EventBusPublisher.factory());
+                IntraVmEndpointFactory.syncMessageBus());
     }
 }

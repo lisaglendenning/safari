@@ -3,10 +3,11 @@ package edu.uw.zookeeper.safari.peer.protocol;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -45,7 +46,7 @@ public class PeerConnection<C extends Connection<? super MessagePacket<?>>> exte
         this.heartbeat = new SendHeartbeat(TimeOutParameters.create(timeOut), executor);
         this.timeOut = new TimeOutRemote(TimeOutParameters.create(timeOut), executor);
         
-        register(this);
+        subscribe(this);
         
         this.heartbeat.run();
         this.timeOut.run();
@@ -72,18 +73,18 @@ public class PeerConnection<C extends Connection<? super MessagePacket<?>>> exte
         return super.write(input);
     }
 
-    @Subscribe
+    @Handler
     public void handleTransitionEvent(Automaton.Transition<?> event) {
         if (Connection.State.CONNECTION_CLOSED == event.to()) {
             try {
-                unregister(this);
+                unsubscribe(this);
             } catch (Exception e) {}
             heartbeat.stop();
             timeOut.stop();
         }
     }
-    
-    @Subscribe
+
+    @Handler
     public void handleMessage(MessagePacket<?> message) {
         timeOut.send(message);
     }

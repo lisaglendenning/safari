@@ -6,6 +6,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import net.engio.mbassy.PubSubSupport;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -19,11 +21,9 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.common.EventBusPublisher;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
-import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -56,16 +56,16 @@ public class PeerConnectionsService extends DependentService {
     
     public static class Module extends DependentModule {
 
-        public static ParameterizedFactory<Publisher, Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec>> codecFactory(
+        public static ParameterizedFactory<PubSubSupport<Object>, Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec>> codecFactory(
                 final ObjectMapper mapper) {
-            return new ParameterizedFactory<Publisher, Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec>>() {
+            return new ParameterizedFactory<PubSubSupport<Object>, Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec>>() {
                 
                 @SuppressWarnings("unchecked")
                 protected final Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec> codec = Pair.create((Class<MessagePacket<?>>) (Class<?>) MessagePacket.class, FramedMessagePacketCodec.newInstance(MessagePacketCodec.newInstance(mapper)));
                 
                 @Override
                 public Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec> get(
-                        Publisher value) {
+                        PubSubSupport<Object> value) {
                     return codec;
                 }
             };
@@ -105,7 +105,7 @@ public class PeerConnectionsService extends DependentService {
                             connectionFactory()).get();
             IntraVmEndpointFactory<MessagePacket<?>> endpoints = IntraVmEndpointFactory.create(
                     addresses, 
-                    EventBusPublisher.factory(), 
+                    IntraVmEndpointFactory.syncMessageBus(), 
                     IntraVmEndpointFactory.actorExecutors(executor));
             IntraVmEndpoint<MessagePacket<?>> serverLoopback = endpoints.get();
             IntraVmEndpoint<MessagePacket<?>> clientLoopback = endpoints.get();

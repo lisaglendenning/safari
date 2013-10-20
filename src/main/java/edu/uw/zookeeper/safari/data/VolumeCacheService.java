@@ -5,13 +5,14 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
+import net.engio.mbassy.listener.Handler;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
@@ -176,8 +177,8 @@ public class VolumeCacheService extends AbstractIdleService {
     public CachedFunction<Identifier, Volume> byId() {
         return byId;
     }
-    
-    @Subscribe
+
+    @Handler
     public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
         ZNodeLabel.Path path = event.path().get();
         if ((ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type()) 
@@ -202,7 +203,7 @@ public class VolumeCacheService extends AbstractIdleService {
         }
     }
 
-    @Subscribe
+    @Handler
     public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
         ZNodeLabel.Path path = event.path();
         if ((ZNodeViewCache.View.DATA != event.view())
@@ -230,7 +231,7 @@ public class VolumeCacheService extends AbstractIdleService {
     
     @Override
     protected void startUp() throws Exception {
-        materializer.register(this);
+        materializer.subscribe(this);
         
         Materializer.MaterializedNode volumes = materializer.get(VOLUMES_PATH);
         if (volumes != null) {
@@ -252,6 +253,6 @@ public class VolumeCacheService extends AbstractIdleService {
 
     @Override
     protected void shutDown() throws Exception {
-        materializer.unregister(this);
+        materializer.unsubscribe(this);
     }
 }

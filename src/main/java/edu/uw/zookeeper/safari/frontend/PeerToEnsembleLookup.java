@@ -3,9 +3,10 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
+import net.engio.mbassy.listener.Handler;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -79,7 +80,7 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
         super(materializer, cache);
     }
 
-    @Subscribe
+    @Handler
     public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
         ZNodeLabel.Path path = event.path().get();
         if (! ENSEMBLES_PATH.prefixOf(path)) {

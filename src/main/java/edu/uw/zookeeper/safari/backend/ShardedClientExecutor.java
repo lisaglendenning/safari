@@ -7,12 +7,14 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 
+import net.engio.mbassy.listener.Handler;
+
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.TimeValue;
@@ -111,7 +113,7 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
     }
 
     @Override
-    @Subscribe
+    @Handler
     public void handleResponse(Operation.ProtocolResponse<?> response) {
         ShardedResponseMessage<?> unsharded;
         Message.ServerResponse<?> message = (Message.ServerResponse<?>) response;

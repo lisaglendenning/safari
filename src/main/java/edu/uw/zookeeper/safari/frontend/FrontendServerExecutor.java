@@ -5,13 +5,18 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import net.engio.mbassy.PubSubSupport;
+import net.engio.mbassy.bus.SyncBusConfiguration;
+import net.engio.mbassy.bus.SyncMessageBus;
+import net.engio.mbassy.listener.Handler;
+import net.engio.mbassy.listener.References;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
-import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
@@ -22,12 +27,10 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
-import edu.uw.zookeeper.common.EventBusPublisher;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Processors;
-import edu.uw.zookeeper.common.Publisher;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
@@ -86,12 +89,13 @@ public class FrontendServerExecutor extends DependentService {
             bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
         }
 
+        @SuppressWarnings("rawtypes")
         @Provides @Singleton
         public ExpiringSessionTable getSessionTable(
                 Configuration configuration) {
             SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(configuration);
             return ExpiringSessionTable.newInstance(
-                    EventBusPublisher.newInstance(), policy);
+                    new SyncMessageBus<Object>(new SyncBusConfiguration()), policy);
         }
 
         @Provides @Singleton
@@ -247,7 +251,7 @@ public class FrontendServerExecutor extends DependentService {
             TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor = 
                     ServerTaskExecutor.ProcessorExecutor.of(
                             FourLetterRequestProcessor.newInstance());
-            TaskExecutor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> connectExecutor = 
+            TaskExecutor<Pair<ConnectMessage.Request, PubSubSupport<Object>>, ConnectMessage.Response> connectExecutor = 
                     ServerTaskExecutor.ProcessorExecutor.of(
                             new ConnectProcessor(
                                 handlers,
@@ -268,7 +272,7 @@ public class FrontendServerExecutor extends DependentService {
         
         public FrontendServerTaskExecutor(
                 TaskExecutor<? super FourLetterRequest, ? extends FourLetterResponse> anonymousExecutor,
-                TaskExecutor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> connectExecutor,
+                TaskExecutor<Pair<ConnectMessage.Request, PubSubSupport<Object>>, ConnectMessage.Response> connectExecutor,
                 SessionTaskExecutor sessionExecutor) {
             super(anonymousExecutor, connectExecutor, sessionExecutor);
         }
@@ -290,7 +294,7 @@ public class FrontendServerExecutor extends DependentService {
             this.sessions = sessions;
             this.handlers = handlers;
             
-            sessions.register(this);
+            sessions.subscribe(this);
         }
         
         @Override
@@ -302,7 +306,7 @@ public class FrontendServerExecutor extends DependentService {
             return executor.submit(ProtocolRequestMessage.of(request.xid(), request.record()));
         }
 
-        @Subscribe
+        @Handler
         public void handleSessionStateEvent(SessionStateEvent event) {
             switch (event.event()) {
             case SESSION_EXPIRED:
@@ -320,7 +324,7 @@ public class FrontendServerExecutor extends DependentService {
         }
     }
 
-    protected static class ConnectProcessor implements Processor<Pair<ConnectMessage.Request, Publisher>, ConnectMessage.Response> {
+    protected static class ConnectProcessor implements Processor<Pair<ConnectMessage.Request, PubSubSupport<Object>>, ConnectMessage.Response> {
 
         protected final ConnectTableProcessor connector;
         protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
@@ -351,7 +355,7 @@ public class FrontendServerExecutor extends DependentService {
         }
         
         @Override
-        public ConnectMessage.Response apply(Pair<ConnectMessage.Request, Publisher> input) {
+        public ConnectMessage.Response apply(Pair<ConnectMessage.Request, PubSubSupport<Object>> input) {
             ConnectMessage.Response output = connector.apply(input.first());
             if (output instanceof ConnectMessage.Response.Valid) {
                 Session session = output.toSession();
@@ -368,11 +372,12 @@ public class FrontendServerExecutor extends DependentService {
                                 executor));
                 // TODO: what about reconnects?
             }
-            input.second().post(output);
+            input.second().publish(output);
             return output;
         }
     }
     
+    @net.engio.mbassy.listener.Listener(references = References.Strong)
     protected static class ClientPeerConnectionListener {
 
         protected final Logger logger = LogManager.getLogger(getClass());
@@ -389,7 +394,7 @@ public class FrontendServerExecutor extends DependentService {
         }
         
         public void start() {
-            connections.register(this);
+            connections.subscribe(this);
             for (ClientPeerConnection<?> c: connections) {
                 handleConnection(c);
             }
@@ -397,18 +402,19 @@ public class FrontendServerExecutor extends DependentService {
         
         public void stop() {
             try {
-                connections.unregister(this);
+                connections.unsubscribe(this);
             } catch (IllegalArgumentException e) {}
         }
-        
-        @Subscribe
+
+        @Handler
         public void handleConnection(ClientPeerConnection<?> connection) {
             ClientPeerConnectionDispatcher d = new ClientPeerConnectionDispatcher(connection);
             if (dispatchers.putIfAbsent(connection, d) == null) {
-                connection.register(d);
+                connection.subscribe(d);
             }
         }
 
+        @net.engio.mbassy.listener.Listener(references = References.Strong)
         protected class ClientPeerConnectionDispatcher extends Factories.Holder<ClientPeerConnection<?>> {
 
             public ClientPeerConnectionDispatcher(
@@ -416,11 +422,11 @@ public class FrontendServerExecutor extends DependentService {
                 super(connection);
             }
 
-            @Subscribe
+            @Handler
             public void handleTransition(Automaton.Transition<?> event) {
                 if (Connection.State.CONNECTION_CLOSED == event.to()) {
                     try {
-                        get().unregister(this);
+                        get().unsubscribe(this);
                     } catch (IllegalArgumentException e) {}
                     dispatchers.remove(get(), this);
                     for (FrontendSessionExecutor e: executors.values()) {
@@ -428,8 +434,8 @@ public class FrontendServerExecutor extends DependentService {
                     }
                 }
             }
-            
-            @Subscribe
+
+            @Handler
             public void handleMessage(MessagePacket<?> message) {
                 switch (message.getHeader().type()) {
                 case MESSAGE_TYPE_SESSION_RESPONSE:
