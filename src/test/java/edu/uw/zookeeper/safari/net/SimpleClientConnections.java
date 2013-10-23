@@ -13,30 +13,31 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.AssignXidCodec;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
+import edu.uw.zookeeper.server.SimpleServerExecutor;
 
 public class SimpleClientConnections extends AbstractIdleService implements Factory<ListenableFuture<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>>> {
 
     protected final ServiceMonitor monitor;
-    protected final SimpleServerBuilder server;
+    protected final SimpleServerBuilder<SimpleServerExecutor.Builder> server;
     protected final ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> clients;
     
     @Inject
     protected SimpleClientConnections(
             ServiceMonitor monitor,
-            SimpleServerBuilder server,
+            SimpleServerBuilder<SimpleServerExecutor.Builder> server,
             ClientConnectionFactory<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> clients) {
         this.monitor = monitor;
         this.server = server;
         this.clients = clients;
     }
     
-    public SimpleServerBuilder getServer() {
+    public SimpleServerBuilder<SimpleServerExecutor.Builder> getServer() {
         return server;
     }
     
     @Override
     public ListenableFuture<? extends ProtocolCodecConnection<Operation.Request, AssignXidCodec, Connection<Operation.Request>>> get() {
-        return clients.connect(server.getConnectionBuilder().getAddress().get());
+        return clients.connect(server.getConnectionsBuilder().getConnectionBuilder().getAddress().get());
     }
 
     @Override

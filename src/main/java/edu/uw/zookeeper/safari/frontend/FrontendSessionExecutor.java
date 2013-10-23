@@ -12,11 +12,12 @@ import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeoutException;
 
 import javax.annotation.Nullable;
 
 import net.engio.mbassy.PubSubSupport;
-import net.engio.mbassy.listener.Handler;
 
 import org.apache.zookeeper.KeeperException;
 import org.apache.logging.log4j.LogManager;
@@ -35,6 +36,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.inject.Provider;
 
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Actor;
@@ -42,11 +44,11 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ExecutedActor;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -55,12 +57,14 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
+import edu.uw.zookeeper.protocol.TimeOutParameters;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IPingResponse;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.protocol.server.TimeOutCallback;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.common.CachedLookup;
@@ -73,8 +77,36 @@ import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
+import edu.uw.zookeeper.server.SessionExecutor;
+import edu.uw.zookeeper.server.SessionStateEvent;
 
-public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestTask> implements TaskExecutor<Message.ClientRequest<?>, Message.ServerResponse<?>>, PubSubSupport<Object>, FutureCallback<ShardedResponseMessage<?>> {
+public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecutor.FrontendRequestTask> implements SessionExecutor, FutureCallback<ShardedResponseMessage<?>> {
+    
+    public static ParameterizedFactory<Pair<Session, PubSubSupport<Object>>, FrontendSessionExecutor> factory(
+             final Provider<? extends Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>>> processor,
+             final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
+             final CachedFunction<Identifier, Identifier> assignmentLookup,
+             final Function<? super Identifier, Identifier> ensembleForPeer,
+             final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
+             final ScheduledExecutorService scheduler,
+             final Executor executor) {
+        return new ParameterizedFactory<Pair<Session, PubSubSupport<Object>>, FrontendSessionExecutor>() {
+            @Override
+            public FrontendSessionExecutor get(
+                    Pair<Session, PubSubSupport<Object>> value) {
+                return newInstance(
+                        value.first(), 
+                        value.second(),
+                        processor.get(),
+                        volumeLookup,
+                        assignmentLookup,
+                        ensembleForPeer,
+                        connectionLookup,
+                        scheduler,
+                        executor);
+            }
+        };
+    }
     
     public static FrontendSessionExecutor newInstance(
             Session session,
@@ -84,8 +116,9 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             CachedFunction<Identifier, Identifier> assignmentLookup,
             Function<? super Identifier, Identifier> ensembleForPeer,
             CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
+            ScheduledExecutorService scheduler,
             Executor executor) {
-        return new FrontendSessionExecutor(session, publisher, processor, volumeLookup, assignmentLookup, ensembleForPeer, connectionLookup, executor);
+        return new FrontendSessionExecutor(session, publisher, processor, volumeLookup, assignmentLookup, ensembleForPeer, connectionLookup, scheduler, executor);
     }
     
     public static interface FrontendRequestFuture extends OperationFuture<Message.ServerResponse<?>> {}
@@ -100,6 +133,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     protected final ShardingProcessor sharder;
     protected final SubmitProcessor submitter;
     protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
+    protected final TimeOutCallback timer;
 
     public FrontendSessionExecutor(
             Session session,
@@ -109,6 +143,7 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             CachedFunction<Identifier, Identifier> assignments,
             Function<? super Identifier, Identifier> ensembleForPeer,
             CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
+            ScheduledExecutorService scheduler,
             Executor executor) {
         super();
         this.logger = LogManager.getLogger(getClass());
@@ -120,8 +155,17 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         this.sharder = new ShardingProcessor(volumes);
         this.submitter = new SubmitProcessor(assignments, 
                         new BackendLookup(ensembleForPeer, connectionLookup));
+        this.timer = TimeOutCallback.create(
+                TimeOutParameters.create(session.parameters().timeOut()), 
+                scheduler, 
+                this);
     }
     
+    @Override
+    public Session session() {
+        return session;
+    }
+
     @Override
     public void subscribe(Object handler) {
         publisher.subscribe(handler);
@@ -138,29 +182,9 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     }
 
     @Override
-    public void onSuccess(ShardedResponseMessage<?> result) {
-        if (result.xid() == OpCodeXid.NOTIFICATION.xid()) {
-            publish(processor.apply(
-                    Pair.create(session().id(),
-                            Pair.create(
-                                    Optional.<Operation.ProtocolRequest<?>>absent(),
-                                    (Records.Response) result.record()))));
-        }
-    }
-    
-    @Override
-    public void onFailure(Throwable t) {
-        // FIXME
-        throw new AssertionError(t);
-    }
-    
-    public Session session() {
-        return session;
-    }
-    
-    @Override
     public ListenableFuture<Message.ServerResponse<?>> submit(
             Message.ClientRequest<?> request) {
+        timer.send(request);
         if (request.xid() == OpCodeXid.PING.xid()) {
             // short circuit pings
             return Futures.<Message.ServerResponse<?>>immediateFuture(processor.apply(
@@ -180,18 +204,28 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
     }
 
     @Override
-    protected synchronized boolean doSend(FrontendRequestTask message) {
-        if (! mailbox().offer(message)) {
-            return false;
+    public void onSuccess(ShardedResponseMessage<?> result) {
+        if (result.xid() == OpCodeXid.NOTIFICATION.xid()) {
+            publish(processor.apply(
+                    Pair.create(session().id(),
+                            Pair.create(
+                                    Optional.<Operation.ProtocolRequest<?>>absent(),
+                                    (Records.Response) result.record()))));
         }
-        if (!sharder.send(message) || (!schedule() && (state() == State.TERMINATED))) {
-            mailbox().remove(message);
-            return false;
+    }
+    
+    @Override
+    public void onFailure(Throwable t) {
+        if (t instanceof TimeoutException) {
+            publish(SessionStateEvent.create(session(), Session.State.SESSION_EXPIRED));
+            Message.ClientRequest<Records.Request> request = ProtocolRequestMessage.of(0, Records.Requests.getInstance().get(OpCode.CLOSE_SESSION));
+            submit(request);
+        } else {
+            // FIXME
+            throw new AssertionError(t);
         }
-        return true;
     }
 
-    @Handler
     public void handleTransition(Pair<Identifier, Automaton.Transition<?>> event) {
         if (state() == State.TERMINATED) {
             return;
@@ -208,7 +242,6 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
         }
     }
 
-    @Handler
     public void handleResponse(Pair<Identifier, ShardedResponseMessage<?>> message) {
         if (state() == State.TERMINATED) {
             return;
@@ -219,6 +252,18 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
             return;
         }
         backend.handleResponse(message.second());
+    }
+
+    @Override
+    protected synchronized boolean doSend(FrontendRequestTask message) {
+        if (! mailbox().offer(message)) {
+            return false;
+        }
+        if (!sharder.send(message) || (!schedule() && (state() == State.TERMINATED))) {
+            mailbox().remove(message);
+            return false;
+        }
+        return true;
     }
 
     @Override

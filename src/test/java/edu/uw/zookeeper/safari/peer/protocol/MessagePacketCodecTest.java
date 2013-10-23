@@ -25,7 +25,7 @@ public class MessagePacketCodecTest {
         ObjectMapper mapper = ObjectMapperBuilder.defaults().build();
         MessagePacketCodec codec = MessagePacketCodec.newInstance(mapper);
         Identifier id = Identifier.valueOf(1);
-        MessagePacket packet = MessagePacket.of(MessageHandshake.of(id));
+        MessagePacket<?> packet = MessagePacket.of(MessageHandshake.of(id));
         ByteBuf buf = Unpooled.buffer();
         codec.encode(packet, buf);
         assertEquals(packet, codec.decode(buf));

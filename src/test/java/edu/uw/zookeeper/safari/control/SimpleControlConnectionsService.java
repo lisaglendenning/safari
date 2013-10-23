@@ -28,6 +28,8 @@ import edu.uw.zookeeper.protocol.ProtocolCodec;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
+import edu.uw.zookeeper.server.SimpleServerConnectionsBuilder;
+import edu.uw.zookeeper.server.SimpleServerExecutor;
 
 public class SimpleControlConnectionsService extends ControlConnectionsService<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> {
 
@@ -63,11 +65,13 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
             NetServerModule serverModule,
             NetClientModule clientModule,
             RuntimeModule runtime) {
-        SimpleServerBuilder server = SimpleServerBuilder.defaults(address, serverModule)
-                .setRuntimeModule(runtime)
-                .setDefaults();
+        SimpleServerBuilder<SimpleServerExecutor.Builder> server = new SimpleServerBuilder<SimpleServerExecutor.Builder>(
+                SimpleServerExecutor.builder(), 
+                SimpleServerConnectionsBuilder.defaults(address, serverModule))
+                    .setRuntimeModule(runtime)
+                    .setDefaults();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
-        ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getTimeOut());
+        ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getConnectionsBuilder().getTimeOut());
         @SuppressWarnings("unchecked")
         ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
             (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
@@ -81,11 +85,11 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
     }
     
     protected final ControlConfiguration configuration;
-    protected final SimpleServerBuilder server;
+    protected final SimpleServerBuilder<?> server;
     
     protected SimpleControlConnectionsService(
             ControlConfiguration configuration,
-            SimpleServerBuilder server,
+            SimpleServerBuilder<?> server,
             ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections,
             EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>>> factory) {
         super(connections, factory);
@@ -97,7 +101,7 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
         return configuration;
     }
     
-    public SimpleServerBuilder getServer() {
+    public SimpleServerBuilder<?> getServer() {
         return server;
     }
 

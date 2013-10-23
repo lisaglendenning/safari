@@ -25,6 +25,8 @@ import edu.uw.zookeeper.safari.backend.BackendConfiguration;
 import edu.uw.zookeeper.safari.backend.BackendConnectionsService;
 import edu.uw.zookeeper.safari.backend.BackendView;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
+import edu.uw.zookeeper.server.SimpleServerConnectionsBuilder;
+import edu.uw.zookeeper.server.SimpleServerExecutor;
 
 public class SimpleBackendConnections extends BackendConnectionsService<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> {
 
@@ -59,14 +61,16 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
             NetServerModule serverModule,
             NetClientModule clientModule,
             RuntimeModule runtime) {
-        SimpleServerBuilder server = SimpleServerBuilder.defaults(address, serverModule)
-                .setRuntimeModule(runtime)
-                .setDefaults();
+        SimpleServerBuilder<SimpleServerExecutor.Builder> server = new SimpleServerBuilder<SimpleServerExecutor.Builder>(
+                SimpleServerExecutor.builder(), 
+                SimpleServerConnectionsBuilder.defaults(address, serverModule))
+                    .setRuntimeModule(runtime)
+                    .setDefaults();
         @SuppressWarnings("unchecked")
         ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
             (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
-        BackendConfiguration configuration = new BackendConfiguration(BackendView.of(address, ensemble), server.getTimeOut());
+        BackendConfiguration configuration = new BackendConfiguration(BackendView.of(address, ensemble), server.getConnectionsBuilder().getTimeOut());
         FixedClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> factory = 
                 FixedClientConnectionFactory.create(
                         configuration.getView().getClientAddress().get(), connections);
@@ -74,11 +78,11 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
     }
 
     protected final BackendConfiguration configuration;
-    protected final SimpleServerBuilder server;
+    protected final SimpleServerBuilder<SimpleServerExecutor.Builder> server;
     
     protected SimpleBackendConnections(
             BackendConfiguration configuration,
-            SimpleServerBuilder server,
+            SimpleServerBuilder<SimpleServerExecutor.Builder> server,
             FixedClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections) {
         super(connections);
         this.configuration = configuration;
@@ -89,7 +93,7 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
         return configuration;
     }
     
-    public SimpleServerBuilder getServer() {
+    public SimpleServerBuilder<SimpleServerExecutor.Builder> getServer() {
         return server;
     }
 

@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.frontend;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -9,9 +10,11 @@ import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -19,7 +22,6 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.TimeValue;
@@ -30,9 +32,9 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Message.Server;
 import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
-import edu.uw.zookeeper.protocol.server.ConnectionServerExecutor;
+import edu.uw.zookeeper.protocol.server.ServerConnectionsHandler;
+import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
-import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
@@ -41,11 +43,10 @@ import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
-import edu.uw.zookeeper.server.ConnectionServerExecutorsService;
 import edu.uw.zookeeper.server.ServerConnectionFactoryBuilder;
 
 @DependsOn({FrontendServerExecutor.class})
-public class FrontendServerService<T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ConnectionServerExecutorsService<T> {
+public class FrontendServerService<C extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ServerConnectionsHandler<C> {
 
     public static Module module() {
         return new Module();
@@ -63,16 +64,19 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
 
         @Provides @Singleton
         public FrontendServerService<?> getFrontendServerService(
+                ServerExecutor<FrontendSessionExecutor> server, 
+                ScheduledExecutorService scheduler,
                 RuntimeModule runtime,
                 FrontendConfiguration configuration, 
-                ServerTaskExecutor serverExecutor,
                 ScheduledExecutorService executor,
                 Injector injector,
                 NetServerModule serverModule) throws Exception {
             ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = 
                     getServerConnectionFactory(runtime, configuration, serverModule);
-            return FrontendServerService.newInstance(
-                    connections, configuration.getTimeOut(), executor, serverExecutor, injector);
+            FrontendServerService<?> instance = FrontendServerService.newInstance(
+                    server, executor, configuration.getTimeOut(), injector);
+            connections.subscribe(instance);
+            return instance;
         }
         
         protected ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> getServerConnectionFactory(
@@ -95,25 +99,6 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         }
     }
     
-    public static <T extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> FrontendServerService<T> newInstance(
-            ServerConnectionFactory<T> connections,
-            TimeValue timeOut,
-            ScheduledExecutorService executor,
-            ServerTaskExecutor server,
-            Injector injector) {
-        FrontendServerService<T> instance = new FrontendServerService<T>(
-                connections,             
-                ConnectionServerExecutor.<T>factory(
-                        timeOut,
-                        executor,
-                        server.getAnonymousExecutor(), 
-                        server.getConnectExecutor(), 
-                        server.getSessionExecutor()), 
-                injector);
-        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
-        return instance;
-    }
-
     public static class AllVolumesAssigned implements Processor<Object, Optional<Boolean>> {
         
         public static ZNodeLabel.Path root() {
@@ -150,14 +135,32 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         }
     }
 
+    public static <C extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> FrontendServerService<C> newInstance(
+            ServerExecutor<?> server, 
+            ScheduledExecutorService scheduler, 
+            TimeValue timeOut,
+            Injector injector) {
+        ConcurrentMap<C, ServerConnectionsHandler<C>.ConnectionHandler<?,?>> handlers = new MapMaker().weakKeys().weakValues().makeMap();
+        FrontendServerService<C> instance = new FrontendServerService<C>(
+                server,
+                scheduler,
+                timeOut,
+                handlers,
+                injector);
+        new Advertiser(instance, injector);
+        return instance;
+    }
+
     protected final Logger logger;
     protected final Injector injector;
     
     protected FrontendServerService(
-            ServerConnectionFactory<T> connections,
-            ParameterizedFactory<T, ConnectionServerExecutor<T>> factory,
+            ServerExecutor<?> server, 
+            ScheduledExecutorService scheduler, 
+            TimeValue timeOut,
+            ConcurrentMap<C, ConnectionHandler<?,?>> handlers,
             Injector injector) {
-        super(connections, factory);
+        super(server, scheduler, timeOut, handlers);
         this.logger = LogManager.getLogger(getClass());
         this.injector = injector;
     }
@@ -177,17 +180,35 @@ public class FrontendServerService<T extends ProtocolCodecConnection<Message.Ser
         super.startUp();
     }
 
-    public class Advertiser extends Service.Listener {
+    public static class Advertiser extends Service.Listener {
 
-        public Advertiser(Executor executor) {
-            addListener(this, executor);
+        protected final Logger logger;
+        protected final Injector injector;
+        
+        @Inject
+        public Advertiser(
+                FrontendServerService<?> server,
+                Injector injector) {
+            this(server, injector, MoreExecutors.sameThreadExecutor());
         }
 
+        public Advertiser(
+                FrontendServerService<?> server,
+                Injector injector,
+                Executor executor) {
+            this.logger = LogManager.getLogger(getClass());
+            this.injector = injector;
+            server.addListener(this, executor);
+            if (server.isRunning()) {
+                running();
+            }
+        }
+        
         @Override
         public void running() {
-            Materializer<?> materializer = injector().getInstance(ControlMaterializerService.class).materializer();
-            Identifier peerId = injector().getInstance(PeerConfiguration.class).getView().id();
-            ServerInetAddressView address = injector().getInstance(FrontendConfiguration.class).getAddress();
+            Materializer<?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
+            Identifier peerId = injector.getInstance(PeerConfiguration.class).getView().id();
+            ServerInetAddressView address = injector.getInstance(FrontendConfiguration.class).getAddress();
             try {
                 FrontendConfiguration.advertise(peerId, address, materializer);
             } catch (Exception e) {

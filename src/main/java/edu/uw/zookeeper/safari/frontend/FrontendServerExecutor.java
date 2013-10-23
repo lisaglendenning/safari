@@ -1,26 +1,24 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import net.engio.mbassy.PubSubSupport;
-import net.engio.mbassy.bus.SyncBusConfiguration;
-import net.engio.mbassy.bus.SyncMessageBus;
 import net.engio.mbassy.listener.Handler;
 import net.engio.mbassy.listener.References;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
-import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
+import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -29,49 +27,38 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.Processor;
+import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.TaskExecutor;
-import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
-import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.FourLetterRequest;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
-import edu.uw.zookeeper.protocol.SessionOperation;
 import edu.uw.zookeeper.protocol.FourLetterResponse;
 import edu.uw.zookeeper.protocol.server.AssignZxidProcessor;
-import edu.uw.zookeeper.protocol.server.ConnectTableProcessor;
-import edu.uw.zookeeper.protocol.server.FourLetterRequestProcessor;
-import edu.uw.zookeeper.protocol.server.ServerTaskExecutor;
-import edu.uw.zookeeper.protocol.server.SessionStateEvent;
+import edu.uw.zookeeper.server.FourLetterRequestProcessor;
+import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.protocol.server.ZxidGenerator;
 import edu.uw.zookeeper.protocol.ZxidReference;
-import edu.uw.zookeeper.protocol.proto.IDisconnectRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
-import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
-import edu.uw.zookeeper.server.DefaultSessionParametersPolicy;
-import edu.uw.zookeeper.server.ExpiringSessionService;
-import edu.uw.zookeeper.server.ExpiringSessionTable;
-import edu.uw.zookeeper.server.SessionParametersPolicy;
-import edu.uw.zookeeper.server.SessionTable;
+import edu.uw.zookeeper.server.SessionManager;
+import edu.uw.zookeeper.server.SimpleServerExecutor;
+import edu.uw.zookeeper.server.SimpleServerExecutor.SimpleConnectExecutor;
 
-@DependsOn({RegionConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class, ExpiringSessionService.class })
+@DependsOn({RegionConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
 public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {
@@ -84,128 +71,102 @@ public class FrontendServerExecutor extends DependentService {
         
         @Override
         protected void configure() {
-            bind(ServerTaskExecutor.class).to(FrontendServerTaskExecutor.class).in(Singleton.class);
             bind(ZxidGenerator.class).to(ZxidEpochIncrementer.class).in(Singleton.class);
             bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
-        }
-
-        @SuppressWarnings("rawtypes")
-        @Provides @Singleton
-        public ExpiringSessionTable getSessionTable(
-                Configuration configuration) {
-            SessionParametersPolicy policy = DefaultSessionParametersPolicy.create(configuration);
-            return ExpiringSessionTable.newInstance(
-                    new SyncMessageBus<Object>(new SyncBusConfiguration()), policy);
-        }
-
-        @Provides @Singleton
-        public ExpiringSessionService getExpiringSessionService(
-                Configuration configuration,
-                ScheduledExecutorService executor,
-                ExpiringSessionTable sessions) {
-            return ExpiringSessionService.newInstance(sessions, executor, configuration);
+            bind(SessionManager.class).to(SimpleConnectExecutor.class).in(Singleton.class);
+            bind(ServerExecutor.class).to(SimpleServerExecutor.class).in(Singleton.class);
+            bind(ResponseProcessor.class).in(Singleton.class);
+            bind(ClientPeerConnectionListener.class).in(Singleton.class);
+            bind(FrontendServerExecutor.class).in(Singleton.class);
         }
         
+        @Provides @Singleton
+        public ConcurrentMap<Long, FrontendSessionExecutor> getSessionExecutors() {
+            return new MapMaker().makeMap();
+        }
+        
+        @Provides @Singleton
+        public TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor() {
+            return SimpleServerExecutor.ProcessorTaskExecutor.of(
+                    FourLetterRequestProcessor.newInstance());
+        }
+        
+        @Provides @Singleton
+        public SimpleConnectExecutor<FrontendSessionExecutor> getConnectExecutor(
+                Configuration configuration,
+                ZxidReference lastZxid,
+                ConcurrentMap<Long, FrontendSessionExecutor> sessions,
+                Provider<ResponseProcessor> processor,
+                VolumeCacheService volumes,
+                AssignmentCacheService assignments,
+                PeerToEnsembleLookup peerToEnsemble,
+                RegionConnectionsService connections,
+                ScheduledExecutorService scheduler,
+                Executor executor) {
+            ParameterizedFactory<Pair<Session, PubSubSupport<Object>>, FrontendSessionExecutor> factory = FrontendSessionExecutor.factory(
+                    processor,
+                    volumes.byPath(),
+                    assignments.get().asLookup(),
+                    peerToEnsemble.get().asLookup().cached(),
+                    connections.getConnectionForEnsemble(),
+                    scheduler, 
+                    executor);
+            return SimpleConnectExecutor.defaults(
+                    sessions, factory, configuration, lastZxid);
+        }
+
         @Provides @Singleton
         public ZxidEpochIncrementer getZxids() {
             return ZxidEpochIncrementer.fromZero();
         }
 
         @Provides @Singleton
-        public FrontendServerExecutor getServerExecutor(
-                Injector injector,
-                VolumeCacheService volumes,
-                AssignmentCacheService assignments,
-                PeerToEnsembleLookup peerToEnsemble,
-                ClientPeerConnections peers,
-                RegionConnectionsService ensembles,
-                Executor executor,
-                ExpiringSessionTable sessions,
-                ZxidGenerator zxids) {
-            return FrontendServerExecutor.newInstance(
-                            volumes, assignments, peerToEnsemble, peers, ensembles, executor, sessions, zxids, injector);
-        }
-
-        @Provides @Singleton
-        public FrontendServerTaskExecutor getServerTaskExecutor(
-                FrontendServerExecutor server) {
-            return server.asTaskExecutor();
+        public SimpleServerExecutor<FrontendSessionExecutor> getServerExecutor(
+                TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor,
+                SimpleConnectExecutor<FrontendSessionExecutor> connectExecutor,
+                ConcurrentMap<Long, FrontendSessionExecutor> sessionExecutors) {
+            return new SimpleServerExecutor<FrontendSessionExecutor>(sessionExecutors, connectExecutor, anonymousExecutor);
         }
     }
     
     public static FrontendServerExecutor newInstance(
-            VolumeCacheService volumes,
-            AssignmentCacheService assignments,
-            PeerToEnsembleLookup peerToEnsemble,
-            ClientPeerConnections peers,
-            RegionConnectionsService ensembles,
-            Executor executor,
-            ExpiringSessionTable sessions,
-            ZxidGenerator zxids,
             Injector injector) {
-        ConcurrentMap<Long, FrontendSessionExecutor> handlers = new MapMaker().makeMap();
-        FrontendServerTaskExecutor server = FrontendServerTaskExecutor.newInstance(handlers, volumes, assignments, peerToEnsemble, ensembles, executor, sessions, zxids);
-        return new FrontendServerExecutor(handlers, server, peers, injector);
+        return new FrontendServerExecutor(injector);
     }
     
-    protected final FrontendServerTaskExecutor executor;
-    protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
-    protected final ClientPeerConnectionListener connections;
-    
+    @Inject
     protected FrontendServerExecutor(
-            ConcurrentMap<Long, FrontendSessionExecutor> handlers,
-            FrontendServerTaskExecutor executor,
-            ClientPeerConnections connections,
             Injector injector) {
         super(injector);
-        this.handlers = handlers;
-        this.executor = executor;
-        this.connections = new ClientPeerConnectionListener(handlers, connections);
     }
     
-    public FrontendServerTaskExecutor asTaskExecutor() {
-        return executor;
-    }
-
     @Override
     protected void startUp() throws Exception {
         super.startUp();
-        connections.start();
+        injector.getInstance(ClientPeerConnectionListener.class);
     }
 
-    
-    @Override
-    protected void shutDown() throws Exception {
-        super.shutDown();
-        connections.stop();
-    }
-    
-    protected static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> {
+    public static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> {
 
         public static ResponseProcessor create(
-                ConcurrentMap<Long, FrontendSessionExecutor> handlers,
-                SessionTable sessions,
+                SessionManager sessions,
                 ZxidGenerator zxids) {
-            return new ResponseProcessor(handlers, sessions, zxids);
+            return new ResponseProcessor(sessions, zxids);
         }
         
-        protected final SessionTable sessions;
+        protected final SessionManager sessions;
         protected final AssignZxidProcessor zxids;
-        protected final Map<Long, ?> handlers;
 
         @Inject
         public ResponseProcessor(
-                Map<Long, ?> handlers,
-                SessionTable sessions,
+                SessionManager sessions,
                 ZxidGenerator zxids) {
-            this(handlers, sessions, AssignZxidProcessor.newInstance(zxids));
+            this(sessions, AssignZxidProcessor.newInstance(zxids));
         }
         
         public ResponseProcessor(
-                Map<Long, ?> handlers,
-                SessionTable sessions,
+                SessionManager sessions,
                 AssignZxidProcessor zxids) {
-            this.handlers = handlers;
             this.sessions = sessions;
             this.zxids = zxids;
         }
@@ -227,191 +188,52 @@ public class FrontendServerExecutor extends DependentService {
                 opcode = request.get().record().opcode();
             }
             long zxid = zxids.apply(opcode);
-            if ((opcode == OpCode.CLOSE_SESSION) && !(response instanceof Operation.Error)) {
-                Long sessionId = input.first();
-                sessions.remove(sessionId);
-                handlers.remove(sessionId);
+            if (opcode == OpCode.CLOSE_SESSION) {
+                sessions.remove(input.first());
             }
             return ProtocolResponseMessage.of(xid, zxid, response);
         }
-        
     }
 
-    protected static class FrontendServerTaskExecutor extends ServerTaskExecutor {
-        
-        public static FrontendServerTaskExecutor newInstance(
-                ConcurrentMap<Long, FrontendSessionExecutor> handlers,
-                VolumeCacheService volumes,
-                AssignmentCacheService assignments,
-                PeerToEnsembleLookup peerToEnsemble,
-                RegionConnectionsService connections,
-                Executor executor,
-                ExpiringSessionTable sessions,
-                ZxidGenerator zxids) {
-            TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor = 
-                    ServerTaskExecutor.ProcessorExecutor.of(
-                            FourLetterRequestProcessor.newInstance());
-            TaskExecutor<Pair<ConnectMessage.Request, PubSubSupport<Object>>, ConnectMessage.Response> connectExecutor = 
-                    ServerTaskExecutor.ProcessorExecutor.of(
-                            new ConnectProcessor(
-                                handlers,
-                                volumes.byPath(),
-                                assignments.get().asLookup(),
-                                peerToEnsemble.get().asLookup().cached(),
-                                connections.getConnectionForEnsemble(),
-                                ConnectTableProcessor.create(sessions, zxids),
-                                ResponseProcessor.create(handlers, sessions, zxids),
-                                executor));
-            SessionTaskExecutor sessionExecutor = 
-                    new SessionTaskExecutor(sessions, handlers);
-            return new FrontendServerTaskExecutor(
-                    anonymousExecutor,
-                    connectExecutor,
-                    sessionExecutor);
-        }
-        
-        public FrontendServerTaskExecutor(
-                TaskExecutor<? super FourLetterRequest, ? extends FourLetterResponse> anonymousExecutor,
-                TaskExecutor<Pair<ConnectMessage.Request, PubSubSupport<Object>>, ConnectMessage.Response> connectExecutor,
-                SessionTaskExecutor sessionExecutor) {
-            super(anonymousExecutor, connectExecutor, sessionExecutor);
-        }
-        
-        @Override
-        public SessionTaskExecutor getSessionExecutor() {
-            return (SessionTaskExecutor) sessionExecutor;
-        }
-    }
-    
-    protected static class SessionTaskExecutor implements TaskExecutor<SessionOperation.Request<?>, Message.ServerResponse<?>> {
-
-        protected final ExpiringSessionTable sessions;
-        protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
-
-        public SessionTaskExecutor(
-                ExpiringSessionTable sessions,
-                ConcurrentMap<Long, FrontendSessionExecutor> handlers) {
-            this.sessions = sessions;
-            this.handlers = handlers;
-            
-            sessions.subscribe(this);
-        }
-        
-        @Override
-        public ListenableFuture<Message.ServerResponse<?>> submit(
-                SessionOperation.Request<?> request) {
-            long sessionId = request.getSessionId();
-            sessions.touch(sessionId);
-            FrontendSessionExecutor executor = handlers.get(sessionId);
-            return executor.submit(ProtocolRequestMessage.of(request.xid(), request.record()));
-        }
-
-        @Handler
-        public void handleSessionStateEvent(SessionStateEvent event) {
-            switch (event.event()) {
-            case SESSION_EXPIRED:
-            {
-                long sessionId = event.session().id();
-                FrontendSessionExecutor executor = handlers.get(sessionId);
-                if (executor != null) {
-                    executor.submit(ProtocolRequestMessage.of(0, Records.newInstance(IDisconnectRequest.class)));
-                }
-                break;
-            }
-            default:
-                break;
-            }
-        }
-    }
-
-    protected static class ConnectProcessor implements Processor<Pair<ConnectMessage.Request, PubSubSupport<Object>>, ConnectMessage.Response> {
-
-        protected final ConnectTableProcessor connector;
-        protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
-        protected final ConcurrentMap<Long, FrontendSessionExecutor> handlers;
-        protected final CachedFunction<ZNodeLabel.Path, Volume> volumeLookup;
-        protected final CachedFunction<Identifier, Identifier> assignmentLookup;
-        protected final Function<? super Identifier, Identifier> ensembleForPeer;
-        protected final CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup;
-        protected final Executor executor;
-        
-        public ConnectProcessor(
-                ConcurrentMap<Long, FrontendSessionExecutor> handlers,
-                CachedFunction<ZNodeLabel.Path, Volume> volumeLookup,
-                CachedFunction<Identifier, Identifier> assignmentLookup,
-                Function<? super Identifier, Identifier> ensembleForPeer,
-                CachedFunction<Identifier, ClientPeerConnection<Connection<? super MessagePacket<?>>>> connectionLookup,
-                ConnectTableProcessor connector,
-                Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
-                Executor executor) {
-            this.connector = connector;
-            this.processor = processor;
-            this.volumeLookup = volumeLookup;
-            this.assignmentLookup = assignmentLookup;
-            this.ensembleForPeer = ensembleForPeer;
-            this.connectionLookup = connectionLookup;
-            this.executor = executor;
-            this.handlers = handlers;
-        }
-        
-        @Override
-        public ConnectMessage.Response apply(Pair<ConnectMessage.Request, PubSubSupport<Object>> input) {
-            ConnectMessage.Response output = connector.apply(input.first());
-            if (output instanceof ConnectMessage.Response.Valid) {
-                Session session = output.toSession();
-                handlers.putIfAbsent(
-                        session.id(), 
-                        FrontendSessionExecutor.newInstance(
-                                session, 
-                                input.second(),
-                                processor,
-                                volumeLookup,
-                                assignmentLookup,
-                                ensembleForPeer,
-                                connectionLookup,
-                                executor));
-                // TODO: what about reconnects?
-            }
-            input.second().publish(output);
-            return output;
-        }
-    }
-    
     @net.engio.mbassy.listener.Listener(references = References.Strong)
-    protected static class ClientPeerConnectionListener {
+    protected static class ClientPeerConnectionListener extends Service.Listener {
 
         protected final Logger logger = LogManager.getLogger(getClass());
         protected final ClientPeerConnections connections;
-        protected final ConcurrentMap<Long, FrontendSessionExecutor> executors;
+        protected final ServerExecutor<FrontendSessionExecutor> sessions;
         protected final ConcurrentMap<ClientPeerConnection<?>, ClientPeerConnectionDispatcher> dispatchers;
         
+        @Inject
         public ClientPeerConnectionListener(
-                ConcurrentMap<Long, FrontendSessionExecutor> executors,
+                ServerExecutor<FrontendSessionExecutor> sessions,
                 ClientPeerConnections connections) {
-            this.executors = executors;
+            this.sessions = sessions;
             this.connections = connections;
+            // TODO: can be weak references?
             this.dispatchers = new MapMaker().makeMap();
+            
+            connections.addListener(this, MoreExecutors.sameThreadExecutor());
+            if (connections.isRunning()) {
+                running();
+            }
         }
-        
-        public void start() {
+
+        @Override
+        public void running() {
             connections.subscribe(this);
             for (ClientPeerConnection<?> c: connections) {
                 handleConnection(c);
             }
         }
-        
-        public void stop() {
-            try {
-                connections.unsubscribe(this);
-            } catch (IllegalArgumentException e) {}
-        }
 
+        @Override
+        public void stopping(State from) {
+            connections.unsubscribe(this);
+        }
+        
         @Handler
         public void handleConnection(ClientPeerConnection<?> connection) {
-            ClientPeerConnectionDispatcher d = new ClientPeerConnectionDispatcher(connection);
-            if (dispatchers.putIfAbsent(connection, d) == null) {
-                connection.subscribe(d);
-            }
+            new ClientPeerConnectionDispatcher(connection);
         }
 
         @net.engio.mbassy.listener.Listener(references = References.Strong)
@@ -420,17 +242,24 @@ public class FrontendServerExecutor extends DependentService {
             public ClientPeerConnectionDispatcher(
                     ClientPeerConnection<?> connection) {
                 super(connection);
+                
+                if (dispatchers.putIfAbsent(connection, this) == null) {
+                    connection.subscribe(this);
+                    
+                    if (connection.state().compareTo(Connection.State.CONNECTION_CLOSED) >= 0) {
+                        handleTransition(Automaton.Transition.create(Connection.State.CONNECTION_CLOSED, connection.state()));
+                    }
+                }
             }
 
             @Handler
             public void handleTransition(Automaton.Transition<?> event) {
                 if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                    try {
-                        get().unsubscribe(this);
-                    } catch (IllegalArgumentException e) {}
+                    get().unsubscribe(this);
                     dispatchers.remove(get(), this);
-                    for (FrontendSessionExecutor e: executors.values()) {
-                        e.handleTransition(Pair.<Identifier, Automaton.Transition<?>>create(get().remoteAddress().getIdentifier(), event));
+                    for (FrontendSessionExecutor e: sessions) {
+                        e.handleTransition(Pair.<Identifier, Automaton.Transition<?>>create(
+                                get().remoteAddress().getIdentifier(), event));
                     }
                 }
             }
@@ -441,11 +270,12 @@ public class FrontendServerExecutor extends DependentService {
                 case MESSAGE_TYPE_SESSION_RESPONSE:
                 {
                     MessageSessionResponse body = (MessageSessionResponse) message.getBody();
-                    FrontendSessionExecutor e = executors.get(body.getIdentifier());
+                    FrontendSessionExecutor e = sessions.sessionExecutor(body.getIdentifier());
                     if (e != null) {
-                        e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(get().remoteAddress().getIdentifier(), body.getValue()));
+                        e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(
+                                get().remoteAddress().getIdentifier(), body.getValue()));
                     } else {
-                        logger.warn("Ignoring message {}", message);
+                        logger.warn("Ignoring {}", message);
                     }
                     break;
                 }
