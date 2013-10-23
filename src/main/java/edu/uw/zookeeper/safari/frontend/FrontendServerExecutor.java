@@ -21,6 +21,7 @@ import com.google.inject.Injector;
 import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Automaton;
@@ -73,8 +74,7 @@ public class FrontendServerExecutor extends DependentService {
         protected void configure() {
             bind(ZxidGenerator.class).to(ZxidEpochIncrementer.class).in(Singleton.class);
             bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
-            bind(SessionManager.class).to(SimpleConnectExecutor.class).in(Singleton.class);
-            bind(ServerExecutor.class).to(SimpleServerExecutor.class).in(Singleton.class);
+            bind(SessionManager.class).to(new TypeLiteral<SimpleConnectExecutor<FrontendSessionExecutor>>() {}).in(Singleton.class);
             bind(ResponseProcessor.class).in(Singleton.class);
             bind(ClientPeerConnectionListener.class).in(Singleton.class);
             bind(FrontendServerExecutor.class).in(Singleton.class);
@@ -121,7 +121,7 @@ public class FrontendServerExecutor extends DependentService {
         }
 
         @Provides @Singleton
-        public SimpleServerExecutor<FrontendSessionExecutor> getServerExecutor(
+        public ServerExecutor<FrontendSessionExecutor> getServerExecutor(
                 TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor,
                 SimpleConnectExecutor<FrontendSessionExecutor> connectExecutor,
                 ConcurrentMap<Long, FrontendSessionExecutor> sessionExecutors) {

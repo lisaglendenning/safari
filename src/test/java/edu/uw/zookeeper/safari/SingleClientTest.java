@@ -112,7 +112,7 @@ public class SingleClientTest {
         client.getClient().getConnectionClientExecutor().submit(
                 Operations.Requests.create().build());
         
-        int iterations = 32;
+        int iterations = 2;
         int logInterval = 8;
         Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 
                 CallUntilPresent.create(IterationCallable.create(iterations, logInterval, 

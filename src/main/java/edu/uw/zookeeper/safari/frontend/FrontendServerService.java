@@ -24,6 +24,7 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.RuntimeModule;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
@@ -74,8 +75,7 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
             ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = 
                     getServerConnectionFactory(runtime, configuration, serverModule);
             FrontendServerService<?> instance = FrontendServerService.newInstance(
-                    server, executor, configuration.getTimeOut(), injector);
-            connections.subscribe(instance);
+                    connections, server, executor, configuration.getTimeOut(), injector);
             return instance;
         }
         
@@ -136,12 +136,14 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
     }
 
     public static <C extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> FrontendServerService<C> newInstance(
+            ServerConnectionFactory<C> connections,
             ServerExecutor<?> server, 
             ScheduledExecutorService scheduler, 
             TimeValue timeOut,
             Injector injector) {
         ConcurrentMap<C, ServerConnectionsHandler<C>.ConnectionHandler<?,?>> handlers = new MapMaker().weakKeys().weakValues().makeMap();
         FrontendServerService<C> instance = new FrontendServerService<C>(
+                connections,
                 server,
                 scheduler,
                 timeOut,
@@ -153,8 +155,10 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
 
     protected final Logger logger;
     protected final Injector injector;
+    protected final ServerConnectionFactory<C> connections;
     
     protected FrontendServerService(
+            ServerConnectionFactory<C> connections,
             ServerExecutor<?> server, 
             ScheduledExecutorService scheduler, 
             TimeValue timeOut,
@@ -163,6 +167,7 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
         super(server, scheduler, timeOut, handlers);
         this.logger = LogManager.getLogger(getClass());
         this.injector = injector;
+        this.connections = connections;
     }
     
     protected Injector injector() {
@@ -178,8 +183,18 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
                 injector().getInstance(ControlMaterializerService.class).materializer()).get();
 
         super.startUp();
+
+        connections.subscribe(this);
+        connections.startAsync().awaitRunning();
+        injector().getInstance(ServiceMonitor.class).add(connections);
     }
 
+    @Override
+    protected void shutDown() throws Exception {
+        connections.unsubscribe(this);
+        super.shutDown();
+    }
+    
     public static class Advertiser extends Service.Listener {
 
         protected final Logger logger;

@@ -67,7 +67,7 @@ public class BootstrapTest {
         }
     }
 
-    @Test(timeout=5000)
+    @Test(timeout=10000)
     public void test() throws InterruptedException, ExecutionException {
         Injector injector = SimpleMainService.Module.injector();
         injector.getInstance(SimpleMainService.class).startAsync().awaitRunning();

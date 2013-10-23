@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.backend;
 
 import java.net.InetSocketAddress;
+import java.util.List;
 
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -12,6 +13,7 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.FixedClientConnectionFactory;
 import edu.uw.zookeeper.client.SimpleClientBuilder;
+import edu.uw.zookeeper.common.CachingBuilder;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -61,7 +63,7 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
             NetServerModule serverModule,
             NetClientModule clientModule,
             RuntimeModule runtime) {
-        SimpleServerBuilder<SimpleServerExecutor.Builder> server = new SimpleServerBuilder<SimpleServerExecutor.Builder>(
+        SimpleServerBuilder<SimpleServerExecutor.Builder> server = SimpleServerBuilder.fromBuilders(
                 SimpleServerExecutor.builder(), 
                 SimpleServerConnectionsBuilder.defaults(address, serverModule))
                     .setRuntimeModule(runtime)
@@ -78,7 +80,7 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
     }
 
     protected final BackendConfiguration configuration;
-    protected final SimpleServerBuilder<SimpleServerExecutor.Builder> server;
+    protected final CachingBuilder<List<Service>, ? extends SimpleServerBuilder<?>> server;
     
     protected SimpleBackendConnections(
             BackendConfiguration configuration,
@@ -86,15 +88,15 @@ public class SimpleBackendConnections extends BackendConnectionsService<Protocol
             FixedClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections) {
         super(connections);
         this.configuration = configuration;
-        this.server = server;
+        this.server = CachingBuilder.fromBuilder(server);
     }
 
     public BackendConfiguration getConfiguration() {
         return configuration;
     }
     
-    public SimpleServerBuilder<SimpleServerExecutor.Builder> getServer() {
-        return server;
+    public SimpleServerBuilder<?> getServer() {
+        return server.get();
     }
 
     @Override

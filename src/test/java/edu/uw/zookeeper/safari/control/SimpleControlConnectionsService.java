@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.control;
 
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.util.concurrent.Service;
@@ -17,6 +18,7 @@ import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.client.SimpleClientBuilder;
+import edu.uw.zookeeper.common.CachingBuilder;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -65,7 +67,7 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
             NetServerModule serverModule,
             NetClientModule clientModule,
             RuntimeModule runtime) {
-        SimpleServerBuilder<SimpleServerExecutor.Builder> server = new SimpleServerBuilder<SimpleServerExecutor.Builder>(
+        SimpleServerBuilder<SimpleServerExecutor.Builder> server = SimpleServerBuilder.fromBuilders(
                 SimpleServerExecutor.builder(), 
                 SimpleServerConnectionsBuilder.defaults(address, serverModule))
                     .setRuntimeModule(runtime)
@@ -85,7 +87,7 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
     }
     
     protected final ControlConfiguration configuration;
-    protected final SimpleServerBuilder<?> server;
+    protected final CachingBuilder<List<Service>, ? extends SimpleServerBuilder<?>> server;
     
     protected SimpleControlConnectionsService(
             ControlConfiguration configuration,
@@ -94,7 +96,7 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
             EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>>> factory) {
         super(connections, factory);
         this.configuration = configuration;
-        this.server = server;
+        this.server = CachingBuilder.fromBuilder(server);
     }
     
     public ControlConfiguration getConfiguration() {
@@ -102,7 +104,7 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
     }
     
     public SimpleServerBuilder<?> getServer() {
-        return server;
+        return server.get();
     }
 
     @Override
