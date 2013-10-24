@@ -287,8 +287,6 @@ public class FrontendSessionExecutor extends ExecutedActor<FrontendSessionExecut
                                     Pair.create(
                                             Optional.<Operation.ProtocolRequest<?>>of(input.task()), 
                                             response)));
-                    publish(result);
-                    // set after post
                     input.set(result);
                     return true;
                 }
