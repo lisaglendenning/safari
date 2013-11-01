@@ -110,20 +110,22 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
 
     @Override
     public void handleConnectionRead(Operation.Response response) {
-        ShardedResponseMessage<?> unsharded;
-        Message.ServerResponse<?> message = (Message.ServerResponse<?>) response;
-        if (message.record() instanceof Records.PathGetter) {
-            Identifier shard = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) message.record()).getPath()));
-            assert (shard != null);
-            OperationPrefixTranslator translator = this.translator.cached().apply(shard);
-            assert (translator != null);
-            unsharded = ShardedResponseMessage.of(shard, translator.apply(message));
-        } else {
-            unsharded = ShardedResponseMessage.of(Identifier.zero(), message);
+        if (response instanceof Message.ServerResponse) {
+            ShardedResponseMessage<?> unsharded;
+            Message.ServerResponse<?> message = (Message.ServerResponse<?>) response;
+            if (message.record() instanceof Records.PathGetter) {
+                Identifier shard = lookup.apply(ZNodeLabel.Path.of(((Records.PathGetter) message.record()).getPath()));
+                assert (shard != null);
+                OperationPrefixTranslator translator = this.translator.cached().apply(shard);
+                assert (translator != null);
+                unsharded = ShardedResponseMessage.of(shard, translator.apply(message));
+            } else {
+                unsharded = ShardedResponseMessage.of(Identifier.zero(), message);
+            }
+            response = unsharded;
         }
-        
         synchronized (pending) {
-            super.handleConnectionRead(unsharded);
+            super.handleConnectionRead(response);
             runPending();
         }
     }
