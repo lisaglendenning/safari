@@ -22,7 +22,7 @@ import com.google.common.util.concurrent.MoreExecutors;
 import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Eventful;
-import edu.uw.zookeeper.common.ExecutedActor;
+import edu.uw.zookeeper.common.Actors.ExecutedQueuedActor;
 import edu.uw.zookeeper.common.ForwardingPromise;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
@@ -43,7 +43,7 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 
-public class ClientPeerConnectionExecutor extends ExecutedActor<ClientPeerConnectionExecutor.RequestTask> implements TaskExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>>, PeerConnectionListener, Eventful<NotificationListener<ShardedResponseMessage<IWatcherEvent>>> {
+public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeerConnectionExecutor.RequestTask> implements TaskExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>>, PeerConnectionListener, Eventful<NotificationListener<ShardedResponseMessage<IWatcherEvent>>> {
 
     public static ListenableFuture<ClientPeerConnectionExecutor> connect(
             final Session frontend,
@@ -281,6 +281,7 @@ public class ClientPeerConnectionExecutor extends ExecutedActor<ClientPeerConnec
             // task in queue before sending...
             pending.add(task);
             if (state() == State.TERMINATED) {
+                pending.remove(task);
                 task.setException(new ClosedChannelException());
             } else {
                 ListenableFuture<MessagePacket<MessageSessionRequest>> write = dispatcher.connection().write(message);

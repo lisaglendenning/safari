@@ -42,7 +42,7 @@ import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
-import edu.uw.zookeeper.common.ExecutedActor;
+import edu.uw.zookeeper.common.Actors.ExecutedPeekingQueuedActor;
 import edu.uw.zookeeper.common.ForwardingPromise;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
@@ -183,7 +183,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                         (Records.Response) result.record()))); 
     }
 
-    protected class FrontendSessionActor extends ExecutedActor<FrontendRequestTask> {
+    protected class FrontendSessionActor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         protected final Executor executor;
         protected final LinkedQueue<FrontendRequestTask> mailbox;
@@ -194,6 +194,12 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             this.mailbox = LinkedQueue.create();
         }
         
+        @Override
+        public boolean isReady() {
+            FrontendRequestTask next = mailbox.peek();
+            return ((next != null) && (next.responses().isDone()));
+        }
+
         /**
          * Not thread safe
          */
@@ -210,27 +216,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
-        protected boolean schedule() {
-            FrontendRequestTask next = mailbox.peek();
-            if ((next != null) && (next.responses().isDone())) {
-                return super.schedule();
-            } else {
-                return false;
-            }
-        }
-
-        @Override
-        protected void doRun() throws Exception {
-            FrontendRequestTask next;
-            while ((next = mailbox.peek()) != null) {
-                logger().debug("Applying {} ({})", next, this);
-                if (!apply(next)) {
-                    break;
-                }
-            }
-        }
-        
-        @Override
         protected synchronized boolean apply(FrontendRequestTask input) throws Exception {
             if (input.responses().isDone()) {
                 Records.Response response = input.responses().get();
@@ -244,17 +229,17 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     return true;
                 }
             }
-            return (state() != State.TERMINATED);
+            return false;
         }
         
         @Override
         protected synchronized void doStop() {
-            sharder.stop();
-            submitter.stop();
             FrontendRequestTask next;
             while ((next = mailbox.poll()) != null) {
                 next.cancel(true);
             }
+            sharder.stop();
+            submitter.stop();
             backends.stop();
         }
 
@@ -624,7 +609,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
     }
     
-    protected class ShardingProcessor extends ExecutedActor<FrontendRequestTask> {
+    protected class ShardingProcessor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
         protected final Queue<FrontendRequestTask> mailbox;
@@ -641,12 +626,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
-        public String toString() {
-            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
-        }
-
-        @Override
-        protected synchronized boolean schedule() {
+        public synchronized boolean isReady() {
             Iterator<ListenableFuture<?>> itr = futures.iterator();
             while (itr.hasNext()) {
                 ListenableFuture<?> next = itr.next();
@@ -654,31 +634,24 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     itr.remove();
                 }
             }
-            if (futures.isEmpty()) {
-                return super.schedule();
-            } else {
-                return false;
-            }
+            return futures.isEmpty();
         }
 
         @Override
-        protected void doRun() throws Exception {
-            FrontendRequestTask next;
-            while ((next = mailbox.peek()) != null) {
-                logger().debug("Applying {} ({})", next, this);
-                if (! apply(next)) {
-                    break;
-                }
-            }
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
         }
-        
+
         @Override
         protected synchronized boolean apply(FrontendRequestTask input) throws Exception {
             ListenableFuture<Set<Volume>> future = input.volumes().apply(lookup);
             if (future.isDone()) {
                 mailbox.remove(input);
                 input.responses().apply(future.get());
-                submitter.send(input);
+                if (!submitter.send(input)) {
+                    input.cancel(false);
+                    stop();
+                }
                 return true;
             } else {
                 for (ListenableFuture<Volume> lookup: input.volumes().pending()) {
@@ -712,7 +685,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         Volume volume();
     }
     
-    protected class SubmitProcessor extends ExecutedActor<FrontendRequestTask> {
+    protected class SubmitProcessor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         protected final Queue<FrontendRequestTask> mailbox;
         protected final CachedFunction<Identifier, Identifier> assignments;
@@ -741,31 +714,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
         
         @Override
-        public String toString() {
-            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
-        }
-
-        @Override
-        protected synchronized boolean schedule() {
+        public synchronized boolean isReady() {
             for (ListenableFuture<?> future : futures) {
                 if (! future.isDone()) {
                     return false;
                 }
             }
-            return super.schedule();
+            return true;
         }
-        
+
         @Override
-        protected void doRun() throws Exception {
-            FrontendRequestTask next;
-            while ((next = mailbox().peek()) != null) {
-                logger().debug("Applying {} ({})", next, this);
-                if (apply(next)) {
-                    mailbox().remove(next);
-                } else {
-                    break;
-                }
-            }
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
         }
 
         @Override
@@ -778,6 +738,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     for (Map.Entry<Volume, VolumeProcessor> e: processors.entrySet()) {
                         FlushPromise f = new FlushPromise();
                         if (! e.getValue().send(f)) {
+                            stop();
                             return false;
                         }
                         flushed.add(f);
@@ -811,6 +772,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     return apply(input);
                 }
             } else {
+                mailbox.remove(input);
                 for (FrontendRequestTask.ShardedRequestTask shard: input.responses().shards().values()) {
                     VolumeProcessor processor = processors.get(shard.volume());
                     if (processor == null) {
@@ -830,11 +792,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                         processors.put(processor.volume(), processor);
                     }
                     if (!processor.send(shard)) {
-                        return false;
+                        shard.cancel(false);
                     }
                 }
+                return true;
             }
-            return true;
         }
         
         @Override
@@ -926,11 +888,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             }
         }
         
-        protected class ConnectionVolumeProcessor extends ExecutedActor<Promise<?>> implements VolumeProcessor, FutureCallback<ClientPeerConnectionExecutor> {
+        protected class ConnectionVolumeProcessor extends ExecutedPeekingQueuedActor<Promise<?>> implements VolumeProcessor, FutureCallback<ClientPeerConnectionExecutor> {
 
             protected final Volume volume;
             protected final Queue<Promise<?>> mailbox;
-            // not thread-safe
             protected volatile ClientPeerConnectionExecutor connection;
             
             public ConnectionVolumeProcessor(
@@ -950,6 +911,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             }
 
             @Override
+            public boolean isReady() {
+                return (connection != null);
+            }
+
+            @Override
             public void onSuccess(ClientPeerConnectionExecutor result) {
                 this.connection = result;
                 run();
@@ -965,27 +931,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             public String toString() {
                 return Objects.toStringHelper(this)
                         .add("volume", volume)
+                        .add("connection", connection)
                         .addValue(SubmitProcessor.this.toString()).toString();
-            }
-
-            @Override
-            protected boolean schedule() {
-                if (connection == null) {
-                    return false;
-                } else {
-                    return super.schedule();
-                }
-            }
-            
-            @Override
-            protected void doRun() throws Exception {
-                Promise<?> next;
-                while ((next = mailbox().peek()) != null) {
-                    logger().debug("Applying {} ({})", next, this);
-                    if (! apply(next)) {
-                        break;
-                    }
-                }
             }
 
             @Override
@@ -998,12 +945,12 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     // FIXME
                     throw new UnsupportedOperationException();
                 }
+                
+                mailbox.remove(input);
                 if (input instanceof FrontendRequestTask.ShardedRequestTask) {
                     FrontendRequestTask.ShardedRequestTask request = (FrontendRequestTask.ShardedRequestTask) input;
-                    mailbox.remove(input);
                     request.apply(connection);
                 } else if (input instanceof FlushPromise) {
-                    mailbox.remove(input);
                     ((FlushPromise) input).set(this);
                 } else {
                     throw new AssertionError(String.valueOf(input));
