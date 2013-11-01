@@ -227,6 +227,7 @@ public class ClientPeerConnectionDispatchers {
                     
                     if (connects.putIfAbsent(task.getIdentifier(), this) == null) {
                         this.addListener(this, SAME_THREAD_EXECUTOR);
+                        run();
                     } else {
                         throw new UnsupportedOperationException();
                     }
@@ -239,9 +240,7 @@ public class ClientPeerConnectionDispatchers {
                             if (write == null) {
                                 write = connection.write(MessagePacket.of(task));
                                 write.addListener(this, SAME_THREAD_EXECUTOR);
-                                return;
-                            }
-                            if (write.isDone()) {
+                            } else if (write.isDone()) {
                                 write.get();
                             }
                         } catch (Exception e) {

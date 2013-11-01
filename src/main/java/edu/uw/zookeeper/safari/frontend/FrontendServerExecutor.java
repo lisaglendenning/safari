@@ -41,7 +41,7 @@ import edu.uw.zookeeper.server.SessionManager;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 import edu.uw.zookeeper.server.SimpleServerExecutor.SimpleConnectExecutor;
 
-@DependsOn({RegionClientPeerConnection.class, VolumeCacheService.class, AssignmentCacheService.class})
+@DependsOn({RegionsConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
 public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {

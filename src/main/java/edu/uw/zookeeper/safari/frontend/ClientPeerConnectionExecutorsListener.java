@@ -3,12 +3,17 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -33,6 +38,9 @@ public class ClientPeerConnectionExecutorsListener implements Function<ClientPee
                 new MapMaker().<Identifier, ClientPeerConnectionExecutor>makeMap());
     }
     
+    protected static final Executor SAME_THREAD_EXECUTOR = MoreExecutors.sameThreadExecutor();
+    
+    protected final Logger logger;
     protected final CachedLookup<Identifier, ClientPeerConnectionExecutor> cache;
     protected final FrontendSessionExecutor frontend;
 
@@ -41,6 +49,7 @@ public class ClientPeerConnectionExecutorsListener implements Function<ClientPee
             final AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             final Executor executor,
             final ConcurrentMap<Identifier, ClientPeerConnectionExecutor> cache) {
+        this.logger = LogManager.getLogger(getClass());
         this.frontend = frontend;
         this.cache = CachedLookup.create(
                 cache, 
@@ -73,7 +82,7 @@ public class ClientPeerConnectionExecutorsListener implements Function<ClientPee
                                        ListenableFuture<ClientPeerConnectionDispatcher> dispatcher = dispatchers.apply(region);
                                        ListenableFuture<ClientPeerConnectionExecutor> future = ClientPeerConnectionExecutor.connect(
                                                frontend.session(), request, executor, dispatcher);
-                                       return Futures.transform(future, ClientPeerConnectionExecutorsListener.this, FrontendSessionExecutor.SAME_THREAD_EXECUTOR);
+                                       return Futures.transform(future, ClientPeerConnectionExecutorsListener.this, SAME_THREAD_EXECUTOR);
                                    }
                                })));
     }
@@ -88,6 +97,7 @@ public class ClientPeerConnectionExecutorsListener implements Function<ClientPee
     
     @Override
     public ClientPeerConnectionExecutor apply(ClientPeerConnectionExecutor input) {
+        logger.trace("{} ({})", input, this);
         Identifier region = input.dispatcher().getIdentifier();
         ClientPeerConnectionExecutor prev = asCache().put(region, input);
         if (prev != null) {
@@ -108,5 +118,10 @@ public class ClientPeerConnectionExecutorsListener implements Function<ClientPee
         for (ClientPeerConnectionExecutor executor: Iterables.consumingIterable(asCache().values())) {
             executor.unsubscribe(this);
         }
+    }
+    
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("frontend", frontend).toString();
     }
 }

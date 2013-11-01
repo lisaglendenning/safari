@@ -292,25 +292,30 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
     protected class FrontendRequestTask extends PromiseTask<Message.ClientRequest<?>, Message.ServerResponse<?>> 
             implements Runnable, Callable<Records.Response> {
 
+        protected final Pair<ZNodeLabel.Path[], ListenableFuture<Volume>[]> volumes;
         protected volatile List<Pair<Volume, ShardedRequestMessage<?>>> shards;
         protected volatile List<Pair<?, ? extends ListenableFuture<?>>> pending;
         
+        @SuppressWarnings("unchecked")
         public FrontendRequestTask(
                 Message.ClientRequest<?> task,
                 Promise<Message.ServerResponse<?>> promise) {
             super(task, promise);
+            ZNodeLabel.Path[] paths =  PathsOfRequest.getPathsOfRequest(task.record());
+            ListenableFuture<Volume>[] volumes = (ListenableFuture<Volume>[]) new ListenableFuture<?>[paths.length];
+            this.volumes = Pair.create(paths, volumes);
             this.shards = ImmutableList.of();
             this.pending = Lists.newLinkedList();
         }
 
-        public Pair<ZNodeLabel.Path[], ListenableFuture<Volume>[]> lookup(AsyncFunction<ZNodeLabel.Path, Volume> lookup) throws Exception {
-            ZNodeLabel.Path[] paths = PathsOfRequest.getPathsOfRequest(task.record());
-            @SuppressWarnings("unchecked")
-            ListenableFuture<Volume>[] lookups = (ListenableFuture<Volume>[]) new ListenableFuture<?>[paths.length];
-            for (int i=0; i<paths.length; ++i) {
-                lookups[i] = lookup.apply(paths[i]);
+        public synchronized Pair<ZNodeLabel.Path[], ListenableFuture<Volume>[]> volumes(AsyncFunction<ZNodeLabel.Path, Volume> lookup) throws Exception {
+            for (int i=0; i<volumes.second().length; ++i) {
+                if (volumes.second()[i] == null) {
+                    volumes.second()[i] = lookup.apply(volumes.first()[i]);
+                    pending(Pair.create(volumes.first()[i], volumes.second()[i]));
+                }
             }
-            return Pair.create(paths, lookups);
+            return volumes;
         }
         
         public List<Pair<Volume, ShardedRequestMessage<?>>> shards() {
@@ -585,6 +590,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
+        }
+
+        @Override
         protected boolean doSend(FrontendRequestTask message) {
             if (! mailbox().offer(message)) {
                 return false;
@@ -597,18 +607,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                 schedule();
             } else {
                 try {
-                    message.lookup(lookup);
+                    message.volumes(lookup);
                 } catch (Exception e) {
                     // TODO
                     throw Throwables.propagate(e);
                 }
             }
             return true;
-        }
-        
-        @Override
-        protected Executor executor() {
-            return FrontendSessionExecutor.this.actor.executor();
         }
 
         @Override
@@ -623,13 +628,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         
         @Override
         protected boolean apply(FrontendRequestTask input) throws Exception {
-            Pair<ZNodeLabel.Path[], ListenableFuture<Volume>[]> lookups = input.lookup(lookup);
+            Pair<ZNodeLabel.Path[], ListenableFuture<Volume>[]> lookups = input.volumes(lookup);
             boolean complete = true;
             for (int i=0; i<lookups.first().length; ++i) {
                 ListenableFuture<Volume> lookup = lookups.second()[i];
                 if (! lookup.isDone()) {
                     if (logger.isTraceEnabled()) {
-                        logger.trace("Waiting for path lookup: {}", lookups.first()[i]);
+                        logger.trace("Waiting for path lookup: {} ({})", lookups.first()[i], this);
                     }
                     if (futures.add(lookup)) {
                         lookup.addListener(this, SAME_THREAD_EXECUTOR);
@@ -650,8 +655,28 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
+        protected void runExit() {
+            if (state.compareAndSet(State.RUNNING, State.WAITING)) {
+                FrontendRequestTask next = mailbox.peek();
+                try {
+                    if ((next != null) && !next.isPending()) {
+                        schedule();
+                    }
+                } catch (Exception e) {
+                    // TODO
+                    throw new AssertionError(e);
+                }
+            }
+        }
+
+        @Override
         protected Queue<FrontendRequestTask> mailbox() {
             return mailbox;
+        }
+
+        @Override
+        protected Executor executor() {
+            return FrontendSessionExecutor.this.actor.executor();
         }
 
         @Override
@@ -679,10 +704,15 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     Futures.transform(assignment, backends.asLookup(), SAME_THREAD_EXECUTOR);
             if (logger.isTraceEnabled()) {
                 if (! backend.isDone()) {
-                    logger.trace("Waiting for backend for {}", volume);
+                    logger.trace("Waiting for connection for {}", volume);
                 }
             }
             return backend;
+        }
+        
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
         }
 
         @Override
@@ -700,7 +730,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             FrontendRequestTask next;
             while ((next = mailbox().peek()) != null) {
                 synchronized (next) {
-                    logger().debug("Applying {}", next);
+                    logger().debug("Applying {} ({})", next, this);
                     if (apply(next)) {
                         mailbox().remove(next);
                     } else {
@@ -775,11 +805,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                             // TODO
                             throw Throwables.propagate(e);
                         }
-                        if (logger.isTraceEnabled()) {
-                            if (! backend.isDone()) {
-                                logger.trace("Waiting on connection for volume {}", volume);
-                            }
-                        }
                         Futures.addCallback(backend, processor, SAME_THREAD_EXECUTOR);
                     } else {
                         processor = processors.get(volume);
@@ -843,6 +868,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             }
 
             @Override
+            public String toString() {
+                return Objects.toStringHelper(this)
+                        .add("volume", volume)
+                        .addValue(SubmitProcessor.this.toString()).toString();
+            }
+
+            @Override
             protected boolean schedule() {
                 if (connection == null) {
                     return false;
@@ -855,7 +887,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             protected void doRun() throws Exception {
                 Object next;
                 while ((next = mailbox().peek()) != null) {
-                    logger().debug("Applying {}", next);
+                    logger().debug("Applying {} ({})", next, this);
                     if (apply(next)) {
                         mailbox().remove(next);
                     } else {

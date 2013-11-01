@@ -1,11 +1,14 @@
 package edu.uw.zookeeper.safari.frontend;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.google.common.base.Objects;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
@@ -80,6 +83,11 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
     }
     
     @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("region", region).add("connection", connection).toString();
+    }
+    
+    @Override
     protected synchronized ListenableFuture<ClientPeerConnection<?>> delegate() {
         if ((connection != null) && 
                 (connection.state().compareTo(Connection.State.CONNECTION_CLOSING) < 0)) {
@@ -87,15 +95,17 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
         } else {
             if (future == null) {
                 run();
+                return delegate();
+            } else {
+                return future;
             }
-            return future;
         }
     }
 
     protected class NotEquals extends PromiseTask<Identifier, Identifier> implements FutureCallback<Identifier>, Runnable {
 
         public NotEquals(Identifier task, Promise<Identifier> delegate) {
-            super(task, delegate);
+            super(checkNotNull(task), delegate);
         }
 
         @Override
@@ -111,9 +121,15 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
 
         @Override
         public void onSuccess(Identifier result) {
-            if (result.equals(task)) {
+            if (task.equals(result)) {
                 // try again
                 run();
+            } else {
+                if (result != null) {
+                    set(result);
+                } else {
+                    onFailure(new IllegalStateException(String.valueOf(region)));
+                }
             }
         }
 

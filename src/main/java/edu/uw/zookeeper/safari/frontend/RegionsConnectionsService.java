@@ -7,6 +7,9 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -94,8 +97,10 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
     public ListenableFuture<ClientPeerConnection<?>> apply(Identifier region) {
         RegionClientPeerConnection connection = regions.get(region);
         if (connection == null) {
-            regions.putIfAbsent(region, RegionClientPeerConnection.newInstance(region, selector, connector));
-            connection = regions.get(region);
+            connection = RegionClientPeerConnection.newInstance(region, selector, connector);
+            if (regions.putIfAbsent(region, connection) != null) {
+                return apply(region);
+            }
         }
         return connection;
     }
@@ -201,13 +206,15 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
                     client,
                     SelectRandom.<ControlSchema.Regions.Entity.Members.Member>create());
         }
-        
+
+        protected final Logger logger;
         protected final ClientExecutor<? super Records.Request, ?, ?> client;
         protected final Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector;
         
         public SelectPresentMemberTask(
                 ClientExecutor<? super Records.Request, ?, ?> client,
                 Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector) {
+            this.logger = LogManager.getLogger(getClass());
             this.client = client;
             this.selector = selector;
         }
@@ -215,12 +222,15 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
         @Override
         public ListenableFuture<Identifier> apply(
                 List<ControlSchema.Regions.Entity.Members.Member> members) {
+            logger.debug("Selecting from region members {}", members);
             List<ListenableFuture<Boolean>> presence = Lists.newArrayListWithCapacity(members.size());
             for (ControlSchema.Regions.Entity.Members.Member e: members) {
                 presence.add(ControlSchema.Peers.Entity.of(e.get()).presence().exists(client));
             }
             ListenableFuture<List<Boolean>> future = Futures.successfulAsList(presence);
-            return Futures.transform(future, SelectPresentMemberFunction.defaults(members, selector), SAME_THREAD_EXECUTOR);
+            return Futures.transform(future, 
+                    SelectPresentMemberFunction.defaults(members, selector), 
+                    SAME_THREAD_EXECUTOR);
         }
     }
     
@@ -232,12 +242,14 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
             return new SelectPresentMemberFunction(members, selector);
         }
         
+        protected final Logger logger;
         protected final List<ControlSchema.Regions.Entity.Members.Member> members;
         protected final Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector;
         
         public SelectPresentMemberFunction(
                 List<ControlSchema.Regions.Entity.Members.Member> members,
                 Function<List<ControlSchema.Regions.Entity.Members.Member>, ControlSchema.Regions.Entity.Members.Member> selector) {
+            this.logger = LogManager.getLogger(getClass());
             this.members = members;
             this.selector = selector;
         }
@@ -252,6 +264,7 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
                     }
                 } catch (Exception e) {}
             }
+            logger.debug("Selecting from live region members: {}", living);
             ControlSchema.Regions.Entity.Members.Member selected = selector.apply(living);
             return (selected == null) ? null : selected.get();
         }
