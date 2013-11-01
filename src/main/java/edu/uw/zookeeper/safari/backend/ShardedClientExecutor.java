@@ -9,10 +9,10 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
+
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.LoggingPromise;
@@ -72,7 +72,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     protected final CachedFunction<Identifier, OperationPrefixTranslator> translator;
     // not thread-safe
-    protected final Set<ListenableFuture<OperationPrefixTranslator>> futures;
+    protected final Set<ListenableFuture<?>> futures;
     
     protected ShardedClientExecutor(
             Function<ZNodeLabel.Path, Identifier> lookup,
@@ -86,20 +86,13 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         this.lookup = lookup;
         this.translator = translator;
         this.futures = Collections.newSetFromMap(
-                new WeakHashMap<ListenableFuture<OperationPrefixTranslator>, Boolean>());
+                new WeakHashMap<ListenableFuture<?>, Boolean>());
     }
 
     @Override
     public ListenableFuture<ShardedResponseMessage<?>> submit(
             ShardedRequestMessage<?> request, Promise<ShardedResponseMessage<?>> promise) {
-        ListenableFuture<OperationPrefixTranslator> future;
-        try {
-            future = translator.apply(request.getIdentifier());
-        } catch (Exception e) {
-            return Futures.immediateFailedFuture(e);
-        }
         ShardedRequestTask task = new ShardedRequestTask(
-                future,
                 request, 
                 LoggingPromise.create(logger, promise));
         if (! send(task)) {
@@ -129,20 +122,29 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             runPending();
         }
     }
-    
+
+    @Override
+    protected synchronized boolean schedule() {
+        Iterator<ListenableFuture<?>> itr = futures.iterator();
+        while (itr.hasNext()) {
+            ListenableFuture<?> next = itr.next();
+            if (next.isDone()) {
+                itr.remove();
+            }
+        }
+        if (futures.isEmpty()) {
+            return super.schedule();
+        } else {
+            return false;
+        }
+    }
+
     @Override
     protected void doRun() throws Exception {
         ShardedRequestTask next;
         while ((next = mailbox.peek()) != null) {
-            if (next.isReady()) {
-                mailbox.remove(next);
-                if (!apply(next)) {
-                    break;
-                }
-            } else {
-                if (futures.add(next.translator())) {
-                    next.translator().addListener(this, SAME_THREAD_EXECUTOR);
-                }
+            logger.debug("Applying {} ({})", next, this);
+            if (!apply(next)) {
                 break;
             }
         }
@@ -150,12 +152,23 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
     
     @Override
     protected boolean apply(ShardedRequestTask input) {
-        assert (input.translator().isDone());
         if (! input.isDone()) {
-            if (state() != State.TERMINATED) {
+            ListenableFuture<OperationPrefixTranslator> lookup;
+            try {
+                lookup = translator.apply(input.task().getIdentifier());
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+            if (! lookup.isDone()) {
+                if (futures.add(lookup)) {
+                    lookup.addListener(this, SAME_THREAD_EXECUTOR);
+                }
+                return false;
+            }
+            if (mailbox.remove(input)) {
                 Message.ClientRequest<?> sharded = null;
                 try {
-                    sharded = input.shard();
+                    sharded = input.apply(lookup.get());
                 } catch (ExecutionException e) {
                     // we add failed requests to the pending queue
                     // to ensure that the future is set with respect
@@ -174,24 +187,15 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                 if (sharded != null) {
                     write(sharded, input.promise());
                 }
-            } else {
-                input.cancel(true);
             }
+        } else {
+            logger.warn("{}", input);
+            mailbox.remove(input);
         }
         
         return (state() != State.TERMINATED);
     }
-    
-    @Override
-    protected void runExit() {
-        if (state.compareAndSet(State.RUNNING, State.WAITING)) {
-            ShardedRequestTask next = mailbox.peek();
-            if ((next != null) && (next.isReady())) {
-                schedule();
-            }
-        }
-    }
-    
+
     protected void runPending() {
         synchronized (pending) {
             Iterator<PendingTask<ShardedResponseMessage<?>>> itr = pending.iterator();
@@ -223,34 +227,18 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         }
     }
 
-    protected static class ShardedRequestTask extends PendingQueueClientExecutor.RequestTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> {
+    protected static class ShardedRequestTask extends PendingQueueClientExecutor.RequestTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>> implements Function<OperationPrefixTranslator, Message.ClientRequest<?>> {
 
-        protected final ListenableFuture<OperationPrefixTranslator> translator;
-        
         public ShardedRequestTask(
-                ListenableFuture<OperationPrefixTranslator> translator,
                 ShardedRequestMessage<?> task,
                 Promise<ShardedResponseMessage<?>> promise) {
             super(task, promise);
             assert(task.xid() != OpCodeXid.PING.xid());
-            this.translator = translator;
         }
         
-        public boolean isReady() {
-            return translator.isDone();
-        }
-        
-        public ListenableFuture<OperationPrefixTranslator> translator() {
-            return translator;
-        }
-        
-        public Message.ClientRequest<?> shard() throws InterruptedException, ExecutionException {
-            return translator.get().apply(task.getRequest());
-        }
-
         @Override
-        protected Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
-            return super.toString(toString.add("translator", translator));
+        public Message.ClientRequest<?> apply(OperationPrefixTranslator input) {
+            return input.apply(task.getRequest());
         }
     }
     
@@ -274,7 +262,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
 
         @Override
         protected Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
-            return super.toString(toString.add("failure", failure));
+            return super.toString(toString).add("failure", failure);
         }
     }
 }
