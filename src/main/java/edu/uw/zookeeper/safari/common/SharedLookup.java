@@ -23,7 +23,7 @@ public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>
                 LogManager.getLogger(SharedLookup.class));
     }
     
-    protected final static Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
+    protected final static Executor SAME_THREAD_EXECUTOR = MoreExecutors.sameThreadExecutor();
 
     protected final Logger logger;
     
@@ -38,16 +38,15 @@ public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>
     @Override
     public ListenableFuture<V> apply(K input) throws Exception {
         checkNotNull(input);
-        ListenableFuture<V> future = first().get(input);
+        ListenableFuture<V> future = first.get(input);
         if (future == null) {
             synchronized (this) {
-                future = first().get(input);
+                future = first.get(input);
                 if (future == null) {
                     logger.trace("Looking up {} ({})", input, second);
-                    future = second().apply(input);
+                    future = second.apply(input);
                     if (! future.isDone()) {
-                        first().put(input, future);
-                        new FutureListener(input, future);
+                        new SharedListener(input, future);
                     }
                 }
             }
@@ -55,19 +54,22 @@ public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>
         return future;
     }
 
-    protected class FutureListener extends Pair<K, ListenableFuture<V>> implements Runnable {
+    protected class SharedListener extends Pair<K, ListenableFuture<V>> implements Runnable {
 
-        public FutureListener(
+        public SharedListener(
                 K key,
                 ListenableFuture<V> value) {
             super(key, value);
-            
-            second().addListener(this, sameThreadExecutor);
+
+            SharedLookup.this.first.put(first, second);
+            second.addListener(this, SAME_THREAD_EXECUTOR);
         }
         
         @Override
         public void run() {
-            SharedLookup.this.first().remove(first(), second());
+            if (second.isDone()) {
+                SharedLookup.this.first.remove(first, second);
+            }
         }
     }
 }

@@ -3,40 +3,43 @@ package edu.uw.zookeeper.safari.peer.protocol;
 import java.net.SocketAddress;
 import java.util.concurrent.ScheduledExecutorService;
 
-import net.engio.mbassy.listener.Handler;
-import net.engio.mbassy.listener.References;
+import net.engio.mbassy.common.IConcurrentSet;
+import net.engio.mbassy.common.StrongConcurrentSet;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
+import edu.uw.zookeeper.net.ConnectionFactory.ConnectionsListener;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
-public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<Connection<? super MessagePacket<?>>>> implements ServerConnectionFactory<ServerPeerConnection<Connection<? super MessagePacket<?>>>> {
+@SuppressWarnings("rawtypes")
+public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<?>> implements ServerConnectionFactory<ServerPeerConnection<?>>, ConnectionsListener<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
 
     public static ServerPeerConnections newInstance(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
-        return new ServerPeerConnections(identifier, timeOut, executor, connections);
+            ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections) {
+        return new ServerPeerConnections(identifier, timeOut, executor, connections, new StrongConcurrentSet<ConnectionsListener<? super ServerPeerConnection<?>>>());
     }
     
     public ServerPeerConnections(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections) {
-        super(identifier, timeOut, executor, connections);
+            ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections,
+            IConcurrentSet<ConnectionsListener<? super ServerPeerConnection<?>>> listeners) {
+        super(identifier, timeOut, executor, connections, listeners);
     }
 
     @Override
-    public ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> connections() {
-        return (ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>>) connections;
+    public ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections() {
+        return (ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>>) connections;
     }
 
-    @Handler
-    public void handleServerConnection(Connection<? super MessagePacket<?>> connection) {
+    @Override
+    public void handleConnectionOpen(Connection<? super MessagePacket, ? extends MessagePacket, ?> connection) {
         if (! (connection instanceof ServerPeerConnection)) {
             new ServerAcceptTask(connection);
         }
@@ -56,39 +59,36 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
 
     @Override
     protected void shutDown() throws Exception {
-        try {
-            connections().unsubscribe(this);
-        } catch (IllegalArgumentException e) {}
+        connections().unsubscribe(this);
         
         super.shutDown();
     }
     
-    @net.engio.mbassy.listener.Listener(references = References.Strong)
-    protected class ServerAcceptTask {
+    protected class ServerAcceptTask implements Connection.Listener<MessagePacket> {
 
-        protected final Connection<? super MessagePacket<?>> connection;
+        protected final Connection<? super MessagePacket, ? extends MessagePacket, ?> connection;
         
-        protected ServerAcceptTask(Connection<? super MessagePacket<?>> connection) {
+        protected ServerAcceptTask(Connection<? super MessagePacket, ? extends MessagePacket, ?> connection) {
             this.connection = connection;
             
             connection.subscribe(this);
         }
         
-        @Handler
-        public void handleMessage(MessagePacket<?> event) {
+        @Override
+        public void handleConnectionRead(MessagePacket event) {
             if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.getHeader().type()) {
                 MessageHandshake body = (MessageHandshake) event.getBody();
-                ServerPeerConnection<Connection<? super MessagePacket<?>>> peer = ServerPeerConnection.<Connection<? super MessagePacket<?>>>create(identifier(), body.getIdentifier(), connection, timeOut, executor);
                 connection.unsubscribe(this);
+                ServerPeerConnection<?> peer = ServerPeerConnection.create(identifier(), body.getIdentifier(), connection, timeOut, executor);
                 put(peer);
             } else {
                 throw new AssertionError(event);
             }
         }
 
-        @Handler
-        public void handleTransition(Automaton.Transition<?> event) {
-            if (Connection.State.CONNECTION_CLOSED == event.to()) {
+        @Override
+        public void handleConnectionState(Automaton.Transition<Connection.State> state) {
+            if (Connection.State.CONNECTION_CLOSED == state.to()) {
                 connection.unsubscribe(this);
             }
         }

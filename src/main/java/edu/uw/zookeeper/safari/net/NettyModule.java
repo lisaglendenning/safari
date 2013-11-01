@@ -53,8 +53,7 @@ public class NettyModule extends AbstractModule {
         ParameterizedFactory<SocketAddress, ServerBootstrap> bootstraps = 
                 NioServerBootstrapFactory.ParameterizedDecorator.newInstance(
                         NioServerBootstrapFactory.newInstance(eventLoopGroup));
-        return NettyServerModule.newInstance(
-                NettyServerModule.syncMessageBus(), bootstraps);
+        return NettyServerModule.newInstance(bootstraps);
     }
     
     @Provides @Singleton
@@ -62,7 +61,6 @@ public class NettyModule extends AbstractModule {
             Factory<? extends EventLoopGroup> eventLoopGroup) {
         Factory<Bootstrap> bootstraps = 
                 NioClientBootstrapFactory.newInstance(eventLoopGroup);  
-        return NettyClientModule.newInstance(
-                NettyClientModule.syncMessageBus(), bootstraps);
+        return NettyClientModule.newInstance(bootstraps);
     }
 }

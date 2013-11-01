@@ -1,20 +1,25 @@
 package edu.uw.zookeeper.safari.control;
 
 import java.util.List;
+import java.util.concurrent.Executor;
+
+import net.engio.mbassy.common.IConcurrentSet;
+import net.engio.mbassy.common.StrongConcurrentSet;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.client.WatchEventPublisher;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.WatchPromiseTrie;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.SessionListener;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
@@ -53,7 +58,12 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
             Injector injector,
             Serializers.ByteCodec<Object> serializer, 
             ControlConnectionsService<?> connections) {
-        return new ControlMaterializerService(injector, serializer, connections);
+        return new ControlMaterializerService(
+                injector, 
+                serializer, 
+                connections, 
+                new StrongConcurrentSet<SessionListener>(), 
+                MoreExecutors.sameThreadExecutor());
     }
 
     protected final Injector injector;
@@ -63,8 +73,10 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
     protected ControlMaterializerService(
             Injector injector,
             Serializers.ByteCodec<Object> serializer, 
-            ControlConnectionsService<?> connections) {
-        super(connections.factory());
+            ControlConnectionsService<?> connections,
+            IConcurrentSet<SessionListener> listeners,
+            Executor executor) {
+        super(connections.factory(), listeners, executor);
         this.injector = injector;
         this.materializer = Materializer.newInstance(
                         ControlSchema.getInstance().get(),
@@ -87,9 +99,6 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
         
         super.startUp();
 
-        this.subscribe(watches);
-        WatchEventPublisher.create(this, this);
-        
         Control.createPrefix(materializer());
     }
 }

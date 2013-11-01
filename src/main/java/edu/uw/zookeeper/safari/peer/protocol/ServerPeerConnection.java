@@ -6,21 +6,22 @@ import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
 
-public class ServerPeerConnection<C extends Connection<? super MessagePacket<?>>> extends PeerConnection<C> {
+@SuppressWarnings("rawtypes")
+public class ServerPeerConnection<T extends Connection<? super MessagePacket,? extends MessagePacket,?>> extends PeerConnection<T, ServerPeerConnection<T>> {
 
-    public static <C extends Connection<? super MessagePacket<?>>> ServerPeerConnection<C> create(
+    public static <T extends Connection<? super MessagePacket,? extends MessagePacket,?>> ServerPeerConnection<T> create(
             Identifier localIdentifier,
             Identifier remoteIdentifier,
-            C connection,
+            T connection,
             TimeValue timeOut,
             ScheduledExecutorService executor) {
-        return new ServerPeerConnection<C>(localIdentifier, remoteIdentifier, connection, timeOut, executor);
+        return new ServerPeerConnection<T>(localIdentifier, remoteIdentifier, connection, timeOut, executor);
     }
     
     public ServerPeerConnection(
             Identifier localIdentifier,
             Identifier remoteIdentifier,
-            C connection,
+            T connection,
             TimeValue timeOut,
             ScheduledExecutorService executor) {
         super(localIdentifier, remoteIdentifier, connection, timeOut, executor);

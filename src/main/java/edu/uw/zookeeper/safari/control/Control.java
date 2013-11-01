@@ -12,8 +12,6 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
-import net.engio.mbassy.listener.Handler;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
@@ -31,6 +29,10 @@ import com.google.common.util.concurrent.MoreExecutors;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.TreeFetcher;
 import edu.uw.zookeeper.client.TreeFetcher.Parameters;
+import edu.uw.zookeeper.client.ZNodeViewCache.CacheSessionListener;
+import edu.uw.zookeeper.client.ZNodeViewCache.NodeUpdate;
+import edu.uw.zookeeper.client.ZNodeViewCache.ViewUpdate;
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
@@ -49,9 +51,9 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.data.Schema.LabelType;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
-import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Hash;
 import edu.uw.zookeeper.safari.Identifier;
@@ -450,7 +452,7 @@ public abstract class Control {
         }
     }
 
-    public static class FetchUntil<V> extends PromiseTask<TreeFetcher.Builder<V>, V> implements FutureCallback<Optional<V>> {
+    public static class FetchUntil<V> extends PromiseTask<TreeFetcher.Builder<V>, V> implements FutureCallback<Optional<V>>, CacheSessionListener {
     
         public static <V> FetchUntil<V> newInstance(
                 ZNodeLabel.Path root, 
@@ -490,17 +492,6 @@ public abstract class Control {
             new Updater(root);
         }
 
-        @Handler
-        public void handleReply(Operation.ProtocolResponse<?> message) {
-            if (OpCodeXid.NOTIFICATION.xid() == message.xid()) {
-                WatchEvent event = WatchEvent.fromRecord((IWatcherEvent) message.record());
-                ZNodeLabel.Path path = event.getPath();
-                if (root.prefixOf(path)) {
-                    new Updater(path);
-                }
-            }
-        }
-    
         @Override
         public void onSuccess(Optional<V> result) {
             try {
@@ -524,9 +515,7 @@ public abstract class Control {
         public boolean cancel(boolean mayInterruptIfRunning) {
             boolean isSet = super.cancel(mayInterruptIfRunning);
             if (isSet) {
-                try {
-                    materializer.unsubscribe(this);
-                } catch (IllegalArgumentException e) {}
+                materializer.unsubscribe(this);
             }
             return isSet;
         }
@@ -535,9 +524,7 @@ public abstract class Control {
         public boolean set(V result) {
             boolean isSet = super.set(result);
             if (isSet) {
-                try {
-                    materializer.unsubscribe(this);
-                } catch (IllegalArgumentException e) {}
+                materializer.unsubscribe(this);
             }
             return isSet;
         }
@@ -546,13 +533,40 @@ public abstract class Control {
         public boolean setException(Throwable t) {
             boolean isSet = super.setException(t);
             if (isSet) {
-                try {
-                    materializer.unsubscribe(this);
-                } catch (IllegalArgumentException e) {}
+                materializer.unsubscribe(this);
             }
             return isSet;
         }
         
+        @Override
+        public void handleViewUpdate(ViewUpdate event) {
+            // TODO Auto-generated method stub
+            
+        }
+
+        @Override
+        public void handleNodeUpdate(NodeUpdate event) {
+            // TODO Auto-generated method stub
+            
+        }
+
+        @Override
+        public void handleAutomatonTransition(
+                Automaton.Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+            
+        }
+
+        @Override
+        public void handleNotification(
+                Operation.ProtocolResponse<IWatcherEvent> notification) {
+            WatchEvent event = WatchEvent.fromRecord(notification.record());
+            ZNodeLabel.Path path = event.getPath();
+            if (root.prefixOf(path)) {
+                new Updater(path);
+            }
+        }
+
         protected class Updater implements Runnable {
             protected final ListenableFuture<Optional<V>> future;
             
@@ -561,7 +575,7 @@ public abstract class Control {
                 Futures.addCallback(future, FetchUntil.this, MoreExecutors.sameThreadExecutor());
                 FetchUntil.this.addListener(this, MoreExecutors.sameThreadExecutor());
             }
-    
+        
             @Override
             public void run() {
                 future.cancel(true);

@@ -27,15 +27,12 @@ import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
-import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Message.Server;
-import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.server.ServerConnectionFactoryBuilder;
 import edu.uw.zookeeper.protocol.server.ServerConnectionsHandler;
 import edu.uw.zookeeper.protocol.server.ServerExecutor;
-import edu.uw.zookeeper.protocol.server.ServerProtocolCodec;
+import edu.uw.zookeeper.protocol.server.ServerProtocolConnection;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
@@ -44,10 +41,9 @@ import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
-import edu.uw.zookeeper.server.ServerConnectionFactoryBuilder;
 
 @DependsOn({FrontendServerExecutor.class})
-public class FrontendServerService<C extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> extends ServerConnectionsHandler<C> {
+public class FrontendServerService<C extends ServerProtocolConnection<?,?>> extends ServerConnectionsHandler<C> {
 
     public static Module module() {
         return new Module();
@@ -72,14 +68,14 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
                 ScheduledExecutorService executor,
                 Injector injector,
                 NetServerModule serverModule) throws Exception {
-            ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> connections = 
+            ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections = 
                     getServerConnectionFactory(runtime, configuration, serverModule);
             FrontendServerService<?> instance = FrontendServerService.newInstance(
                     connections, server, executor, configuration.getTimeOut(), injector);
             return instance;
         }
         
-        protected ServerConnectionFactory<? extends ProtocolCodecConnection<Server, ServerProtocolCodec, Connection<Server>>> getServerConnectionFactory(
+        protected ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> getServerConnectionFactory(
                 RuntimeModule runtime,
                 FrontendConfiguration configuration,
                 NetServerModule serverModule) {
@@ -93,7 +89,7 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
             return ImmutableList.<com.google.inject.Module>of(
-                    RegionConnectionsService.module(),
+                    RegionsConnectionsService.module(),
                     FrontendConfiguration.module(),
                     FrontendServerExecutor.module());
         }
@@ -135,13 +131,13 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
         }
     }
 
-    public static <C extends ProtocolCodecConnection<Message.Server, ServerProtocolCodec, ?>> FrontendServerService<C> newInstance(
+    public static <C extends ServerProtocolConnection<?,?>> FrontendServerService<C> newInstance(
             ServerConnectionFactory<C> connections,
             ServerExecutor<?> server, 
             ScheduledExecutorService scheduler, 
             TimeValue timeOut,
             Injector injector) {
-        ConcurrentMap<C, ServerConnectionsHandler<C>.ConnectionHandler<?,?>> handlers = new MapMaker().weakKeys().weakValues().makeMap();
+        ConcurrentMap<C, ServerConnectionsHandler<C>.ConnectionHandler<?>> handlers = new MapMaker().weakKeys().weakValues().makeMap();
         FrontendServerService<C> instance = new FrontendServerService<C>(
                 connections,
                 server,
@@ -162,7 +158,7 @@ public class FrontendServerService<C extends ProtocolCodecConnection<Message.Ser
             ServerExecutor<?> server, 
             ScheduledExecutorService scheduler, 
             TimeValue timeOut,
-            ConcurrentMap<C, ConnectionHandler<?,?>> handlers,
+            ConcurrentMap<C, ConnectionHandler<?>> handlers,
             Injector injector) {
         super(server, scheduler, timeOut, handlers);
         this.logger = LogManager.getLogger(getClass());

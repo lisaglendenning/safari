@@ -3,8 +3,6 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
-import net.engio.mbassy.listener.Handler;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -19,10 +17,14 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.CachedLookupService;
@@ -58,7 +60,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
     public static AssignmentCacheService newInstance(
             final Materializer<?> materializer) {
         final ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
-        CachedLookup<Identifier, Identifier> lookup = CachedLookup.create(
+        CachedLookup<Identifier, Identifier> lookup = CachedLookup.fromCache(
                 cache,
                 SharedLookup.create(
                         new AsyncFunction<Identifier, Identifier>() {
@@ -92,7 +94,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         this.logger = LogManager.getLogger(getClass());
     }
 
-    @Handler
+    @Override
     public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
         ZNodeLabel.Path path = event.path().get();
         if ((ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type()) 
@@ -117,7 +119,7 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         }
     }
 
-    @Handler
+    @Override
     public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
         ZNodeLabel.Path path = event.path();
         if ((ZNodeViewCache.View.DATA != event.view())
@@ -142,6 +144,14 @@ public class AssignmentCacheService extends CachedLookupService<Identifier,Ident
         }
     }
     
+    @Override
+    public void handleAutomatonTransition(Automaton.Transition<ProtocolState> transition) {
+    }
+
+    @Override
+    public void handleNotification(Operation.ProtocolResponse<IWatcherEvent> notification) {
+    }
+
     @Override
     protected void startUp() throws Exception {
         super.startUp();

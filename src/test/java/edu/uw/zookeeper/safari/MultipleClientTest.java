@@ -94,7 +94,7 @@ public class MultipleClientTest {
             }
 
             // create root
-            ConnectionClientExecutor<Operation.Request,?,?> connection = client.getConnectionClientExecutors().get().get();
+            ConnectionClientExecutor<Operation.Request,?,?,?> connection = client.getConnectionClientExecutors().get().get();
             connection.submit(Operations.Requests.create().build());
             connection.submit(Operations.Requests.disconnect().build()).get();
         }

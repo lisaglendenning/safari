@@ -11,7 +11,6 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.protocol.Session;
-import edu.uw.zookeeper.client.ClientConnectionFactoryBuilder;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.common.DefaultsFactory;
@@ -19,15 +18,15 @@ import edu.uw.zookeeper.common.ForwardingService;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.ProtocolCodec;
-import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolConnection;
+import edu.uw.zookeeper.protocol.client.ClientConnectionFactoryBuilder;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.safari.common.DependentModule;
 
-public class ControlConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements DefaultsFactory<Session, ListenableFuture<OperationClientExecutor<C>>> {
+public class ControlConnectionsService<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends ForwardingService implements DefaultsFactory<Session, ListenableFuture<OperationClientExecutor<C>>> {
 
     public static com.google.inject.Module module() {
         return new Module();
@@ -50,9 +49,9 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
                 ListeningExecutorServiceFactory executors,
                 NetClientModule clientModule,
                 ScheduledExecutorService executor) {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
+            ClientConnectionFactory<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> connections = 
                     getClientConnectionFactory(runtime, configuration, clientModule);
-            ControlConnectionsService<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> instance = 
+            ControlConnectionsService<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> instance = 
                     ControlConnectionsService.newInstance(configuration, connections, executor);
             return instance;
         }
@@ -62,7 +61,7 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
             return ImmutableList.<com.google.inject.Module>of(ControlConfiguration.module());
         }
         
-        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> getClientConnectionFactory(                
+        protected ClientConnectionFactory<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> getClientConnectionFactory(                
                 RuntimeModule runtime,
                 ControlConfiguration configuration,
                 NetClientModule clientModule) {
@@ -74,7 +73,7 @@ public class ControlConnectionsService<C extends ProtocolCodecConnection<? super
         }
     }
     
-    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ControlConnectionsService<C> newInstance(
+    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ControlConnectionsService<C> newInstance(
             ControlConfiguration configuration,
             ClientConnectionFactory<C> connections,
             ScheduledExecutorService executor) {

@@ -21,19 +21,17 @@ import edu.uw.zookeeper.client.SimpleClientBuilder;
 import edu.uw.zookeeper.common.CachingBuilder;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.ProtocolCodec;
-import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.client.ClientProtocolConnection;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
 import edu.uw.zookeeper.server.SimpleServerConnectionsBuilder;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 
-public class SimpleControlConnectionsService extends ControlConnectionsService<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> {
+public class SimpleControlConnectionsService extends ControlConnectionsService<ClientProtocolConnection<Message.ClientSession, Message.ServerSession, ?, ?>> {
 
     public static com.google.inject.Module module() {
         return new Module();
@@ -75,9 +73,8 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);
         ControlConfiguration configuration = new ControlConfiguration(ensemble, server.getConnectionsBuilder().getTimeOut());
         @SuppressWarnings("unchecked")
-        ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = 
-            (ClientConnectionFactory<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
-        EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>>> factory = 
+        ClientConnectionFactory<ClientProtocolConnection<Message.ClientSession, Message.ServerSession, ?, ?>> connections = (ClientConnectionFactory<ClientProtocolConnection<Message.ClientSession, Message.ServerSession, ?, ?>>) SimpleClientBuilder.connectionBuilder(clientModule).setRuntimeModule(runtime).setDefaults().build();
+        EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ClientProtocolConnection<Message.ClientSession, Message.ServerSession, ?, ?>>>> factory = 
                 EnsembleViewFactory.fromSession(
                         connections,
                         configuration.getEnsemble(), 
@@ -92,8 +89,8 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<P
     protected SimpleControlConnectionsService(
             ControlConfiguration configuration,
             SimpleServerBuilder<?> server,
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections,
-            EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>>>> factory) {
+            ClientConnectionFactory<ClientProtocolConnection<Message.ClientSession, Message.ServerSession, ?, ?>> connections,
+            EnsembleViewFactory<ServerViewFactory<Session, OperationClientExecutor<ClientProtocolConnection<Message.ClientSession, Message.ServerSession, ?, ?>>>> factory) {
         super(connections, factory);
         this.configuration = configuration;
         this.server = CachingBuilder.fromBuilder(server);

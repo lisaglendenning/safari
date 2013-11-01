@@ -5,8 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
-import net.engio.mbassy.listener.Handler;
-
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
@@ -31,6 +29,9 @@ import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.control.Control;
@@ -177,21 +178,22 @@ public class EnsembleMemberService extends AbstractIdleService {
     protected void shutDown() throws Exception {
     }
 
-    protected class RoleOverseer implements FutureCallback<WatchEvent> {
+    protected class RoleOverseer implements FutureCallback<WatchEvent>, ZNodeViewCache.CacheSessionListener {
     
         protected final ZNodeLabel.Path leaderPath;
         protected final ControlSchema.Regions.Entity.Leader.Proposer<?> proposer;
-        protected final Automatons.SynchronizedEventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
+        protected final Automatons.EventfulAutomaton<EnsembleRole, EnsembleRole> myRole;
         protected final StampedReference.Updater<ControlSchema.Regions.Entity.Leader> leader;
         
         public RoleOverseer() {
             this.leaderPath = (ZNodeLabel.Path) ZNodeLabel.joined(myEnsemble.path(), ControlSchema.Regions.Entity.Leader.LABEL);
             this.myRole = Automatons.createSynchronizedEventful(
-                    control, Automatons.createSimple(EnsembleRole.LOOKING));
+                    Automatons.createEventful(
+                            Automatons.createSimple(EnsembleRole.LOOKING)));
             this.leader = StampedReference.Updater.newInstance(StampedReference.<ControlSchema.Regions.Entity.Leader>of(0L, null));
             this.proposer = ControlSchema.Regions.Entity.Leader.Proposer.of(
                     control.materializer());
-            myRole.subscribe(this);
+            //myRole.subscribe(this);
             control.materializer().subscribe(this);
             subscribeLeaderWatch();
         }
@@ -227,7 +229,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             // TODO
         }
 
-        @Handler
+        @Override
         public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
             if (leaderPath.equals(event.path())) {
                 Materializer.MaterializedNode node = control.materializer().get(leaderPath);
@@ -236,7 +238,7 @@ public class EnsembleMemberService extends AbstractIdleService {
             }
         }
 
-        @Handler
+        @Override
         public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
             if (leaderPath.equals(event.path().get())) {
                 if (ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED == event.type()) {
@@ -245,19 +247,30 @@ public class EnsembleMemberService extends AbstractIdleService {
             }
         }
 
-        @Handler
-        public void handleTransition(Automaton.Transition<?> transition) {
-            if (transition.type().isAssignableFrom(EnsembleRole.class)) {
-                if (EnsembleRole.LOOKING == transition.to()) {
-                    try {
-                        elect();
-                    } catch (Exception e) {
-                        onFailure(e);
-                    }
+        @Override
+        public void handleAutomatonTransition(
+                Automaton.Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+            
+        }
+
+        @Override
+        public void handleNotification(
+                Operation.ProtocolResponse<IWatcherEvent> notification) {
+            // TODO Auto-generated method stub
+            
+        }
+/*
+        public void handleAutomatonTransition(Automaton.Transition<EnsembleRole> transition) {
+            if (EnsembleRole.LOOKING == transition.to()) {
+                try {
+                    elect();
+                } catch (Exception e) {
+                    onFailure(e);
                 }
             }
         }
-        
+*/        
         protected EnsembleRole myRoleFor(ControlSchema.Regions.Entity.Leader leader) {
             if (leader == null) {
                 return EnsembleRole.LOOKING;

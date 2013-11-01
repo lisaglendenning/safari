@@ -4,17 +4,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
-import net.engio.mbassy.PubSubSupport;
-import net.engio.mbassy.listener.Handler;
-import net.engio.mbassy.listener.References;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import com.google.common.base.Optional;
 import com.google.common.collect.MapMaker;
-import com.google.common.util.concurrent.MoreExecutors;
-import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
@@ -24,14 +15,11 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.protocol.Session;
-import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Configuration;
-import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.TaskExecutor;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.FourLetterRequest;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
@@ -46,20 +34,14 @@ import edu.uw.zookeeper.protocol.ZxidReference;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
-import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
-import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
-import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.safari.peer.protocol.MessageSessionResponse;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.server.SessionManager;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 import edu.uw.zookeeper.server.SimpleServerExecutor.SimpleConnectExecutor;
 
-@DependsOn({RegionConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
+@DependsOn({RegionClientPeerConnection.class, VolumeCacheService.class, AssignmentCacheService.class})
 public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {
@@ -76,7 +58,6 @@ public class FrontendServerExecutor extends DependentService {
             bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
             bind(SessionManager.class).to(new TypeLiteral<SimpleConnectExecutor<FrontendSessionExecutor>>() {}).in(Singleton.class);
             bind(ResponseProcessor.class).in(Singleton.class);
-            bind(ClientPeerConnectionListener.class).in(Singleton.class);
             bind(FrontendServerExecutor.class).in(Singleton.class);
         }
         
@@ -92,6 +73,12 @@ public class FrontendServerExecutor extends DependentService {
         }
         
         @Provides @Singleton
+        public ClientPeerConnectionDispatchers getDispatchers(
+                RegionsConnectionsService connections) {
+            return ClientPeerConnectionDispatchers.newInstance(connections);
+        }
+        
+        @Provides @Singleton
         public SimpleConnectExecutor<FrontendSessionExecutor> getConnectExecutor(
                 Configuration configuration,
                 ZxidReference lastZxid,
@@ -99,16 +86,14 @@ public class FrontendServerExecutor extends DependentService {
                 Provider<ResponseProcessor> processor,
                 VolumeCacheService volumes,
                 AssignmentCacheService assignments,
-                PeerToEnsembleLookup peerToEnsemble,
-                RegionConnectionsService connections,
+                ClientPeerConnectionDispatchers dispatchers,
                 ScheduledExecutorService scheduler,
                 Executor executor) {
-            ParameterizedFactory<Pair<Session, PubSubSupport<Object>>, FrontendSessionExecutor> factory = FrontendSessionExecutor.factory(
+            ParameterizedFactory<Session, FrontendSessionExecutor> factory = FrontendSessionExecutor.factory(
                     processor,
                     volumes.byPath(),
                     assignments.get().asLookup(),
-                    peerToEnsemble.get().asLookup().cached(),
-                    connections.getConnectionForEnsemble(),
+                    dispatchers.dispatchers(),
                     scheduler, 
                     executor);
             return SimpleConnectExecutor.defaults(
@@ -143,7 +128,7 @@ public class FrontendServerExecutor extends DependentService {
     @Override
     protected void startUp() throws Exception {
         super.startUp();
-        injector.getInstance(ClientPeerConnectionListener.class);
+        injector.getInstance(ClientPeerConnectionDispatchers.class);
     }
 
     public static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> {
@@ -192,97 +177,6 @@ public class FrontendServerExecutor extends DependentService {
                 sessions.remove(input.first());
             }
             return ProtocolResponseMessage.of(xid, zxid, response);
-        }
-    }
-
-    @net.engio.mbassy.listener.Listener(references = References.Strong)
-    protected static class ClientPeerConnectionListener extends Service.Listener {
-
-        protected final Logger logger = LogManager.getLogger(getClass());
-        protected final ClientPeerConnections connections;
-        protected final ServerExecutor<FrontendSessionExecutor> sessions;
-        protected final ConcurrentMap<ClientPeerConnection<?>, ClientPeerConnectionDispatcher> dispatchers;
-        
-        @Inject
-        public ClientPeerConnectionListener(
-                ServerExecutor<FrontendSessionExecutor> sessions,
-                ClientPeerConnections connections) {
-            this.sessions = sessions;
-            this.connections = connections;
-            // TODO: can be weak references?
-            this.dispatchers = new MapMaker().makeMap();
-            
-            connections.addListener(this, MoreExecutors.sameThreadExecutor());
-            if (connections.isRunning()) {
-                running();
-            }
-        }
-
-        @Override
-        public void running() {
-            connections.subscribe(this);
-            for (ClientPeerConnection<?> c: connections) {
-                handleConnection(c);
-            }
-        }
-
-        @Override
-        public void stopping(State from) {
-            connections.unsubscribe(this);
-        }
-        
-        @Handler
-        public void handleConnection(ClientPeerConnection<?> connection) {
-            new ClientPeerConnectionDispatcher(connection);
-        }
-
-        @net.engio.mbassy.listener.Listener(references = References.Strong)
-        protected class ClientPeerConnectionDispatcher extends Factories.Holder<ClientPeerConnection<?>> {
-
-            public ClientPeerConnectionDispatcher(
-                    ClientPeerConnection<?> connection) {
-                super(connection);
-                
-                if (dispatchers.putIfAbsent(connection, this) == null) {
-                    connection.subscribe(this);
-                    
-                    if (connection.state().compareTo(Connection.State.CONNECTION_CLOSED) >= 0) {
-                        handleTransition(Automaton.Transition.create(Connection.State.CONNECTION_CLOSED, connection.state()));
-                    }
-                }
-            }
-
-            @Handler
-            public void handleTransition(Automaton.Transition<?> event) {
-                if (Connection.State.CONNECTION_CLOSED == event.to()) {
-                    get().unsubscribe(this);
-                    dispatchers.remove(get(), this);
-                    for (FrontendSessionExecutor e: sessions) {
-                        e.handleTransition(Pair.<Identifier, Automaton.Transition<?>>create(
-                                get().remoteAddress().getIdentifier(), event));
-                    }
-                }
-            }
-
-            @Handler
-            public void handleMessage(MessagePacket<?> message) {
-                switch (message.getHeader().type()) {
-                case MESSAGE_TYPE_SESSION_RESPONSE:
-                {
-                    MessageSessionResponse body = (MessageSessionResponse) message.getBody();
-                    FrontendSessionExecutor e = sessions.sessionExecutor(body.getIdentifier());
-                    if (e != null) {
-                        e.handleResponse(Pair.<Identifier, ShardedResponseMessage<?>>create(
-                                get().remoteAddress().getIdentifier(), body.getValue()));
-                    } else {
-                        logger.warn("Ignoring {}", message);
-                    }
-                    break;
-                }
-                default:
-                    break;
-                }
-            }
         }
     }
 }

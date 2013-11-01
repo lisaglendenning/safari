@@ -7,8 +7,8 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 
-import net.engio.mbassy.listener.Handler;
-
+import net.engio.mbassy.common.IConcurrentSet;
+import net.engio.mbassy.common.StrongConcurrentSet;
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.util.concurrent.FutureCallback;
@@ -22,8 +22,8 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.ProtocolCodec;
-import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.ProtocolConnection;
+import edu.uw.zookeeper.protocol.SessionListener;
 import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.PendingQueueClientExecutor;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
@@ -33,59 +33,56 @@ import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 
-public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends PendingQueueClientExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C> {
+public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C> {
 
-    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ShardedClientExecutor<C> newInstance(
-            FutureCallback<ShardedResponseMessage<?>> callback,
+    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> newInstance(
             Function<ZNodeLabel.Path, Identifier> lookup,
             CachedFunction<Identifier, OperationPrefixTranslator> translator,
             ConnectMessage.Request request,
             C connection,
             ScheduledExecutorService executor) {
         return newInstance(
-                callback,
                 lookup,
                 translator,
-                ConnectTask.create(connection, request),
+                ConnectTask.connect(connection, request),
                 connection,
                 TimeValue.milliseconds(request.getTimeOut()),
-                executor);
+                executor,
+                new StrongConcurrentSet<SessionListener>());
     }
 
-    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> ShardedClientExecutor<C> newInstance(
-            FutureCallback<ShardedResponseMessage<?>> callback,
+    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> newInstance(
             Function<ZNodeLabel.Path, Identifier> lookup,
             CachedFunction<Identifier, OperationPrefixTranslator> translator,
             ListenableFuture<ConnectMessage.Response> session,
             C connection,
             TimeValue timeOut,
-            ScheduledExecutorService executor) {
+            ScheduledExecutorService executor,
+            IConcurrentSet<SessionListener> listeners) {
         return new ShardedClientExecutor<C>(
-                callback,
                 lookup,
                 translator,
                 session, 
                 connection,
                 timeOut,
-                executor);
+                executor,
+                listeners);
     }
 
-    protected final FutureCallback<ShardedResponseMessage<?>> callback;
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
     protected final CachedFunction<Identifier, OperationPrefixTranslator> translator;
     // not thread-safe
     protected final Set<ListenableFuture<OperationPrefixTranslator>> futures;
     
     protected ShardedClientExecutor(
-            FutureCallback<ShardedResponseMessage<?>> callback,
             Function<ZNodeLabel.Path, Identifier> lookup,
             CachedFunction<Identifier, OperationPrefixTranslator> translator,
             ListenableFuture<ConnectMessage.Response> session,
             C connection,
             TimeValue timeOut,
-            ScheduledExecutorService executor) {
-        super(session, connection, timeOut, executor);
-        this.callback = callback;
+            ScheduledExecutorService executor,
+            IConcurrentSet<SessionListener> listeners) {
+        super(session, connection, timeOut, executor, listeners);
         this.lookup = lookup;
         this.translator = translator;
         this.futures = Collections.newSetFromMap(
@@ -105,7 +102,6 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                 future,
                 request, 
                 LoggingPromise.create(logger, promise));
-        Futures.addCallback(task, callback, SAME_THREAD_EXECUTOR);
         if (! send(task)) {
             task.cancel(true);
         }
@@ -113,8 +109,7 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
     }
 
     @Override
-    @Handler
-    public void handleResponse(Operation.ProtocolResponse<?> response) {
+    public void handleConnectionRead(Operation.Response response) {
         ShardedResponseMessage<?> unsharded;
         Message.ServerResponse<?> message = (Message.ServerResponse<?>) response;
         if (message.record() instanceof Records.PathGetter) {
@@ -128,12 +123,8 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
         }
         
         synchronized (pending) {
-            super.handleResponse(unsharded);
+            super.handleConnectionRead(unsharded);
             runPending();
-        }
-
-        if (response.xid() == OpCodeXid.NOTIFICATION.xid()) {
-            callback.onSuccess(unsharded);
         }
     }
     
@@ -172,7 +163,6 @@ public class ShardedClientExecutor<C extends ProtocolCodecConnection<? super Mes
                             input.task().xid(),
                             this,
                             input.promise());
-                    Futures.addCallback(failed, callback, SAME_THREAD_EXECUTOR);
                     pending.add(failed);
                     runPending();
                     sharded = null;

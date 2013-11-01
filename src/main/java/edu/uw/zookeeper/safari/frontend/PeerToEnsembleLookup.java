@@ -1,12 +1,7 @@
 package edu.uw.zookeeper.safari.frontend;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentMap;
-
-import net.engio.mbassy.listener.Handler;
-
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -16,11 +11,14 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.CachedLookupService;
-import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
@@ -48,21 +46,18 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
     
     public static PeerToEnsembleLookup newInstance(
             final Materializer<?> materializer) {
-        ConcurrentMap<Identifier, Identifier> cache = new MapMaker().makeMap();
         final AsyncFunction<Identifier, ControlSchema.Regions.Entity> lookupEnsemble = ControlSchema.Peers.Entity.lookupEnsemble(materializer);
         CachedLookup<Identifier, Identifier> lookup = 
-                CachedLookup.create(
-                        cache,
-                        SharedLookup.create(
-                                        new AsyncFunction<Identifier, Identifier>() {
-                                            @Override
-                                            public ListenableFuture<Identifier> apply(
-                                                    Identifier input)
-                                                    throws Exception {
-                                                return Futures.transform(lookupEnsemble.apply(input),
-                                                        Control.IdentifierZNode.<ControlSchema.Regions.Entity>valueOf());
-                                            }
-                                        }));
+                CachedLookup.shared(
+                    new AsyncFunction<Identifier, Identifier>() {
+                        @Override
+                        public ListenableFuture<Identifier> apply(
+                                Identifier input)
+                                throws Exception {
+                            return Futures.transform(lookupEnsemble.apply(input),
+                                    Control.IdentifierZNode.<ControlSchema.Regions.Entity>valueOf());
+                        }
+                    });
         return newInstance(materializer, lookup);
     }
     
@@ -74,13 +69,25 @@ public class PeerToEnsembleLookup extends CachedLookupService<Identifier, Identi
     
     protected static final ZNodeLabel.Path ENSEMBLES_PATH = Control.path(ControlSchema.Regions.class);
 
-    public PeerToEnsembleLookup(
+    protected PeerToEnsembleLookup(
             Materializer<?> materializer,
             CachedLookup<Identifier, Identifier> cache) {
         super(materializer, cache);
     }
 
-    @Handler
+    @Override
+    public void handleAutomatonTransition(Automaton.Transition<ProtocolState> transition) {
+    }
+
+    @Override
+    public void handleNotification(Operation.ProtocolResponse<IWatcherEvent> notification) {
+    }
+
+    @Override
+    public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {    
+    }
+    
+    @Override
     public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
         ZNodeLabel.Path path = event.path().get();
         if (! ENSEMBLES_PATH.prefixOf(path)) {

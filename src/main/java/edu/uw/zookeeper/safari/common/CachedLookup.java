@@ -34,22 +34,39 @@ public class CachedLookup<K,V> extends AbstractPair<ConcurrentMap<K,V>, CachedFu
         }
     }
     
-    public static <K,V> CachedLookup<K,V> create(
+    public static <K,V> CachedLookup<K,V> sharedAndAdded(
             AsyncFunction<? super K, V> async) {
         ConcurrentMap<K,V> cache = new MapMaker().makeMap();
-        return create(
-                cache, 
-                SharedLookup.create(AddToCacheLookup.create(cache, async)));
+        return fromCache(cache, 
+                SharedLookup.create(
+                        AddToCacheLookup.create(cache, async)));
     }
 
-    public static <K,V> CachedLookup<K,V> create(
+    public static <K,V> CachedLookup<K,V> shared(
+            AsyncFunction<? super K, V> async) {
+        return withAsync(SharedLookup.create(async));
+    }
+    
+    public static <K,V> CachedLookup<K,V> withAsync(
+            AsyncFunction<? super K, V> async) {
+        ConcurrentMap<K,V> cache = new MapMaker().makeMap();
+        return fromCache(cache, async);
+    }
+    
+    public static <K,V> CachedLookup<K,V> fromCache(
             ConcurrentMap<K,V> cache,
             AsyncFunction<? super K, V> async) {
-        return new CachedLookup<K,V>(
-                cache, 
+        CachedFunction<K,V> lookup =  
                 CachedFunction.<K,V>create(
                         CacheFunction.create(cache), 
-                        async));
+                        async);
+        return create(cache, lookup);
+    }
+    
+    public static <K,V> CachedLookup<K,V> create(
+            ConcurrentMap<K,V> cache,
+            CachedFunction<K,V> lookup) {
+        return new CachedLookup<K,V>(cache, lookup);
     }
     
     public CachedLookup(

@@ -10,7 +10,6 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.protocol.Session;
-import edu.uw.zookeeper.safari.frontend.RegionConnectionsService;
 import edu.uw.zookeeper.safari.frontend.FrontendConfiguration;
 import edu.uw.zookeeper.safari.frontend.FrontendServerExecutor;
 import edu.uw.zookeeper.safari.frontend.FrontendServerService;
@@ -35,7 +34,7 @@ public class SimpleFrontendConfiguration extends FrontendServerService.Module {
     @Override
     protected List<com.google.inject.Module> getDependentModules() {
         return Lists.<com.google.inject.Module>newArrayList(
-                RegionConnectionsService.module(),
+                RegionsConnectionsService.module(),
                 FrontendServerExecutor.module());
     }
 }

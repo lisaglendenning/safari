@@ -4,7 +4,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Reference;
 
-public class CachedLookupService<K,V> extends AbstractIdleService implements Reference<CachedLookup<K,V>> {
+public abstract class CachedLookupService<K,V> extends AbstractIdleService implements Reference<CachedLookup<K,V>>, Materializer.CacheSessionListener {
 
     protected final Materializer<?> materializer;
     protected final CachedLookup<K,V> cache;

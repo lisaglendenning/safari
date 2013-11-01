@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.safari.net;
 
+import io.netty.buffer.ByteBuf;
+
 import java.net.SocketAddress;
 
 import com.google.inject.AbstractModule;
@@ -29,7 +31,7 @@ public class IntraVmModule extends AbstractModule {
     
     @Provides @Singleton
     public IntraVmNetModule getIntraVmNetModule(
-            IntraVmFactory factory) {
+            IntraVmFactory<ByteBuf,ByteBuf> factory) {
         return IntraVmNetModule.create(
                 IntraVmCodecEndpointFactory.unpooled(),
                 IntraVmEndpointFactory.sameThreadExecutors(),
@@ -37,9 +39,8 @@ public class IntraVmModule extends AbstractModule {
     }
 
     @Provides @Singleton
-    public IntraVmFactory getIntraVmFactory(
+    public IntraVmFactory<ByteBuf,ByteBuf> getIntraVmFactory(
             Factory<? extends SocketAddress> addresses) {
-        return IntraVmFactory.newInstance(addresses,
-                IntraVmEndpointFactory.syncMessageBus());
+        return IntraVmFactory.newInstance(addresses);
     }
 }

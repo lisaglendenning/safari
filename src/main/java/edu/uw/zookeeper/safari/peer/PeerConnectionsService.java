@@ -6,8 +6,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
-import net.engio.mbassy.PubSubSupport;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -22,10 +20,11 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.common.Factory;
-import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
+import edu.uw.zookeeper.net.Codec;
+import edu.uw.zookeeper.net.CodecConnection;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
@@ -43,7 +42,6 @@ import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.FramedMessagePacketCodec;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.safari.peer.protocol.MessagePacketCodec;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
 
@@ -56,33 +54,31 @@ public class PeerConnectionsService extends DependentService {
     
     public static class Module extends DependentModule {
 
-        public static ParameterizedFactory<PubSubSupport<Object>, Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec>> codecFactory(
+        @SuppressWarnings("rawtypes")
+        public static Factory<Codec<MessagePacket,MessagePacket,MessagePacket,MessagePacket>> codecFactory(
                 final ObjectMapper mapper) {
-            return new ParameterizedFactory<PubSubSupport<Object>, Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec>>() {
-                
-                @SuppressWarnings("unchecked")
-                protected final Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec> codec = Pair.create((Class<MessagePacket<?>>) (Class<?>) MessagePacket.class, FramedMessagePacketCodec.newInstance(MessagePacketCodec.newInstance(mapper)));
-                
+            return new Factory<Codec<MessagePacket,MessagePacket,MessagePacket,MessagePacket>>() {
                 @Override
-                public Pair<Class<MessagePacket<?>>, FramedMessagePacketCodec> get(
-                        PubSubSupport<Object> value) {
-                    return codec;
+                public FramedMessagePacketCodec get() {
+                    return FramedMessagePacketCodec.defaults(mapper);
                 }
             };
         }
         
-        public static ParameterizedFactory<Pair<? extends Pair<Class<MessagePacket<?>>, ? extends FramedMessagePacketCodec>, Connection<MessagePacket<?>>>, Connection<MessagePacket<?>>> connectionFactory() {
-            return new ParameterizedFactory<Pair<? extends Pair<Class<MessagePacket<?>>, ? extends FramedMessagePacketCodec>, Connection<MessagePacket<?>>>, Connection<MessagePacket<?>>>() {
+        @SuppressWarnings("rawtypes")
+        public static ParameterizedFactory<CodecConnection<MessagePacket,MessagePacket,Codec<MessagePacket,MessagePacket,MessagePacket,MessagePacket>,?>, Connection<MessagePacket,MessagePacket,?>> connectionFactory() {
+            return new ParameterizedFactory<CodecConnection<MessagePacket,MessagePacket,Codec<MessagePacket,MessagePacket,MessagePacket,MessagePacket>,?>, Connection<MessagePacket,MessagePacket,?>>() {
                 @Override
-                public Connection<MessagePacket<?>> get(
-                        Pair<? extends Pair<Class<MessagePacket<?>>, ? extends FramedMessagePacketCodec>, Connection<MessagePacket<?>>> value) {
-                    return value.second();
+                public Connection<MessagePacket,MessagePacket,?> get(
+                        CodecConnection<MessagePacket,MessagePacket,Codec<MessagePacket,MessagePacket,MessagePacket,MessagePacket>,?> value) {
+                    return value;
                 }
             };
         }
         
         public Module() {}
 
+        @SuppressWarnings("rawtypes")
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
                 ObjectMapper mapper,
@@ -94,29 +90,28 @@ public class PeerConnectionsService extends DependentService {
                 NetServerModule servers,
                 NetClientModule clients,
                 Factory<? extends SocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
-            ServerConnectionFactory<Connection<MessagePacket<?>>> serverConnections = 
+            ServerConnectionFactory<? extends Connection<MessagePacket,MessagePacket,?>> serverConnections = 
                     servers.getServerConnectionFactory(
                             codecFactory(mapper), 
                             connectionFactory())
                     .get(configuration.getView().address().get());
-            ClientConnectionFactory<Connection<MessagePacket<?>>> clientConnections =  
+            ClientConnectionFactory<? extends Connection<MessagePacket,MessagePacket,?>> clientConnections =  
                     clients.getClientConnectionFactory(
                             codecFactory(mapper), 
                             connectionFactory()).get();
-            IntraVmEndpointFactory<MessagePacket<?>> endpoints = IntraVmEndpointFactory.create(
-                    addresses, 
-                    IntraVmEndpointFactory.syncMessageBus(), 
+            IntraVmEndpointFactory<MessagePacket, MessagePacket> endpoints = IntraVmEndpointFactory.create(
+                    addresses,  
                     IntraVmEndpointFactory.actorExecutors(executor));
-            IntraVmEndpoint<MessagePacket<?>> serverLoopback = endpoints.get();
-            IntraVmEndpoint<MessagePacket<?>> clientLoopback = endpoints.get();
+            IntraVmEndpoint<MessagePacket, MessagePacket> serverLoopback = endpoints.get();
+            IntraVmEndpoint<MessagePacket, MessagePacket> clientLoopback = endpoints.get();
             PeerConnectionsService instance = PeerConnectionsService.newInstance(
                     configuration.getView().id(), 
                     configuration.getTimeOut(),
                     scheduler,
                     serverConnections, 
                     clientConnections,
-                    IntraVmConnection.create(serverLoopback, clientLoopback),
-                    IntraVmConnection.create(clientLoopback, serverLoopback),
+                    IntraVmConnection.newInstance(serverLoopback, clientLoopback),
+                    IntraVmConnection.newInstance(clientLoopback, serverLoopback),
                     control.materializer(),
                     injector);
             return instance;
@@ -141,14 +136,15 @@ public class PeerConnectionsService extends DependentService {
         }
     }
     
+    @SuppressWarnings("rawtypes")
     public static PeerConnectionsService newInstance(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> serverConnectionFactory,
-            ClientConnectionFactory<? extends Connection<? super MessagePacket<?>>> clientConnectionFactory,
-            Connection<? super MessagePacket<?>> loopbackServer,
-            Connection<? super MessagePacket<?>> loopbackClient,
+            ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> serverConnectionFactory,
+            ClientConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> clientConnectionFactory,
+            Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackServer,
+            Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackClient,
             Materializer<?> control,
             Injector injector) {
         PeerConnectionsService instance = new PeerConnectionsService(
@@ -170,24 +166,25 @@ public class PeerConnectionsService extends DependentService {
     protected final ServerPeerConnections servers;
     protected final ClientPeerConnections clients;
     
+    @SuppressWarnings("rawtypes")
     protected PeerConnectionsService(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket<?>>> serverConnectionFactory,
-            ClientConnectionFactory<? extends Connection<? super MessagePacket<?>>> clientConnectionFactory,
-            Connection<? super MessagePacket<?>> loopbackServer,
-            Connection<? super MessagePacket<?>> loopbackClient,
+            ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> serverConnectionFactory,
+            ClientConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> clientConnectionFactory,
+            Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackServer,
+            Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackClient,
             Materializer<?> control,
             Injector injector) {
         super(injector);
         this.logger = LogManager.getLogger(getClass());
         this.identifier = identifier;
-        this.servers = new ServerPeerConnections(identifier, timeOut, executor, serverConnectionFactory);
-        this.clients = new ClientPeerConnections(identifier, timeOut, executor, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
+        this.servers = ServerPeerConnections.newInstance(identifier, timeOut, executor, serverConnectionFactory);
+        this.clients = ClientPeerConnections.newInstance(identifier, timeOut, executor, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
         
-        servers.put(ServerPeerConnection.<Connection<? super MessagePacket<?>>>create(identifier, identifier, loopbackServer, timeOut, executor));
-        clients.put(ClientPeerConnection.<Connection<? super MessagePacket<?>>>create(identifier, identifier, loopbackClient, timeOut, executor));
+        servers.put(ServerPeerConnection.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create(identifier, identifier, loopbackServer, timeOut, executor));
+        clients.put(ClientPeerConnection.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create(identifier, identifier, loopbackClient, timeOut, executor));
     }
     
     public Identifier identifier() {

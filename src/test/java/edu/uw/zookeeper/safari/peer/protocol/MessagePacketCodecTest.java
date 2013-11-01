@@ -16,18 +16,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.peer.protocol.MessageHandshake;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
-import edu.uw.zookeeper.safari.peer.protocol.MessagePacketCodec;
 
 @RunWith(JUnit4.class)
 public class MessagePacketCodecTest {
     @Test
     public void test() throws IOException {
         ObjectMapper mapper = ObjectMapperBuilder.defaults().build();
-        MessagePacketCodec codec = MessagePacketCodec.newInstance(mapper);
+        MessagePacketEncoder encoder = MessagePacketEncoder.defaults(mapper);
+        MessagePacketDecoder decoder = MessagePacketDecoder.defaults(mapper);
         Identifier id = Identifier.valueOf(1);
         MessagePacket<?> packet = MessagePacket.of(MessageHandshake.of(id));
         ByteBuf buf = Unpooled.buffer();
-        codec.encode(packet, buf);
-        assertEquals(packet, codec.decode(buf));
+        encoder.encode(packet, buf);
+        assertEquals(packet, decoder.decode(buf));
     }
 }

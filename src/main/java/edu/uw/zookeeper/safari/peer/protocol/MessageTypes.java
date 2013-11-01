@@ -2,8 +2,13 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
+import java.util.Map.Entry;
+import java.util.Set;
+
 import com.google.common.collect.BiMap;
 import com.google.common.collect.EnumHashBiMap;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 
 public abstract class MessageTypes {
@@ -36,5 +41,23 @@ public abstract class MessageTypes {
     
     public static MessageType typeOf(Class<? extends MessageBody> cls) {
         return types.inverse().get(cls);
+    }
+    
+    public static Set<Entry<MessageType,Class<? extends MessageBody>>> registeredTypes() {
+        synchronized (types) {
+            return ImmutableSet.copyOf(types.entrySet());
+        }
+    }
+
+    static {
+        for (Class<? extends MessageBody> cls: ImmutableList.of(
+                MessageHandshake.class,
+                MessageHeartbeat.class,
+                MessageSessionOpenRequest.class,
+                MessageSessionOpenResponse.class,
+                MessageSessionRequest.class,
+                MessageSessionResponse.class)) {
+            MessageTypes.register(cls);
+        }
     }
 }

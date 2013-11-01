@@ -11,22 +11,21 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.client.ClientConnectionFactoryBuilder;
 import edu.uw.zookeeper.client.FixedClientConnectionFactory;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ForwardingService;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.ProtocolCodec;
-import edu.uw.zookeeper.protocol.ProtocolCodecConnection;
+import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolConnection;
+import edu.uw.zookeeper.protocol.client.ClientConnectionFactoryBuilder;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 import edu.uw.zookeeper.safari.common.DependentModule;
 
-public class BackendConnectionsService<C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> extends ForwardingService implements Factory<ListenableFuture<C>>, Function<C,C> {
+public class BackendConnectionsService<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends ForwardingService implements Factory<ListenableFuture<C>>, Function<C,C> {
 
     public static com.google.inject.Module module() {
         return new Module();
@@ -48,8 +47,8 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
                 BackendConfiguration configuration,
                 NetClientModule clientModule,
                 ListeningExecutorServiceFactory executors) throws Exception {
-            ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> connections = getClientConnectionFactory(runtime, configuration, clientModule);
-            BackendConnectionsService<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> instance = 
+            ClientConnectionFactory<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> connections = getClientConnectionFactory(runtime, configuration, clientModule);
+            BackendConnectionsService<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> instance = 
                     BackendConnectionsService.newInstance(configuration, connections);
             return instance;
         }
@@ -59,7 +58,7 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
             return ImmutableList.<com.google.inject.Module>of(BackendConfiguration.module());
         }
 
-        protected ClientConnectionFactory<? extends ProtocolCodecConnection<Message.ClientSession, ProtocolCodec<Message.ClientSession, Message.ServerSession>, Connection<Message.ClientSession>>> getClientConnectionFactory(                
+        protected ClientConnectionFactory<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> getClientConnectionFactory(                
                 RuntimeModule runtime,
                 BackendConfiguration configuration,
                 NetClientModule clientModule) {
@@ -71,7 +70,7 @@ public class BackendConnectionsService<C extends ProtocolCodecConnection<? super
         }
     }
     
-    public static <C extends ProtocolCodecConnection<? super Message.ClientSession, ? extends ProtocolCodec<?,?>, ?>> BackendConnectionsService<C> newInstance(
+    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> BackendConnectionsService<C> newInstance(
             BackendConfiguration configuration,
             ClientConnectionFactory<C> connections) {
         FixedClientConnectionFactory<C> factory = 

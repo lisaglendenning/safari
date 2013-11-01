@@ -5,8 +5,6 @@ import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
-import net.engio.mbassy.listener.Handler;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -24,6 +22,8 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.Materializer;
 import edu.uw.zookeeper.client.ZNodeViewCache;
+import edu.uw.zookeeper.client.ZNodeViewCache.CacheSessionListener;
+import edu.uw.zookeeper.common.Automaton.Transition;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.ServiceMonitor;
@@ -32,6 +32,9 @@ import edu.uw.zookeeper.data.StampedReference;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelTrie;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.Operation.ProtocolResponse;
+import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
@@ -41,7 +44,7 @@ import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 
-public class VolumeCacheService extends AbstractIdleService {
+public class VolumeCacheService extends AbstractIdleService implements CacheSessionListener {
 
     public static Module module() {
         return new Module();
@@ -178,7 +181,7 @@ public class VolumeCacheService extends AbstractIdleService {
         return byId;
     }
 
-    @Handler
+    @Override
     public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
         ZNodeLabel.Path path = event.path().get();
         if ((ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type()) 
@@ -203,7 +206,7 @@ public class VolumeCacheService extends AbstractIdleService {
         }
     }
 
-    @Handler
+    @Override
     public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
         ZNodeLabel.Path path = event.path();
         if ((ZNodeViewCache.View.DATA != event.view())
@@ -229,6 +232,14 @@ public class VolumeCacheService extends AbstractIdleService {
         }
     }
     
+    @Override
+    public void handleAutomatonTransition(Transition<ProtocolState> transition) {
+    }
+
+    @Override
+    public void handleNotification(ProtocolResponse<IWatcherEvent> notification) {
+    }
+
     @Override
     protected void startUp() throws Exception {
         materializer.subscribe(this);
