@@ -5,7 +5,11 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
@@ -66,7 +70,9 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                 connection,
                 timeOut,
                 executor,
-                listeners);
+                listeners,
+                connection,
+                LogManager.getLogger(ShardedClientExecutor.class));
     }
 
     protected final Function<ZNodeLabel.Path, Identifier> lookup;
@@ -80,9 +86,11 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             ListenableFuture<ConnectMessage.Response> session,
             C connection,
             TimeValue timeOut,
-            ScheduledExecutorService executor,
-            IConcurrentSet<SessionListener> listeners) {
-        super(session, connection, timeOut, executor, listeners);
+            ScheduledExecutorService scheduler,
+            IConcurrentSet<SessionListener> listeners,
+            Executor executor,
+            Logger logger) {
+        super(session, connection, timeOut, scheduler, listeners, executor, logger);
         this.lookup = lookup;
         this.translator = translator;
         this.futures = Collections.newSetFromMap(

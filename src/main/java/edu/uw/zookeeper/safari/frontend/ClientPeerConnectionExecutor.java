@@ -3,6 +3,7 @@ package edu.uw.zookeeper.safari.frontend;
 import java.nio.channels.ClosedChannelException;
 import java.util.Iterator;
 import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 
 import net.engio.mbassy.common.IConcurrentSet;
@@ -61,7 +62,9 @@ public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeer
             Executor executor) {
         IConcurrentSet<NotificationListener<ShardedResponseMessage<IWatcherEvent>>> listeners = new StrongConcurrentSet<NotificationListener<ShardedResponseMessage<IWatcherEvent>>>();
         return new ClientPeerConnectionExecutor(
-                frontend, backend, dispatcher, executor, listeners);
+                frontend, backend, dispatcher, listeners, executor, 
+                new ConcurrentLinkedQueue<RequestTask>(), 
+                LogManager.getLogger(ClientPeerConnectionExecutor.class));
     }
     
     public static class ConnectTask extends ForwardingListenableFuture<ClientPeerConnectionExecutor> 
@@ -117,12 +120,9 @@ public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeer
         }
     }
 
-    protected final Logger logger;
     protected final Session frontend;
     protected final Session backend;
     protected final ClientPeerConnectionDispatcher dispatcher;
-    protected final Executor executor;
-    protected final Queue<RequestTask> mailbox;
     protected final IConcurrentSet<NotificationListener<ShardedResponseMessage<IWatcherEvent>>> listeners;
     protected final Writer writer;
     
@@ -130,15 +130,15 @@ public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeer
             Session frontend,
             Session backend,
             ClientPeerConnectionDispatcher dispatcher,
+            IConcurrentSet<NotificationListener<ShardedResponseMessage<IWatcherEvent>>> listeners,
             Executor executor,
-            IConcurrentSet<NotificationListener<ShardedResponseMessage<IWatcherEvent>>> listeners) {
-        this.logger = LogManager.getLogger(getClass());
+            Queue<RequestTask> mailbox,
+            Logger logger) {
+        super(executor, mailbox, logger);
         this.frontend = frontend;
         this.backend = backend;
         this.dispatcher = dispatcher;
-        this.executor = executor;
         this.listeners = listeners;
-        this.mailbox = Queues.newConcurrentLinkedQueue();
         this.writer = new Writer();
         
         dispatcher.subscribe(this);
@@ -222,21 +222,6 @@ public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeer
         }
     }
 
-    @Override
-    protected Queue<RequestTask> mailbox() {
-        return mailbox;
-    }
-
-    @Override
-    protected Executor executor() {
-        return executor;
-    }
-
-    @Override
-    protected Logger logger() {
-        return logger;
-    }
-
     protected static class RequestTask 
             extends PromiseTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>>
             implements Operation.RequestId {
@@ -270,6 +255,7 @@ public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeer
         protected final Queue<ResponseTask> pending;
         
         public Writer() {
+            super(ClientPeerConnectionExecutor.this.logger);
             this.pending = Queues.newConcurrentLinkedQueue();
         }
         
@@ -313,11 +299,6 @@ public class ClientPeerConnectionExecutor extends ExecutedQueuedActor<ClientPeer
             while ((next = pending.poll()) != null) {
                 next.setException(e);
             }
-        }
-
-        @Override
-        protected Logger logger() {
-            return logger;
         }
     }
     

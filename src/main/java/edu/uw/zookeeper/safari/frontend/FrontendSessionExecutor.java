@@ -1,13 +1,12 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
@@ -28,7 +27,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
@@ -71,7 +69,6 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.LinkedQueue;
 import edu.uw.zookeeper.safari.common.OperationFuture;
 import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
@@ -142,10 +139,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         super(session, state, listeners, scheduler);
         this.logger = LogManager.getLogger(getClass());
         this.processor = processor;
-        this.actor = new FrontendSessionActor(executor);
         this.backends = ClientPeerConnectionExecutorsListener.newInstance(this, dispatchers, executor);
-        this.sharder = new ShardingProcessor(volumes);
-        this.submitter = new SubmitProcessor(assignments);
+        this.actor = new FrontendSessionActor(executor);
+        this.sharder = new ShardingProcessor(volumes, executor);
+        this.submitter = new SubmitProcessor(assignments, executor);
     }
     
     @Override
@@ -185,13 +182,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
 
     protected class FrontendSessionActor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
-        protected final Executor executor;
-        protected final LinkedQueue<FrontendRequestTask> mailbox;
-        
         public FrontendSessionActor(
                 Executor executor) {
-            this.executor = executor;
-            this.mailbox = LinkedQueue.create();
+            super(executor, new ConcurrentLinkedQueue<FrontendRequestTask>(), FrontendSessionExecutor.this.logger);
+        }
+        
+        public Queue<FrontendRequestTask> mailbox() {
+            return mailbox;
         }
         
         @Override
@@ -205,11 +202,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
          */
         @Override
         protected synchronized boolean doSend(FrontendRequestTask message) {
-            if (! mailbox().offer(message)) {
+            if (! mailbox.offer(message)) {
                 return false;
             }
             if (!sharder.send(message) || (!schedule() && (state() == State.TERMINATED))) {
-                mailbox().remove(message);
+                mailbox.remove(message);
                 return false;
             }
             return true;
@@ -241,21 +238,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             sharder.stop();
             submitter.stop();
             backends.stop();
-        }
-
-        @Override
-        protected Executor executor() {
-            return executor;
-        }
-
-        @Override
-        protected LinkedQueue<FrontendRequestTask> mailbox() {
-            return mailbox;
-        }
-
-        @Override
-        protected Logger logger() {
-            return logger;
         }
     }
 
@@ -612,29 +594,29 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
     protected class ShardingProcessor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
-        protected final Queue<FrontendRequestTask> mailbox;
         // not thread-safe
         protected final Set<ListenableFuture<?>> futures;
         
         public ShardingProcessor(
-                CachedFunction<ZNodeLabel.Path, Volume> lookup) {
+                CachedFunction<ZNodeLabel.Path, Volume> lookup,
+                Executor executor) {
+            super(executor, new ConcurrentLinkedQueue<FrontendRequestTask>(), FrontendSessionExecutor.this.logger);
             this.lookup = lookup;
-            this.mailbox = Queues.newConcurrentLinkedQueue();
-            this.futures =
-                    Collections.newSetFromMap(
-                    new WeakHashMap<ListenableFuture<?>, Boolean>());
+            this.futures = Sets.newHashSet();
         }
 
         @Override
         public synchronized boolean isReady() {
-            Iterator<ListenableFuture<?>> itr = futures.iterator();
-            while (itr.hasNext()) {
-                ListenableFuture<?> next = itr.next();
-                if (next.isDone()) {
-                    itr.remove();
+            if (! futures.isEmpty()) {
+                Iterator<ListenableFuture<?>> itr = futures.iterator();
+                while (itr.hasNext()) {
+                    ListenableFuture<?> next = itr.next();
+                    if (next.isDone()) {
+                        itr.remove();
+                    }
                 }
             }
-            return futures.isEmpty();
+            return (futures.isEmpty() && !mailbox.isEmpty());
         }
 
         @Override
@@ -664,21 +646,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                 return false;
             }
         }
-
-        @Override
-        protected Queue<FrontendRequestTask> mailbox() {
-            return mailbox;
-        }
-
-        @Override
-        protected Executor executor() {
-            return FrontendSessionExecutor.this.actor.executor();
-        }
-
-        @Override
-        protected Logger logger() {
-            return logger;
-        }
     }
 
     protected static interface VolumeProcessor extends Actor<Promise<?>> {
@@ -687,15 +654,15 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
     
     protected class SubmitProcessor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
-        protected final Queue<FrontendRequestTask> mailbox;
         protected final CachedFunction<Identifier, Identifier> assignments;
         protected final ConcurrentMap<Volume, VolumeProcessor> processors;
         // not thread-safe
         protected final Set<ListenableFuture<?>> futures;
         
         public SubmitProcessor(
-                CachedFunction<Identifier, Identifier> assignments) {
-            this.mailbox = Queues.newConcurrentLinkedQueue();
+                CachedFunction<Identifier, Identifier> assignments,
+                Executor executor) {
+            super(executor, new ConcurrentLinkedQueue<FrontendRequestTask>(), FrontendSessionExecutor.this.logger);
             this.assignments = assignments;
             this.processors = new MapMaker().makeMap();
             this.futures = Sets.newHashSet();
@@ -720,7 +687,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     return false;
                 }
             }
-            return true;
+            return !mailbox.isEmpty();
         }
 
         @Override
@@ -807,28 +774,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             
             super.doStop();
         }
-
-        @Override
-        protected Logger logger() {
-            return logger;
-        }
-
-        @Override
-        protected Executor executor() {
-            return FrontendSessionExecutor.this.actor.executor();
-        }
-
-        @Override
-        protected Queue<FrontendRequestTask> mailbox() {
-            return mailbox;
-        }
         
         protected class FlushPromise extends ForwardingPromise<VolumeProcessor> {
 
             protected final Promise<VolumeProcessor> promise;
             
             public FlushPromise() {
-                this(LoggingPromise.create(logger(), SettableFuturePromise.<VolumeProcessor>create()));
+                this(LoggingPromise.create(logger, SettableFuturePromise.<VolumeProcessor>create()));
             }
 
             public FlushPromise(Promise<VolumeProcessor> promise) {
@@ -844,6 +796,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         protected class NoneVolumeProcessor extends AbstractActor<Promise<?>> implements VolumeProcessor {
 
             public NoneVolumeProcessor() {
+                super(SubmitProcessor.this.logger);
             }
 
             @Override
@@ -881,23 +834,17 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             @Override
             protected void doStop() {
             }
-
-            @Override
-            protected Logger logger() {
-                return logger;
-            }
         }
         
         protected class ConnectionVolumeProcessor extends ExecutedPeekingQueuedActor<Promise<?>> implements VolumeProcessor, FutureCallback<ClientPeerConnectionExecutor> {
 
             protected final Volume volume;
-            protected final Queue<Promise<?>> mailbox;
             protected volatile ClientPeerConnectionExecutor connection;
             
             public ConnectionVolumeProcessor(
                     Volume volume) {
+                super(SubmitProcessor.this.executor, new ConcurrentLinkedQueue<Promise<?>>(), SubmitProcessor.this.logger);
                 this.volume = volume;
-                this.mailbox = Queues.newConcurrentLinkedQueue();
                 this.connection = null;
             }
             
@@ -912,7 +859,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
 
             @Override
             public boolean isReady() {
-                return (connection != null);
+                return ((connection != null) && !mailbox.isEmpty());
             }
 
             @Override
@@ -957,21 +904,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                 }
                 return true;
             }
-
-            @Override
-            protected Executor executor() {
-                return SubmitProcessor.this.executor();
-            }
-
-            @Override
-            protected Queue<Promise<?>> mailbox() {
-                return mailbox;
-            }
-
-            @Override
-            protected Logger logger() {
-                return logger;
-            }   
         }
     }
 }

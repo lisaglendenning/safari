@@ -234,10 +234,5 @@ public abstract class PeerConnection<T extends Connection<? super MessagePacket,
             
             super.doStop();
         }
-        
-        @Override
-        protected Logger logger() {
-            return logger;
-        }
     }
 }
