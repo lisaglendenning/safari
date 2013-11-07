@@ -1,34 +1,33 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.Iterator;
+import java.util.Collections;
 import java.util.List;
-import java.util.ListIterator;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 
 import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
 
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.Watcher;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
-import com.google.common.base.Throwables;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -36,8 +35,6 @@ import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Provider;
 
 import edu.uw.zookeeper.protocol.Session;
-import edu.uw.zookeeper.common.AbstractActor;
-import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
 import edu.uw.zookeeper.common.Actors.ExecutedPeekingQueuedActor;
@@ -48,28 +45,25 @@ import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.NotificationListener;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.SessionListener;
+import edu.uw.zookeeper.protocol.proto.IErrorResponse;
+import edu.uw.zookeeper.protocol.proto.IGetChildren2Response;
+import edu.uw.zookeeper.protocol.proto.IGetChildrenResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
-import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.IPingResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
-import edu.uw.zookeeper.protocol.proto.OpCode;
-import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.OperationFuture;
 import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
@@ -115,7 +109,53 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         return new FrontendSessionExecutor(processor, volumeLookup, assignmentLookup, dispatchers, executor, session, state, listeners, scheduler);
     }
     
-    public static interface FrontendRequestFuture extends OperationFuture<Message.ServerResponse<?>> {}
+    public static <T extends Records.Request> T validate(Volume volume, T request) throws KeeperException {
+        switch (request.opcode()) {
+        case CREATE:
+        case CREATE2:
+        {
+            // special case: root of a volume can't be sequential or ephemeral
+            Records.CreateModeGetter create = (Records.CreateModeGetter) request;
+            CreateMode mode = CreateMode.valueOf(create.getFlags());
+            if (volume.getDescriptor().getRoot().toString().equals(create.getPath())
+                    && (mode.contains(CreateFlag.SEQUENTIAL) || mode.contains(CreateFlag.EPHEMERAL))) {
+                throw new KeeperException.BadArgumentsException(create.getPath());
+            }
+            break;
+        }
+        case DELETE:
+        {
+            // special case: can't delete the parent of a volume
+            ZNodeLabel.Path root = volume.getDescriptor().getRoot();
+            ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
+            ZNodeLabel suffix = path.suffix(root.length());
+            for (ZNodeLabel leaf: volume.getDescriptor().getLeaves()) {
+                if (leaf.toString().startsWith(suffix.toString())) {
+                    int lastSlash = leaf.toString().lastIndexOf(ZNodeLabel.SLASH);
+                    if ((lastSlash == -1) || (lastSlash == suffix.length())) {
+                        throw new KeeperException.BadArgumentsException(path.toString());
+                    }
+                }
+            }
+            break;
+        }
+        case MULTI:
+        {
+            // multi only supported if all operations are on the same volume
+            for (Records.MultiOpRequest op: (IMultiRequest) request) {
+                ZNodeLabel.Path path = ZNodeLabel.Path.of(op.getPath());
+                if (! volume.getDescriptor().contains(path)) {
+                    throw new KeeperException.BadArgumentsException(path.toString());
+                }
+                validate(volume, op);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+        return request;
+    }
 
     protected static final Executor SAME_THREAD_EXECUTOR = MoreExecutors.sameThreadExecutor();
     
@@ -125,6 +165,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
     protected final SubmitProcessor submitter;
     protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
     protected final FrontendSessionActor actor;
+    protected final NotificationProcessor notifications;
 
     public FrontendSessionExecutor(
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
@@ -143,27 +184,55 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         this.actor = new FrontendSessionActor(executor);
         this.sharder = new ShardingProcessor(volumes, executor);
         this.submitter = new SubmitProcessor(assignments, executor);
+        this.notifications = new NotificationProcessor();
+    }
+    
+    public NotificationProcessor notifications() {
+        return notifications;
     }
     
     @Override
     public ListenableFuture<Message.ServerResponse<?>> submit(
             Message.ClientRequest<?> request) {
         timer.send(request);
-        if (request.xid() == OpCodeXid.PING.xid()) {
-            // short circuit pings
+        FrontendRequestTask task;
+        switch (request.record().opcode()) {
+        case PING:
+        {
+            // short circuit pings to keep connection alive
             return Futures.<Message.ServerResponse<?>>immediateFuture(
                     apply(Pair.create(Optional.<Operation.ProtocolRequest<?>>of(request), 
                                     (Records.Response) Records.newInstance(IPingResponse.class))));
-        } else {
-            Promise<Message.ServerResponse<?>> promise = 
-                    LoggingPromise.create(logger, 
-                            SettableFuturePromise.<Message.ServerResponse<?>>create());
-            FrontendRequestTask task = new FrontendRequestTask(request, promise);
-            if (! actor.send(task)) {
-                task.cancel(true);
-            }
-            return task;
         }
+        case AUTH:
+        case SET_WATCHES:
+        {
+            // unimplemented
+            throw new RejectedExecutionException(new KeeperException.UnimplementedException());
+        }
+        case CLOSE_SESSION:
+        {
+            task = new FrontendDisconnectTask(
+                    request,
+                    LoggingPromise.create(
+                            logger, 
+                            SettableFuturePromise.<Message.ServerResponse<?>>create()));
+            break;
+        }
+        default: 
+        {
+            task = new FrontendVolumeRequestTask(
+                    request, 
+                    LoggingPromise.create(
+                            logger, 
+                            SettableFuturePromise.<Message.ServerResponse<?>>create()));
+            break;
+        }
+        }
+        if (! actor.send(task)) {
+            task.cancel(true);
+        }
+        return task;
     }
 
     @Override
@@ -178,6 +247,465 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                 Pair.create( 
                         Optional.<Operation.ProtocolRequest<?>>absent(),
                         (Records.Response) result.record()))); 
+    }
+    
+    protected abstract class FrontendRequestTask extends PromiseTask<Message.ClientRequest<?>, Message.ServerResponse<?>> implements Runnable {
+
+        public FrontendRequestTask(
+                Message.ClientRequest<?> task,
+                Promise<Message.ServerResponse<?>> promise) {
+            super(task, promise);
+        }
+        
+        public abstract ListenableFuture<Records.Response> response();
+
+        @Override
+        public void run() {
+            if (response().isDone()) {
+                if (this == actor.mailbox().peek()) {
+                    actor.run();
+                }
+            }
+        }
+    }
+
+    protected class FrontendVolumeRequestTask extends FrontendRequestTask 
+            implements Runnable {
+    
+        protected final VolumeTask volume;
+        protected final ResponseTask response;
+        
+        public FrontendVolumeRequestTask(
+                Message.ClientRequest<?> task,
+                Promise<Message.ServerResponse<?>> promise) {
+            super(task, promise);
+            this.volume = new VolumeTask();
+            this.response = new ResponseTask();
+            
+            addListener(this, SAME_THREAD_EXECUTOR);
+        }
+        
+        public VolumeTask volume() {
+            return volume;
+        }
+        
+        public ResponseTask response() {
+            return response;
+        }
+    
+        @Override
+        public void run() {
+            if (isCancelled()) {
+                volume.cancel(false);
+                response.cancel(false);
+            }
+            super.run();
+        }
+    
+        @Override
+        protected synchronized Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
+            return super.toString(toString).add("volume", volume).add("response", response);
+        }
+        
+        protected class VolumeTask extends ForwardingListenableFuture<Volume> implements AsyncFunction<CachedFunction<ZNodeLabel.Path, Volume>, Volume> {
+    
+            protected ListenableFuture<Volume> future;
+            
+            public VolumeTask() {
+                this.future = null;
+            }
+
+            @Override
+            public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+                if (future == null) {
+                    return false;
+                } else {
+                    return future.cancel(mayInterruptIfRunning);
+                }
+            }
+            
+            @Override
+            public synchronized boolean isDone() {
+                return (future != null) && future.isDone();
+            }
+            
+            @Override
+            public synchronized ListenableFuture<Volume> apply(CachedFunction<ZNodeLabel.Path, Volume> volumes) {
+                if (! isDone()) {
+                    if (future == null) {
+                        try {
+                            switch (task.record().opcode()) {
+                            case CREATE:
+                            case CREATE2:
+                            case DELETE:
+                            case CHECK:
+                            case EXISTS:
+                            case GET_ACL:
+                            case GET_CHILDREN:
+                            case GET_CHILDREN2:
+                            case GET_DATA:
+                            case SET_ACL:
+                            case SET_DATA:
+                            case SYNC:
+                            {
+                                ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) task.record()).getPath());
+                                future = volumes.apply(path);
+                                break;
+                            }
+                            case MULTI:
+                            {
+                                // we're going to assume that all ops are on the same volume
+                                // so just pick the first path to lookup
+                                // (we will validate this request later)
+                                ZNodeLabel.Path path = null;
+                                for (Records.MultiOpRequest e: (IMultiRequest) task.record()) {
+                                    path = ZNodeLabel.Path.of(e.getPath());
+                                    break;
+                                }
+                                // empty multi is legal I guess?
+                                if (path == null) {
+                                    future = Futures.immediateFuture(Volume.none());
+                                } else {
+                                    future = volumes.apply(path);
+                                }
+                                break;
+                            }
+                            default:
+                                throw new AssertionError(String.valueOf(task));
+                            }
+                        } catch (Exception e) {
+                            future = Futures.immediateFailedFuture(e);
+                        }
+                    }
+                }
+                return this;
+            }
+    
+            @Override
+            public synchronized String toString() {
+                Objects.ToStringHelper toString = Objects.toStringHelper(this);
+                if (isDone()) {
+                    try {
+                        toString.addValue(get());
+                    } catch (Exception e) {
+                        toString.addValue(e);
+                    }
+                }
+                return toString.toString();
+            }
+            
+            @Override
+            protected ListenableFuture<Volume> delegate() {
+                return future;
+            }
+        }
+        
+        protected class ResponseTask extends ForwardingPromise<Records.Response> implements Runnable, AsyncFunction<ClientPeerConnectionExecutor, Records.Response> {
+
+            protected final Promise<Records.Response> promise;
+            protected ListenableFuture<ShardedResponseMessage<?>> future;
+
+            public ResponseTask() {
+                this(LoggingPromise.create(logger, SettableFuturePromise.<Records.Response>create()));
+            }
+            
+            public ResponseTask(Promise<Records.Response> promise) {
+                this.promise = promise;
+                this.future = null;
+
+                addListener(this, SAME_THREAD_EXECUTOR);
+                addListener(FrontendVolumeRequestTask.this, SAME_THREAD_EXECUTOR);
+            }
+            
+            @Override
+            public synchronized ListenableFuture<Records.Response> apply(ClientPeerConnectionExecutor connection) {
+                if (! isDone()) {
+                    if (future == null) {
+                        try {
+                            Volume volume = volume().get();
+                            try {
+                                validate(volume, task.record());
+                                future = connection.submit(ShardedRequestMessage.of(volume.getId(), task));
+                                future.addListener(this, SAME_THREAD_EXECUTOR);
+                            } catch (KeeperException e) {
+                                set(new IErrorResponse(e.code()));
+                            }
+                        } catch (Exception e) {
+                            setException(e);
+                        }
+                    }
+                }
+                return this;
+            }
+            
+            @Override
+            public synchronized void run() {
+                if (! isDone()) {
+                    if ((future != null) && future.isDone()) {
+                        if (future.isCancelled()) {
+                            cancel(false);
+                        } else {
+                            // we won't see a notification until we see the response
+                            // for setting a notification
+                            notifications.handleRequest(task.record());
+                            try {
+                                ShardedResponseMessage<?> response = future.get();
+                                Records.Response result;
+                                switch (response.record().opcode()) {
+                                case GET_CHILDREN:
+                                case GET_CHILDREN2:
+                                {
+                                    Volume volume = volume().get();
+                                    // special case: volume children won't be in the response
+                                    ZNodeLabel.Path root = volume.getDescriptor().getRoot();
+                                    ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) task.record()).getPath());
+                                    ZNodeLabel suffix = path.suffix(root.length());
+                                    List<String> children = null;
+                                    for (ZNodeLabel leaf: volume.getDescriptor().getLeaves()) {
+                                        if (leaf.toString().startsWith(suffix.toString())) {
+                                            int lastSlash = leaf.toString().lastIndexOf(ZNodeLabel.SLASH);
+                                            if ((lastSlash == -1) || (lastSlash == suffix.length())) {
+                                                if (children == null) {
+                                                    List<String> volumeChildren = ((Records.ChildrenGetter) response.record()).getChildren();
+                                                    children = Lists.newArrayListWithCapacity(volumeChildren.size() + volume.getDescriptor().getLeaves().size());
+                                                    children.addAll(volumeChildren);
+                                                }
+                                                children.add((lastSlash == -1) ? leaf.toString() : leaf.toString().substring(suffix.length()));
+                                            }
+                                        }
+                                    }
+                                    if (children == null) {
+                                        result = response.record();
+                                    } else {
+                                        if (response.record() instanceof Records.StatGetter) {
+                                            result = new IGetChildren2Response(children, ((Records.StatGetter) response.record()).getStat());
+                                        } else {
+                                            result = new IGetChildrenResponse(children);
+                                        }
+                                    }
+                                    break;
+                                }
+                                default:
+                                {
+                                    result = response.record();
+                                    break;
+                                }
+                                }
+                                set(result);
+                            } catch (InterruptedException e) {
+                                throw new AssertionError(e);
+                            } catch (ExecutionException e) {
+                                setException(e.getCause());
+                            }
+                        }
+                    }
+                } else {
+                    if (isCancelled()) {
+                        if (future != null) {
+                            future.cancel(false);
+                        }
+                    }
+                }
+            }
+            
+            @Override
+            protected Promise<Records.Response> delegate() {
+                return promise;
+            }
+        }
+    }
+
+    protected class FrontendDisconnectTask extends FrontendRequestTask 
+            implements Runnable {
+    
+        protected final FlushTask flush;
+        protected final ResponseTask response;
+
+        public FrontendDisconnectTask(
+                Message.ClientRequest<?> task,
+                Promise<Message.ServerResponse<?>> promise) {
+            super(task, promise);
+            this.flush = new FlushTask();
+            this.response = new ResponseTask();
+            
+            addListener(this, SAME_THREAD_EXECUTOR);
+        }
+        
+        public FlushTask flush() {
+            return flush;
+        }
+        
+        @Override
+        public ResponseTask response() {
+            return response;
+        }
+    
+        @Override
+        public void run() {
+            if (isCancelled()) {
+                flush.cancel(false);
+                response.cancel(false);
+            }
+            
+            super.run();
+        }
+        
+        protected class FlushTask extends ForwardingPromise<List<Volume>> implements Runnable, AsyncFunction<Map<Volume, SubmitProcessor.VolumeProcessor>, List<Volume>> {
+
+            protected final Promise<List<Volume>> promise;
+            protected List<ListenableFuture<Volume>> futures;
+            
+            public FlushTask() {
+                this(LoggingPromise.create(logger, SettableFuturePromise.<List<Volume>>create()));
+            }
+
+            public FlushTask(Promise<List<Volume>> promise) {
+                this.promise = promise;
+                this.futures = null;
+                
+                addListener(this, SAME_THREAD_EXECUTOR);
+            }
+
+            @Override
+            public synchronized ListenableFuture<List<Volume>> apply(Map<Volume, SubmitProcessor.VolumeProcessor> volumes) {
+                if (! isDone()) {
+                    if (futures == null) {
+                        futures = Lists.newArrayListWithCapacity(volumes.size());
+                        for (SubmitProcessor.VolumeProcessor p: volumes.values()) {
+                            futures.add(p.flush());
+                        }
+                        for (ListenableFuture<Volume> future: futures) {
+                            future.addListener(this, SAME_THREAD_EXECUTOR);
+                        }
+                    }
+                }
+                return this;
+            }
+            
+            @Override
+            public synchronized void run() {
+                if (! isDone()) {
+                    if (futures != null) {
+                        for (ListenableFuture<Volume> future: futures) {
+                            if (! future.isDone()) {
+                                return;
+                            }
+                        }
+                        try {
+                            ImmutableList.Builder<Volume> results = ImmutableList.builder();
+                            for (ListenableFuture<Volume> future: futures) {
+                                results.add(future.get());
+                            }
+                            set(results.build());
+                        } catch (Exception e) {
+                            setException(e);
+                        }
+                    }
+                } else {
+                    if (isCancelled()) {
+                        if (futures != null) {
+                            for (ListenableFuture<Volume> future: futures) {
+                                future.cancel(false);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            @Override
+            protected Promise<List<Volume>> delegate() {
+                return promise;
+            }
+        }
+        
+        protected class ResponseTask extends ForwardingPromise<Records.Response> implements Runnable, AsyncFunction<Map<Identifier, ClientPeerConnectionExecutor>, Records.Response> {
+
+            protected final Promise<Records.Response> promise;
+            protected List<Pair<Identifier, ? extends ListenableFuture<? extends ShardedResponseMessage<?>>>> futures;
+
+            public ResponseTask() {
+                this(LoggingPromise.create(logger, SettableFuturePromise.<Records.Response>create()));
+            }
+            
+            public ResponseTask(Promise<Records.Response> promise) {
+                this.promise = promise;
+                this.futures = null;
+                
+                addListener(this, SAME_THREAD_EXECUTOR);
+                addListener(FrontendDisconnectTask.this, SAME_THREAD_EXECUTOR);
+            }
+
+            @Override
+            public synchronized ListenableFuture<Records.Response> apply(Map<Identifier, ClientPeerConnectionExecutor> regions) {
+                if (! isDone()) {
+                    if (futures == null) {
+                        // special case - empty session
+                        if (regions.isEmpty()) {
+                            futures = ImmutableList.<Pair<Identifier, ? extends ListenableFuture<? extends ShardedResponseMessage<?>>>>of(
+                                    Pair.create(
+                                            Identifier.zero(), 
+                                            Futures.immediateFuture(
+                                                ShardedResponseMessage.of(
+                                                        Identifier.zero(), 
+                                                        ProtocolResponseMessage.of(
+                                                                task.xid(), 
+                                                                0L,
+                                                                Records.Responses.getInstance().get(task.record().opcode()))))));
+                        } else {
+                            ShardedRequestMessage<?> request = ShardedRequestMessage.of(Identifier.zero(), task);
+                            futures = Lists.newArrayListWithCapacity(regions.size());
+                            for (Map.Entry<Identifier, ClientPeerConnectionExecutor> e: regions.entrySet()) {
+                                ListenableFuture<ShardedResponseMessage<?>> future = e.getValue().submit(request);
+                                futures.add(Pair.create(e.getKey(), future));
+                            }
+                        }
+                        for (Pair<Identifier, ? extends ListenableFuture<? extends ShardedResponseMessage<?>>> future: futures) {
+                            future.second().addListener(this, SAME_THREAD_EXECUTOR);
+                        }
+                    }
+                }
+                return this;
+            }
+            
+            @Override
+            public synchronized void run() {
+                if (! isDone()) {
+                    if (futures != null) {
+                        for (Pair<Identifier, ? extends ListenableFuture<? extends ShardedResponseMessage<?>>> future: futures) {
+                            if (! future.second().isDone()) {
+                                return;
+                            }
+                        }
+                        try {
+                            Records.Response result = null;
+                            for (Pair<Identifier, ? extends ListenableFuture<? extends ShardedResponseMessage<?>>> future: futures) {
+                                ShardedResponseMessage<?> response = future.second().get();
+                                if ((result == null) || ((response.record() instanceof Operation.Error) && !(result instanceof Operation.Error))) {
+                                    result = response.record();
+                                }
+                            }
+                            assert (result != null);
+                            set(result);
+                        } catch (Exception e) {
+                            setException(e);
+                        }
+                    }
+                } else {
+                    if (isCancelled()) {
+                        if (futures != null) {
+                            for (Pair<Identifier, ? extends ListenableFuture<? extends ShardedResponseMessage<?>>> future: futures) {
+                                future.second().cancel(false);
+                            }
+                        }
+                    }
+                }
+            }
+
+            @Override
+            protected Promise<Records.Response> delegate() {
+                return promise;
+            }
+        }
     }
 
     protected class FrontendSessionActor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
@@ -194,9 +722,14 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         @Override
         public boolean isReady() {
             FrontendRequestTask next = mailbox.peek();
-            return ((next != null) && (next.responses().isDone()));
+            return ((next != null) && (next.response().isDone()));
         }
 
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this).toString();
+        }
+        
         /**
          * Not thread safe
          */
@@ -213,16 +746,24 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
-        protected synchronized boolean apply(FrontendRequestTask input) throws Exception {
-            if (input.responses().isDone()) {
-                Records.Response response = input.responses().get();
+        protected synchronized boolean apply(FrontendRequestTask input) {
+            if (input.response().isDone()) {
                 if (mailbox.remove(input)) {
-                    Message.ServerResponse<?> result = 
-                            FrontendSessionExecutor.this.apply( 
-                                    Pair.create(
-                                            Optional.<Operation.ProtocolRequest<?>>of(input.task()), 
-                                            response));
-                    input.set(result);
+                    if (! input.isDone()) {
+                        try {
+                            Records.Response response = input.response().get();
+                            Message.ServerResponse<?> result = 
+                                    FrontendSessionExecutor.this.apply( 
+                                            Pair.create(
+                                                    Optional.<Operation.ProtocolRequest<?>>of(input.task()), 
+                                                    response));
+                            input.set(result);
+                        } catch (InterruptedException e) {
+                            throw new AssertionError(e);
+                        } catch (ExecutionException e) {
+                            input.setException(e.getCause());
+                        }
+                    }
                     return true;
                 }
             }
@@ -240,383 +781,75 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             backends.stop();
         }
     }
-
-    public static <T extends Records.Request> T validate(Volume volume, T request) throws KeeperException {
-        switch (request.opcode()) {
-        case CREATE:
-        case CREATE2:
-        {
-            // special case: root of a volume can't be sequential!
-            Records.CreateModeGetter create = (Records.CreateModeGetter) request;
-            if (CreateMode.valueOf(create.getFlags()).contains(CreateFlag.SEQUENTIAL)
-                    && volume.getDescriptor().getRoot().toString().equals(create.getPath())) {
-                // fail
-                throw new KeeperException.BadArgumentsException(create.getPath());
-            }
-        }
-        default:
-            break;
-        }
-        return request;
-    }
-
-    protected class FrontendRequestTask extends PromiseTask<Message.ClientRequest<?>, Message.ServerResponse<?>> 
-            implements Runnable {
-
-        protected volatile VolumesTask volumes;
-        protected volatile ResponsesTask responses;
-        
-        public FrontendRequestTask(
-                Message.ClientRequest<?> task,
-                Promise<Message.ServerResponse<?>> promise) {
-            super(task, promise);
-            this.volumes = new VolumesTask(
-                    LoggingPromise.create(logger, 
-                            SettableFuturePromise.<Set<Volume>>create()));
-            this.responses = new ResponsesTask();
-            this.responses.addListener(this, SAME_THREAD_EXECUTOR);
-        }
-        
-        public VolumesTask volumes() {
-            return volumes;
-        }
-        
-        public ResponsesTask responses() {
-            return responses;
-        }
-
-        @Override
-        public void run() {
-            if (responses.isDone()) {
-                if (this == actor.mailbox().peek()) {
-                    actor.run();
-                }
-            }
-        }
-
-        @Override
-        public boolean set(Message.ServerResponse<?> result) {
-            assert ((result.record().opcode() == task.record().opcode()) ||
-                    (result.record() instanceof Operation.Error));
-            return super.set(result);
-        }
-
-        @Override
-        public boolean cancel(boolean mayInterruptIfRunning) {
-            boolean cancel = super.cancel(mayInterruptIfRunning);
-            if (cancel) {
-                synchronized (this) {
-                    volumes.cancel(mayInterruptIfRunning);
-                    responses.cancel(mayInterruptIfRunning);
-                }
-            }
-            return cancel;
-        }
-
-        @Override
-        public boolean setException(Throwable t) {
-            boolean setException = super.setException(t);
-            if (setException) {
-                synchronized (this) {
-                    volumes.cancel(false);
-                    responses.cancel(false);
-                }
-            }
-            return setException;
-        }
-        
-        @Override
-        protected synchronized Objects.ToStringHelper toString(Objects.ToStringHelper toString) {
-            return super.toString(toString).add("volumes", volumes).add("responses", responses);
-        }
-        
-        protected class VolumesTask extends ForwardingPromise<Set<Volume>> implements AsyncFunction<AsyncFunction<ZNodeLabel.Path, Volume>, Set<Volume>> {
-
-            protected final Set<ListenableFuture<Volume>> pending;
-            protected final Promise<Set<Volume>> promise;
-            
-            public VolumesTask(Promise<Set<Volume>> promise) {
-                this.promise = promise;
-                this.pending = Sets.newHashSet();
-            }
-            
-            public Set<ListenableFuture<Volume>> pending() {
-                return ImmutableSet.copyOf(pending);
-            }
-
-            @Override
-            public synchronized ListenableFuture<Set<Volume>> apply(AsyncFunction<ZNodeLabel.Path, Volume> lookup) throws Exception {
-                if (! isDone()) {
-                    if (pending.isEmpty()) {
-                        ZNodeLabel.Path[] paths = PathsOfRequest.getPathsOfRequest(task.record());
-                        if (paths.length == 0) {
-                            set(ImmutableSet.<Volume>of());
-                        } else {
-                            for (int i=0; i<paths.length; ++i) {
-                                ListenableFuture<Volume> future = lookup.apply(paths[i]);
-                                pending.add(future);
-                            }
-                        }
-                    } else {
-                        ImmutableSet.Builder<Volume> builder = ImmutableSet.builder();
-                        for (ListenableFuture<Volume> next: pending) {
-                            if (next.isDone()) {
-                                builder.add(next.get());
-                            } else {
-                                break;
-                            }
-                        }
-                        ImmutableSet<Volume> volumes = builder.build();
-                        if (volumes.size() == pending.size()) {
-                            pending.clear();
-                            set(volumes);
-                        }
-                    }
-                }
-                return this;
-            }
-            
-            @Override
-            public String toString() {
-                Objects.ToStringHelper toString = Objects.toStringHelper(this);
-                if (isDone()) {
-                    try {
-                        toString.addValue(get());
-                    } catch (Exception e) {
-                        toString.addValue(e);
-                    }
-                }
-                return toString.toString();
-            }
-            
-            @Override
-            protected Promise<Set<Volume>> delegate() {
-                return promise;
-            }
-        }
-
-        protected class ShardedRequestTask extends PromiseTask<Pair<Volume, ? extends ShardedRequestMessage<?>>, ShardedResponseMessage<?>> implements FutureCallback<ShardedResponseMessage<?>> {
-
-            protected volatile ListenableFuture<ShardedResponseMessage<?>> future;
-            
-            public ShardedRequestTask(Volume volume, Message.ClientRequest<?> request) {
-                this(volume, ShardedRequestMessage.of(volume.getId(), request), LoggingPromise.create(logger, SettableFuturePromise.<ShardedResponseMessage<?>>create()));
-                this.future = null;
-            }
-            
-            public ShardedRequestTask(Volume volume, ShardedRequestMessage<?> request, 
-                    Promise<ShardedResponseMessage<?>> promise) {
-                super(Pair.create(volume, request), promise);
-            }
-
-            public Volume volume() {
-                return task.first();
-            }
-            
-            public ShardedRequestMessage<?> request() {
-                return task.second();
-            }
-            
-            public synchronized ListenableFuture<ShardedResponseMessage<?>> apply(TaskExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>> executor) {
-                this.future = executor.submit(request());
-                Futures.addCallback(future, this, SAME_THREAD_EXECUTOR);
-                return this;
-            }
-
-            @Override
-            public void onSuccess(ShardedResponseMessage<?> result) {
-                set(result);
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                setException(t);
-            }
-        }
-        
-        protected class ResponsesTask extends RunnablePromiseTask<Map<Volume, ShardedRequestTask>, Records.Response> implements Runnable, Function<Set<Volume>, Map<Volume, ShardedRequestTask>> {
-
-            public ResponsesTask() {
-                this(Maps.<Volume, ShardedRequestTask>newHashMapWithExpectedSize(1), 
-                        LoggingPromise.create(logger, SettableFuturePromise.<Records.Response>create()));
-            }
-
-            public ResponsesTask(Map<Volume, ShardedRequestTask> shards, Promise<Records.Response> promise) {
-                super(shards, promise);
-            }
-            
-            // TODO: thread-safety
-            public Map<Volume, ShardedRequestTask> shards() {
-                return task;
-            }
-
-            @Override
-            public synchronized Map<Volume, ShardedRequestTask> apply(Set<Volume> volumes) {
-                if (volumes.isEmpty()) {
-                    return task;
-                }
-                Sets.SetView<Volume> difference = Sets.difference(volumes, task.keySet());
-                if (difference.isEmpty()) {
-                    return task;
-                }
-                try {
-                    if (OpCode.MULTI == FrontendRequestTask.this.task.record().opcode()) {
-                        List<Pair<Volume, List<Records.MultiOpRequest>>> byShardOps = Lists.newArrayListWithCapacity(difference.size());
-                        IMultiRequest multi = (IMultiRequest) FrontendRequestTask.this.task.record();
-                        for (Records.MultiOpRequest op: multi) {
-                            ZNodeLabel.Path[] paths = PathsOfRequest.getPathsOfRequest(op);
-                            assert (paths.length > 0);
-                            for (ZNodeLabel.Path path: paths) {
-                                List<Records.MultiOpRequest> ops = null;
-                                Volume v = null;
-                                for (Pair<Volume, List<Records.MultiOpRequest>> e: byShardOps) {
-                                    if (e.first().getDescriptor().contains(path)) {
-                                        v = e.first();
-                                        ops = e.second();
-                                        break;
-                                    }
-                                }
-                                if (ops == null) {
-                                    ops = Lists.newArrayListWithCapacity(multi.size());
-                                    for (Volume e: difference) {
-                                        if (e.getDescriptor().contains(path)) {
-                                            v = e;
-                                            break;
-                                        }
-                                    }
-                                    byShardOps.add(Pair.create(v, ops));
-                                }
-                                if (v != null) {
-                                    ops.add(validate(v, op));
-                                }
-                            }
-                        }
-                        for (Pair<Volume, List<Records.MultiOpRequest>> e: byShardOps) {
-                            ShardedRequestTask request = new ShardedRequestTask(
-                                    e.first(), 
-                                    ProtocolRequestMessage.of(
-                                            FrontendRequestTask.this.task.xid(),
-                                            new IMultiRequest(e.second())));
-                            task.put(request.volume(), request);
-                            request.addListener(this, SAME_THREAD_EXECUTOR);
-                        }
-                    } else {
-                        for (Volume volume: difference) {
-                            validate(volume, FrontendRequestTask.this.task.record());
-                            ShardedRequestTask request = new ShardedRequestTask(
-                                    volume, FrontendRequestTask.this.task);
-                            task.put(request.volume(), request);
-                            request.addListener(this, SAME_THREAD_EXECUTOR);
-                        }
-                    }
-                } catch (Exception e) {
-                    setException(e);
-                }
-                
-                return task;
-            }
-
-            @Override
-            public synchronized Optional<Records.Response> call() throws Exception {
-                for (ShardedRequestTask request: task.values()) {
-                    if (! request.isDone()) {
-                        return Optional.absent();
-                    }
-                }
-                
-                Records.Response result = null;
-                if (OpCode.MULTI == FrontendRequestTask.this.task.record().opcode()) {
-                    Map<Volume, ListIterator<Records.MultiOpResponse>> opResponses = Maps.newHashMapWithExpectedSize(task.size());
-                    Map<Volume, ListIterator<Records.MultiOpRequest>> opRequests = Maps.newHashMapWithExpectedSize(task.size());
-                    for (ShardedRequestTask e: task.values()) {
-                        opRequests.put(e.volume(), ((IMultiRequest) e.get().record()).listIterator());
-                        opResponses.put(e.volume(), ((IMultiResponse) e.get().record()).listIterator());
-                    }
-                    IMultiRequest multi = (IMultiRequest) FrontendRequestTask.this.task.record();
-                    List<Records.MultiOpResponse> ops = Lists.newArrayListWithCapacity(multi.size());
-                    for (Records.MultiOpRequest op: multi) {
-                        Pair<Volume, Records.MultiOpResponse> response = null;
-                        for (Map.Entry<Volume, ListIterator<Records.MultiOpRequest>> request: opRequests.entrySet()) {
-                            if (! request.getValue().hasNext()) {
-                                continue;
-                            }
-                            if (! op.equals(request.getValue().next())) {
-                                request.getValue().previous();
-                                continue;
-                            }
-                            Volume volume = request.getKey();
-                            if ((response == null) 
-                                    || (response.first().getDescriptor().getRoot().prefixOf(
-                                            volume.getDescriptor().getRoot()))) {
-                                response = Pair.create(volume, opResponses.get(volume).next());
-                                break;
-                            }
-                        }
-                        assert (response != null);
-                        ops.add(response.second());
-                    }
-                    result = new IMultiResponse(ops);
-                } else {
-                    Pair<Volume, ? extends ShardedResponseMessage<?>> selected = null;
-                    for (ShardedRequestTask e: task.values()) {
-                        ShardedResponseMessage<?> response = e.get();
-                        if (selected == null) {
-                            selected = Pair.create(e.volume(), response);
-                        } else if (FrontendRequestTask.this.task.record().opcode() == OpCode.CLOSE_SESSION) {
-                            // pick the error response for now
-                            if (response.record() instanceof Operation.Error) {
-                                selected = Pair.create(e.volume(), response);
-                            }
-                        } else {
-                            if (((selected.second().record() instanceof Operation.Error) ^ (response.record() instanceof Operation.Error))
-                                    || ((response.record() instanceof Operation.Error) && (((Operation.Error) response.record()).error() != ((Operation.Error) selected.second().record()).error()))) {
-                                throw new UnsupportedOperationException();
-                            }
-                            // we should only get here for create, create2,
-                            // and delete
-                            // and only if the path is for a volume root
-                            // in that case, pick the response that came
-                            // from the volume root
-                            if (selected.first().getDescriptor().getRoot()
-                                    .prefixOf(e.volume().getDescriptor().getRoot())) {
-                                selected = Pair.create(e.volume(), response);
-                            }
-                        }
-                    }
-                    assert (selected != null);
-                    result = selected.second().record();
-                }
-                return Optional.of(result);
-            }
-        }
-    }
     
+    /**
+     * Tracks session watches
+     */
+    protected class NotificationProcessor implements NotificationListener<ShardedResponseMessage<IWatcherEvent>> {
+
+        protected final Set<String> dataWatches;
+        protected final Set<String> childWatches;
+        
+        public NotificationProcessor() {
+            this.dataWatches = Collections.synchronizedSet(
+                    Collections.newSetFromMap(Maps.<String, Boolean>newHashMap()));
+            this.childWatches = Collections.synchronizedSet(
+                    Collections.newSetFromMap(Maps.<String, Boolean>newHashMap()));
+        }
+        
+        public void handleRequest(Records.Request request) {
+            switch (request.opcode()) {
+            case GET_DATA:
+            case EXISTS:
+                if (((Records.WatchGetter) request).getWatch()) {
+                    dataWatches.add(((Records.PathGetter) request).getPath());
+                }
+                break;
+            case GET_CHILDREN:
+            case GET_CHILDREN2:
+                if (((Records.WatchGetter) request).getWatch()) {
+                    childWatches.add(((Records.PathGetter) request).getPath());
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        
+        @Override
+        public void handleNotification(
+                ShardedResponseMessage<IWatcherEvent> notification) {
+            IWatcherEvent event = notification.record();
+            Watcher.Event.EventType type = Watcher.Event.EventType.fromInt(event.getType());
+            Set<String> watches = (type == Watcher.Event.EventType.NodeChildrenChanged) ? childWatches : dataWatches;
+            if (watches.remove(event.getPath())) {
+                onSuccess(notification);
+            }
+        }
+    }
+
     protected class ShardingProcessor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         protected final CachedFunction<ZNodeLabel.Path, Volume> lookup;
-        // not thread-safe
-        protected final Set<ListenableFuture<?>> futures;
+        protected boolean waiting;
         
         public ShardingProcessor(
                 CachedFunction<ZNodeLabel.Path, Volume> lookup,
                 Executor executor) {
             super(executor, new ConcurrentLinkedQueue<FrontendRequestTask>(), FrontendSessionExecutor.this.logger);
             this.lookup = lookup;
-            this.futures = Sets.newHashSet();
+            this.waiting = false;
         }
 
         @Override
         public synchronized boolean isReady() {
-            if (! futures.isEmpty()) {
-                Iterator<ListenableFuture<?>> itr = futures.iterator();
-                while (itr.hasNext()) {
-                    ListenableFuture<?> next = itr.next();
-                    if (next.isDone()) {
-                        itr.remove();
-                    }
+            if (waiting) {
+                FrontendVolumeRequestTask next = (FrontendVolumeRequestTask) mailbox.peek();
+                if (next.volume().isDone()) {
+                    waiting = false;
                 }
             }
-            return (futures.isEmpty() && !mailbox.isEmpty());
+            return (!waiting && !mailbox.isEmpty());
         }
 
         @Override
@@ -625,39 +858,37 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
-        protected synchronized boolean apply(FrontendRequestTask input) throws Exception {
-            ListenableFuture<Set<Volume>> future = input.volumes().apply(lookup);
-            if (future.isDone()) {
-                mailbox.remove(input);
-                input.responses().apply(future.get());
+        protected synchronized boolean apply(FrontendRequestTask input) {
+            if (input instanceof FrontendVolumeRequestTask) {
+                FrontendVolumeRequestTask task = (FrontendVolumeRequestTask) input;
+                if (task.volume().isDone()) {
+                    if (waiting) {
+                        waiting = false;
+                    }
+                } else {
+                    if (! waiting) {
+                        waiting = true;
+                        task.volume().apply(lookup).addListener(this, SAME_THREAD_EXECUTOR);
+                        return apply(input);
+                    }
+                    return false;
+                }
+            }
+            if (mailbox.remove(input)) {
                 if (!submitter.send(input)) {
                     input.cancel(false);
                     stop();
                 }
-                return true;
-            } else {
-                for (ListenableFuture<Volume> lookup: input.volumes().pending()) {
-                    if (! lookup.isDone()) {
-                        if (futures.add(lookup)) {
-                            lookup.addListener(this, SAME_THREAD_EXECUTOR);
-                        }
-                    }
-                }
-                return false;
             }
+            return true;
         }
     }
 
-    protected static interface VolumeProcessor extends Actor<Promise<?>> {
-        Volume volume();
-    }
-    
     protected class SubmitProcessor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         protected final CachedFunction<Identifier, Identifier> assignments;
         protected final ConcurrentMap<Volume, VolumeProcessor> processors;
-        // not thread-safe
-        protected final Set<ListenableFuture<?>> futures;
+        protected boolean waiting;
         
         public SubmitProcessor(
                 CachedFunction<Identifier, Identifier> assignments,
@@ -665,29 +896,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             super(executor, new ConcurrentLinkedQueue<FrontendRequestTask>(), FrontendSessionExecutor.this.logger);
             this.assignments = assignments;
             this.processors = new MapMaker().makeMap();
-            this.futures = Sets.newHashSet();
+            this.waiting = false;
         }
 
-        public ListenableFuture<ClientPeerConnectionExecutor> lookup(Volume volume) throws Exception {
-            ListenableFuture<Identifier> assignment = assignments.apply(volume.getId());
-            ListenableFuture<ClientPeerConnectionExecutor> connection = 
-                    Futures.transform(assignment, backends.asLookup(), SAME_THREAD_EXECUTOR);
-            if (logger.isTraceEnabled()) {
-                if (! connection.isDone()) {
-                    logger.trace("Waiting for connection for {}", volume);
-                }
-            }
-            return connection;
-        }
-        
         @Override
         public synchronized boolean isReady() {
-            for (ListenableFuture<?> future : futures) {
-                if (! future.isDone()) {
-                    return false;
+            if (waiting) {
+                FrontendDisconnectTask next = (FrontendDisconnectTask) mailbox.peek();
+                if (next.flush().isDone()) {
+                    waiting = false;
                 }
             }
-            return !mailbox.isEmpty();
+            return (!waiting && !mailbox.isEmpty());
         }
 
         @Override
@@ -696,74 +916,56 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
         }
 
         @Override
-        protected synchronized boolean apply(FrontendRequestTask input) throws KeeperException {
-            if (input.responses().shards().isEmpty()) {
-                assert (input.task().record().opcode() == OpCode.CLOSE_SESSION);
-                
-                if (futures.isEmpty()) {
-                    List<ListenableFuture<?>> flushed = Lists.newArrayListWithCapacity(processors.size());
-                    for (Map.Entry<Volume, VolumeProcessor> e: processors.entrySet()) {
-                        FlushPromise f = new FlushPromise();
-                        if (! e.getValue().send(f)) {
-                            stop();
-                            return false;
-                        }
-                        flushed.add(f);
+        protected synchronized boolean apply(FrontendRequestTask input) {
+            if (input instanceof FrontendDisconnectTask) {
+                FrontendDisconnectTask task = (FrontendDisconnectTask) input;
+                if (task.flush().isDone()) {
+                    if (waiting) {
+                        waiting = false;
                     }
-                    if (flushed.isEmpty()) {
-                        // special case - empty session
-                        input.responses().apply(ImmutableSet.of(Volume.none()));
-                        return apply(input);
-                    } else {
-                        ListenableFuture<List<Object>> all = Futures.allAsList(flushed);
-                        futures.add(all);
-                        all.addListener(this, SAME_THREAD_EXECUTOR);
-                        return false;
+                    if (mailbox.remove(input)) {
+                        task.response().apply(backends.asCache());
                     }
+                    return true;
                 } else {
-                    assert (Iterables.getOnlyElement(futures).isDone());
-                    futures.clear();
-                    
-                    Map<Identifier, Volume> volumePerRegion = Maps.newHashMapWithExpectedSize(backends.asCache().values().size());
-                    for (VolumeProcessor e: processors.values()) {
-                        if (e instanceof ConnectionVolumeProcessor) {
-                            ConnectionVolumeProcessor processor = (ConnectionVolumeProcessor) e;
-                            Identifier region = processor.connection().dispatcher().getIdentifier();
-                            if (!volumePerRegion.containsKey(region) && !volumePerRegion.containsValue(e.volume())) {
-                                volumePerRegion.put(region, e.volume());
-                            }
-                        }
+                    if (! waiting) {
+                        waiting = true;
+                        task.flush().apply(processors).addListener(this, SAME_THREAD_EXECUTOR);
+                        return apply(input);
                     }
-                    assert (volumePerRegion.size() == backends.asCache().values().size());
-                    input.responses().apply(ImmutableSet.copyOf(volumePerRegion.values()));
-                    return apply(input);
+                    return false;
                 }
             } else {
-                mailbox.remove(input);
-                for (FrontendRequestTask.ShardedRequestTask shard: input.responses().shards().values()) {
-                    VolumeProcessor processor = processors.get(shard.volume());
-                    if (processor == null) {
-                        if (shard.volume().equals(Volume.none())) {
-                            processor = new NoneVolumeProcessor();
-                        } else {
-                            processor = new ConnectionVolumeProcessor(shard.volume());
-                            ListenableFuture<ClientPeerConnectionExecutor> connection;
-                            try {
-                                connection = lookup(processor.volume());
-                            } catch (Exception e) {
-                                // TODO
-                                throw Throwables.propagate(e);
+                if (mailbox.remove(input)) {
+                    try {
+                        FrontendVolumeRequestTask task = (FrontendVolumeRequestTask) input;
+                        Volume volume = task.volume().get();
+                        VolumeProcessor processor = processors.get(volume);
+                        if (processor == null) {
+                            processor = new VolumeProcessor(volume);
+                            processors.put(volume, processor);
+                            ListenableFuture<ClientPeerConnectionExecutor> connection = 
+                                    Futures.transform(
+                                            assignments.apply(volume.getId()), 
+                                            backends.asLookup(), 
+                                            SAME_THREAD_EXECUTOR);
+                            if (logger.isTraceEnabled()) {
+                                if (! connection.isDone()) {
+                                    logger.trace("Waiting for connection for {}", volume);
+                                }
                             }
-                            Futures.addCallback(connection, (ConnectionVolumeProcessor) processor, SAME_THREAD_EXECUTOR);
+                            Futures.addCallback(connection, processor, SAME_THREAD_EXECUTOR);
                         }
-                        processors.put(processor.volume(), processor);
-                    }
-                    if (!processor.send(shard)) {
-                        shard.cancel(false);
+                        if (!processor.send(task)) {
+                            task.cancel(false);
+                        }
+                    } catch (Exception e) {
+                        // FIXME
+                        throw new UnsupportedOperationException(e);
                     }
                 }
-                return true;
             }
+            return true;
         }
         
         @Override
@@ -775,73 +977,12 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             super.doStop();
         }
         
-        protected class FlushPromise extends ForwardingPromise<VolumeProcessor> {
-
-            protected final Promise<VolumeProcessor> promise;
-            
-            public FlushPromise() {
-                this(LoggingPromise.create(logger, SettableFuturePromise.<VolumeProcessor>create()));
-            }
-
-            public FlushPromise(Promise<VolumeProcessor> promise) {
-                this.promise = promise;
-            }
-            
-            @Override
-            protected Promise<VolumeProcessor> delegate() {
-                return promise;
-            }
-        }
-
-        protected class NoneVolumeProcessor extends AbstractActor<Promise<?>> implements VolumeProcessor {
-
-            public NoneVolumeProcessor() {
-                super(SubmitProcessor.this.logger);
-            }
-
-            @Override
-            public Volume volume() {
-                return Volume.none();
-            }
-
-            @Override
-            public String toString() {
-                return Objects.toStringHelper(this)
-                        .addValue(SubmitProcessor.this.toString()).toString();
-            }
-
-            @Override
-            protected boolean doSend(Promise<?> message) {
-                if (message instanceof FrontendRequestTask.ShardedRequestTask) {
-                    FrontendRequestTask.ShardedRequestTask request = (FrontendRequestTask.ShardedRequestTask) message;
-                    request.set(ShardedResponseMessage.of(
-                            request.request().getIdentifier(),
-                            ProtocolResponseMessage.of(
-                                    request.request().xid(), 0L,
-                                    Records.Responses.getInstance().get(request.request().record().opcode()))));
-                } else if (message instanceof FlushPromise) {
-                    ((FlushPromise) message).set(this);
-                } else {
-                    throw new AssertionError(String.valueOf(message));
-                }
-                return true;
-            }
-
-            @Override
-            protected void doRun() throws Exception {
-            }
-
-            @Override
-            protected void doStop() {
-            }
-        }
-        
-        protected class ConnectionVolumeProcessor extends ExecutedPeekingQueuedActor<Promise<?>> implements VolumeProcessor, FutureCallback<ClientPeerConnectionExecutor> {
+        protected class VolumeProcessor extends ExecutedPeekingQueuedActor<Promise<?>> implements FutureCallback<ClientPeerConnectionExecutor> {
 
             protected final Volume volume;
             protected volatile ClientPeerConnectionExecutor connection;
             
-            public ConnectionVolumeProcessor(
+            public VolumeProcessor(
                     Volume volume) {
                 super(SubmitProcessor.this.executor, new ConcurrentLinkedQueue<Promise<?>>(), SubmitProcessor.this.logger);
                 this.volume = volume;
@@ -852,9 +993,16 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                 return connection;
             }
 
-            @Override
             public Volume volume() {
                 return volume;
+            }
+            
+            public ListenableFuture<Volume> flush() {
+                FlushPromise task = new FlushPromise();
+                if (! send(task)) {
+                    task.cancel(false);
+                }
+                return task;
             }
 
             @Override
@@ -883,7 +1031,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             }
 
             @Override
-            protected boolean apply(Promise<?> input) throws Exception {
+            protected boolean apply(Promise<?> input) {
                 ClientPeerConnectionExecutor connection = this.connection;
                 if (connection == null) {
                     return false;
@@ -893,16 +1041,40 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                     throw new UnsupportedOperationException();
                 }
                 
-                mailbox.remove(input);
-                if (input instanceof FrontendRequestTask.ShardedRequestTask) {
-                    FrontendRequestTask.ShardedRequestTask request = (FrontendRequestTask.ShardedRequestTask) input;
-                    request.apply(connection);
-                } else if (input instanceof FlushPromise) {
-                    ((FlushPromise) input).set(this);
-                } else {
-                    throw new AssertionError(String.valueOf(input));
+                if (mailbox.remove(input)) {
+                    if (input instanceof FrontendVolumeRequestTask) {
+                        FrontendVolumeRequestTask task = (FrontendVolumeRequestTask) input;
+                        task.response().apply(connection);
+                    } else if (input instanceof FlushPromise) {
+                        ((FlushPromise) input).run();
+                    } else {
+                        throw new AssertionError(String.valueOf(input));
+                    }
                 }
                 return true;
+            }
+
+            protected class FlushPromise extends ForwardingPromise<Volume> implements Runnable {
+
+                protected final Promise<Volume> promise;
+                
+                public FlushPromise() {
+                    this(LoggingPromise.create(logger, SettableFuturePromise.<Volume>create()));
+                }
+
+                public FlushPromise(Promise<Volume> promise) {
+                    this.promise = promise;
+                }
+                
+                @Override
+                public void run() {
+                    set(volume());
+                }
+                
+                @Override
+                protected Promise<Volume> delegate() {
+                    return promise;
+                }
             }
         }
     }

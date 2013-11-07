@@ -17,17 +17,14 @@ import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.protocol.ConnectMessage;
-import edu.uw.zookeeper.protocol.NotificationListener;
-import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.SharedLookup;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 
-public class ClientPeerConnectionExecutorsListener implements Function<ClientPeerConnectionExecutor, ClientPeerConnectionExecutor>, NotificationListener<ShardedResponseMessage<IWatcherEvent>> {
+public class ClientPeerConnectionExecutorsListener implements Function<ClientPeerConnectionExecutor, ClientPeerConnectionExecutor> {
 
     public static ClientPeerConnectionExecutorsListener newInstance(
             FrontendSessionExecutor frontend,
@@ -103,20 +100,15 @@ public class ClientPeerConnectionExecutorsListener implements Function<ClientPee
         if (prev != null) {
             assert (prev.state() == Actor.State.TERMINATED);
             prev.stop();
-            prev.unsubscribe(this);
+            prev.unsubscribe(frontend.notifications());
         }
-        input.subscribe(this);
+        input.subscribe(frontend.notifications());
         return input;
-    }
-    
-    @Override
-    public void handleNotification(ShardedResponseMessage<IWatcherEvent> result) {
-        frontend.onSuccess(result);
     }
     
     public void stop() {
         for (ClientPeerConnectionExecutor executor: Iterables.consumingIterable(asCache().values())) {
-            executor.unsubscribe(this);
+            executor.unsubscribe(frontend.notifications());
         }
     }
     

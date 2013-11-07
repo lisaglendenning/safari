@@ -14,7 +14,6 @@ import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
-import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -145,7 +144,7 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
                 timeOut,
                 handlers,
                 injector);
-        new Advertiser(instance, injector);
+        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
         return instance;
     }
 
@@ -178,11 +177,11 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
         AllVolumesAssigned.call( 
                 injector().getInstance(ControlMaterializerService.class).materializer()).get();
 
-        super.startUp();
-
         connections.subscribe(this);
         connections.startAsync().awaitRunning();
         injector().getInstance(ServiceMonitor.class).add(connections);
+
+        super.startUp();
     }
 
     @Override
@@ -191,26 +190,12 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
         super.shutDown();
     }
     
-    public static class Advertiser extends Service.Listener {
-
-        protected final Logger logger;
-        protected final Injector injector;
-        
-        @Inject
-        public Advertiser(
-                FrontendServerService<?> server,
-                Injector injector) {
-            this(server, injector, MoreExecutors.sameThreadExecutor());
-        }
+    public class Advertiser extends Service.Listener {
 
         public Advertiser(
-                FrontendServerService<?> server,
-                Injector injector,
                 Executor executor) {
-            this.logger = LogManager.getLogger(getClass());
-            this.injector = injector;
-            server.addListener(this, executor);
-            if (server.isRunning()) {
+            addListener(this, executor);
+            if (isRunning()) {
                 running();
             }
         }
@@ -224,7 +209,7 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
                 FrontendConfiguration.advertise(peerId, address, materializer);
             } catch (Exception e) {
                 logger.warn("", e);
-                injector.getInstance(FrontendServerService.class).stopAsync();
+                stopAsync();
             }
         }
     }
