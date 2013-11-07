@@ -128,7 +128,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
             // special case: can't delete the parent of a volume
             ZNodeLabel.Path root = volume.getDescriptor().getRoot();
             ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) request).getPath());
-            ZNodeLabel suffix = path.suffix(root.length());
+            int suffixIndex = root.length();
+            if (suffixIndex == 1) {
+                suffixIndex = 0;
+            }
+            ZNodeLabel suffix = path.suffix(suffixIndex);
             for (ZNodeLabel leaf: volume.getDescriptor().getLeaves()) {
                 if (leaf.toString().startsWith(suffix.toString())) {
                     int lastSlash = leaf.toString().lastIndexOf(ZNodeLabel.SLASH);
@@ -457,9 +461,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedResp
                                 {
                                     Volume volume = volume().get();
                                     // special case: volume children won't be in the response
+                                    // TODO: cache these parent path computations
                                     ZNodeLabel.Path root = volume.getDescriptor().getRoot();
-                                    ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) task.record()).getPath());
-                                    ZNodeLabel suffix = path.suffix(root.length());
+                                    ZNodeLabel.Path path = ZNodeLabel.Path.of(((Records.PathGetter) task.record()).getPath());            int suffixIndex = root.length();
+                                    if (suffixIndex == 1) {
+                                        suffixIndex = 0;
+                                    }
+                                    ZNodeLabel suffix = path.suffix(suffixIndex);
                                     List<String> children = null;
                                     for (ZNodeLabel leaf: volume.getDescriptor().getLeaves()) {
                                         if (leaf.toString().startsWith(suffix.toString())) {
