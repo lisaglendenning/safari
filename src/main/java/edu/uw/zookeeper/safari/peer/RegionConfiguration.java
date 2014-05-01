@@ -18,8 +18,9 @@ import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.backend.BackendConfiguration;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
 
-public class EnsembleConfiguration {
+public class RegionConfiguration {
 
     public static Module module() {
         return new Module();
@@ -34,33 +35,33 @@ public class EnsembleConfiguration {
         }
 
         @Provides @Singleton
-        public EnsembleConfiguration getEnsembleConfiguration(
+        public RegionConfiguration getEnsembleConfiguration(
                 BackendConfiguration backendConfiguration,
                 ControlMaterializerService control) throws InterruptedException, ExecutionException, KeeperException {
             checkState(control.isRunning());
-            // Find my ensemble
             EnsembleView<ServerInetAddressView> myView = backendConfiguration.getView().getEnsemble();
-            ControlSchema.Regions.Entity ensembleNode = ControlSchema.Regions.Entity.create(
+            Identifier regionId = ControlZNode.CreateEntity.call(
+                    ControlSchema.Safari.Regions.PATH,
                     myView, 
                     control.materializer()).get();
-            EnsembleConfiguration instance = new EnsembleConfiguration(ensembleNode.get());
+            RegionConfiguration instance = new RegionConfiguration(regionId);
             LogManager.getLogger(getClass()).info("{}", instance);
             return instance;
         }
     }
     
-    private final Identifier ensemble;
+    private final Identifier region;
 
-    public EnsembleConfiguration(Identifier ensemble) {
-        this.ensemble = ensemble;
+    public RegionConfiguration(Identifier region) {
+        this.region = region;
     }
     
-    public Identifier getEnsemble() {
-        return ensemble;
+    public Identifier getRegion() {
+        return region;
     }
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("ensemble", ensemble).toString();
+        return Objects.toStringHelper(this).add("region", region).toString();
     }
 }

@@ -21,11 +21,10 @@ import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
-import edu.uw.zookeeper.safari.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.safari.frontend.FrontendServerService;
 import edu.uw.zookeeper.safari.net.IntraVmModule;
 import edu.uw.zookeeper.safari.net.NettyModule;
-import edu.uw.zookeeper.safari.peer.EnsembleMemberService;
+import edu.uw.zookeeper.safari.peer.RegionMemberService;
 import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
 
 public class MainApplicationModule extends DependentModule {
@@ -59,10 +58,9 @@ public class MainApplicationModule extends DependentModule {
                 NettyModule.create(), 
                 ControlMaterializerService.module(),
                 VolumeCacheService.module(),
-                AssignmentCacheService.module(),
                 BackendRequestService.module(),
                 PeerConnectionsService.module(),
-                EnsembleMemberService.module(),
+                RegionMemberService.module(),
                 FrontendServerService.module());
     }
 
@@ -70,10 +68,9 @@ public class MainApplicationModule extends DependentModule {
     @DependsOn({
         ControlMaterializerService.class, 
         VolumeCacheService.class, 
-        AssignmentCacheService.class, 
         BackendRequestService.class, 
         PeerConnectionsService.class,
-        EnsembleMemberService.class, 
+        RegionMemberService.class, 
         FrontendServerService.class })
     public static class MainService extends DependentService {
         @Inject

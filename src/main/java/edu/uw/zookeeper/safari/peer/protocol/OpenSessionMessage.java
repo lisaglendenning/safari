@@ -9,15 +9,23 @@ public abstract class OpenSessionMessage<V extends ConnectMessage<?>> extends Va
 
     protected OpenSessionMessage(
             Long identifier,
-            V value) {
-        super(identifier, value);
+            V message) {
+        super(identifier, message);
+    }
+    
+    public Long getIdentifier() {
+        return identifier;
+    }
+    
+    public V getMessage() {
+        return value;
     }
     
     @Override
     public String toString() {
         return Objects.toStringHelper(this)
-                .add("identifier", Session.toString(getIdentifier()))
-                .add("value", getValue())
+                .add("identifier", Session.toString(identifier))
+                .add("message", value)
                 .toString();
     }
 }

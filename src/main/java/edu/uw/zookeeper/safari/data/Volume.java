@@ -1,55 +1,130 @@
 package edu.uw.zookeeper.safari.data;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
+import static com.google.common.base.Preconditions.*;
 
-import edu.uw.zookeeper.common.AbstractPair;
-import edu.uw.zookeeper.common.Reference;
+import java.util.Map;
+import java.util.Set;
+
+import com.google.common.base.Function;
+import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableBiMap;
+import com.google.common.primitives.UnsignedLong;
+
+import edu.uw.zookeeper.data.EmptyZNodeLabel;
+import edu.uw.zookeeper.data.ZNodeName;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
 
-public class Volume extends AbstractPair<Identifier, VolumeDescriptor> {
+public final class Volume extends VersionedVolume {
 
-    public static Volume none() {
-        return Holder.NONE.get();
+    public static Volume valueOf(
+            Identifier id, 
+            ZNodePath path, 
+            UnsignedLong version,
+            Identifier region,
+            Map<ZNodeName, Identifier> branches) {
+        return valueOf(VolumeDescriptor.valueOf(id, path), version, region, branches);
+    }
+
+    public static Volume valueOf(
+            VolumeDescriptor descriptor, 
+            UnsignedLong version,
+            Identifier region,
+            Map<ZNodeName, Identifier> branches) {
+        return new Volume(descriptor, version, region, branches);
+    }
+
+    public static boolean contains(final Volume volume, final ZNodePath path) {
+        return contains(volume.getDescriptor().getPath(), volume.getBranches().keySet(), path);
     }
     
-    public static Volume of(Identifier id, VolumeDescriptor descriptor) {
-        return new Volume(id, descriptor);
+    public static boolean contains(
+            final ZNodePath root, final Set<ZNodeName> branches, final ZNodePath path) {
+        if (! path.startsWith(root)) {
+            return false;
+        }
+        ZNodeName remaining = path.suffix(root.isRoot() ? 0 : root.length());
+        return contains(branches, remaining);
     }
-
-    protected static enum Holder implements Reference<Volume> {
-        NONE(new Volume(Identifier.zero(), VolumeDescriptor.none()));
+    
+    public static boolean contains(final Set<ZNodeName> branches, ZNodeName remaining) {
+        if (! (remaining instanceof EmptyZNodeLabel)) {
+            for (ZNodeName branch: branches) {
+                if (branch.startsWith(remaining)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    
+    public static class Canonicalize implements Function<ZNodeName, ZNodeName> {
         
-        private final Volume instance;
+        public static Canonicalize of(ZNodePath root) {
+            return new Canonicalize(root);
+        }
         
-        private Holder(Volume instance) {
-            this.instance = instance;
+        private final ZNodePath root;
+        
+        public Canonicalize(ZNodePath root) {
+            this.root = root;
         }
 
         @Override
-        public Volume get() {
-            return instance;
+        public ZNodeName apply(final ZNodeName input) {
+            ZNodeName output = input;
+            if (input instanceof ZNodePath) {
+                ZNodePath path = (ZNodePath) input;
+                checkArgument(path.startsWith(root), input);
+                return path.suffix(root.isRoot() ? 0 : root.length());
+            }
+            return output;
         }
     }
+
     
-    @JsonCreator
+    private final Identifier region;
+    private final ImmutableBiMap<ZNodeName, Identifier> branches;
+    
     public Volume(
-            @JsonProperty("id") Identifier id, 
-            @JsonProperty("descriptor") VolumeDescriptor descriptor) {
-        super(id, descriptor);
+            VolumeDescriptor descriptor, 
+            UnsignedLong version,
+            Identifier region,
+            Map<ZNodeName, Identifier> branches) {
+        super(descriptor, version);
+        this.region = checkNotNull(region);
+        this.branches = ImmutableBiMap.copyOf(branches);
     }
 
-    public Identifier getId() {
-        return first;
+    public Identifier getRegion() {
+        return region;
     }
     
-    public VolumeDescriptor getDescriptor() {
-        return second;
+    public ImmutableBiMap<ZNodeName, Identifier> getBranches() {
+        return branches;
+    }
+
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this)
+                .add("descriptor", getDescriptor())
+                .add("version", getVersion())
+                .add("region", region)
+                .add("branches", branches).toString();
     }
     
     @Override
-    public String toString() {
-        return Objects.toStringHelper(this).addValue(getId()).addValue(getDescriptor()).toString();
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (! (obj instanceof Volume)) {
+            return false;
+        }
+        Volume other = (Volume) obj;
+        return getDescriptor().equals(other.getDescriptor())
+                && getDescriptor().equals(other.getDescriptor())
+                && region.equals(other.region)
+                && branches.equals(other.branches);
     }
 }

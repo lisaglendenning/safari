@@ -1,8 +1,9 @@
 package edu.uw.zookeeper.safari;
 
 import java.util.List;
-import java.util.concurrent.Callable;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -18,17 +19,19 @@ import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.clients.IteratingClient;
 import edu.uw.zookeeper.clients.SimpleClientsBuilder;
-import edu.uw.zookeeper.clients.common.CallUntilPresent;
+import edu.uw.zookeeper.clients.SubmitGenerator;
+import edu.uw.zookeeper.clients.common.CountingGenerator;
+import edu.uw.zookeeper.clients.common.Generator;
 import edu.uw.zookeeper.clients.common.Generators;
-import edu.uw.zookeeper.clients.common.IterationCallable;
-import edu.uw.zookeeper.clients.common.SubmitCallable;
-import edu.uw.zookeeper.clients.random.PathedRequestGenerator;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
@@ -100,32 +103,31 @@ public class MultipleClientTest {
         }
     }
 
+    protected final Logger logger = LogManager.getLogger();
+    
     @Test(timeout=30000)
     public void testPipeline() throws Exception {
         Injector injector = MultipleClientService.Module.injector();
-        MultipleClientService client = injector.getInstance(MultipleClientService.class);
-        client.startAsync().awaitRunning();
+        MultipleClientService service = injector.getInstance(MultipleClientService.class);
+        service.startAsync().awaitRunning();
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
         
         int nclients = 2;
         int iterations = 32;
         int logInterval = 8;
-        List<ListenableFuture<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>>> futures = Lists.newArrayListWithCapacity(nclients);
+        ListeningExecutorService executor = injector.getInstance(ListeningExecutorService.class);
+        Generator<? extends Records.Request> requests = Generators.constant(Operations.Requests.exists().setPath(ZNodePath.root()).build());
+        List<IteratingClient> clients = Lists.newArrayListWithCapacity(nclients);
         for (int i=0; i<nclients; ++i) {
-            Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 
-                CallUntilPresent.create(
-                        IterationCallable.create(iterations, logInterval, 
-                        SubmitCallable.create(
-                                PathedRequestGenerator.exists(
-                                        Generators.constant(ZNodeLabel.Path.root())), 
-                                client.getClient().getConnectionClientExecutors().get().get())));
-            futures.add(injector.getInstance(ListeningExecutorService.class).submit(callable));
+            final CountingGenerator<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> operations = 
+                    CountingGenerator.create(iterations, logInterval, 
+                            SubmitGenerator.create(requests, service.getClient().getConnectionClientExecutors().get().get()), logger);
+            IteratingClient client = IteratingClient.create(executor, operations, LoggingPromise.create(logger, SettableFuturePromise.<Void>create()));
+            clients.add(client);
+            executor.execute(client);
         }
-        List<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> results = Futures.allAsList(futures).get();
-        for (Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result: results) {
-            Operations.unlessError(result.second().get().record());
-        }
+        Futures.successfulAsList(clients).get();
         
         monitor.stopAsync().awaitTerminated();
     }

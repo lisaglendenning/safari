@@ -6,7 +6,6 @@ import java.util.Iterator;
 import java.util.NavigableSet;
 import java.util.TreeSet;
 
-import com.google.common.base.Objects;
 import com.google.common.collect.ForwardingNavigableSet;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.UnsignedInteger;
@@ -14,7 +13,7 @@ import com.google.common.primitives.UnsignedInteger;
 import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.Serializes;
 
-public class Identifier implements Comparable<Identifier> {
+public final class Identifier implements Comparable<Identifier> {
 
     public static Identifier zero() {
         return Holder.ZERO.get();
@@ -80,7 +79,7 @@ public class Identifier implements Comparable<Identifier> {
 
     @Override
     public int compareTo(Identifier o) {
-        return intValue().compareTo(o.intValue());
+        return value.compareTo(o.value);
     }
     
     @Override
@@ -92,12 +91,12 @@ public class Identifier implements Comparable<Identifier> {
             return false;
         }
         Identifier other = (Identifier) obj;
-        return Objects.equal(intValue(), other.intValue());
+        return value.equals(other.value);
     }
     
     @Override
     public int hashCode() {
-        return Objects.hashCode(intValue());
+        return value.hashCode();
     }
     
     @Serializes(from=Identifier.class, to=String.class)

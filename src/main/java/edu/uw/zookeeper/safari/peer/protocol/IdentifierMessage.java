@@ -6,20 +6,16 @@ import com.google.common.base.Objects;
 
 public abstract class IdentifierMessage<T> implements MessageBody {
 
-    private final T identifier;
+    protected final T identifier;
     
     protected IdentifierMessage(T identifier) {
         this.identifier = checkNotNull(identifier);
     }
 
-    public T getIdentifier() {
-        return identifier;
-    }
-
     @Override
     public String toString() {
         return Objects.toStringHelper(this)
-                .add("identifier", getIdentifier())
+                .add("identifier", identifier)
                 .toString();
     }
     
@@ -32,11 +28,11 @@ public abstract class IdentifierMessage<T> implements MessageBody {
             return false;
         }
         IdentifierMessage<?> other = (IdentifierMessage<?>) obj;
-        return Objects.equal(getIdentifier(), other.getIdentifier());
+        return Objects.equal(identifier, other.identifier);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(getIdentifier());
+        return Objects.hashCode(identifier);
     }
 }

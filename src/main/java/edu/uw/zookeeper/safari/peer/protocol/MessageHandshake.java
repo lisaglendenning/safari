@@ -16,4 +16,8 @@ public class MessageHandshake extends IdentifierMessage<Identifier> {
     public MessageHandshake(@JsonProperty("identifier") Identifier id) {
         super(id);
     }
+    
+    public Identifier getIdentifier() {
+        return identifier;
+    }
 }

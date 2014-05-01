@@ -2,67 +2,37 @@ package edu.uw.zookeeper.safari.backend;
 
 import com.google.common.base.Function;
 
-import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.proto.Records;
 
-public class RecordPrefixTranslator<T extends Records.Coded> extends AbstractPair<ZNodeLabel.Path, ZNodeLabel.Path> implements Function<T,T> {
+public final class RecordPrefixTranslator<V extends Records.Coded> implements Function<V,V> {
 
-    public static <T extends Records.Coded> RecordPrefixTranslator<T> none() {
-        return new NoPrefix<T>();
+    public static <V extends Records.Coded> RecordPrefixTranslator<V> forPrefix(ZNodePath fromPrefix, ZNodePath toPrefix) {
+        return new RecordPrefixTranslator<V>(PrefixTranslator.forPrefix(fromPrefix, toPrefix));
     }
     
-    public static <T extends Records.Coded> RecordPrefixTranslator<T> of(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
-        return new RecordPrefixTranslator<T>(fromPrefix, toPrefix);
+    private final PrefixTranslator delegate;
+    
+    public RecordPrefixTranslator(PrefixTranslator delegate) {
+        this.delegate = delegate;
     }
     
-    public RecordPrefixTranslator(ZNodeLabel.Path fromPrefix, ZNodeLabel.Path toPrefix) {
-        super(fromPrefix, toPrefix);
-    }
-    
-    public ZNodeLabel.Path getFromPrefix() {
-        return first;
-    }
-    
-    public ZNodeLabel.Path getToPrefix() {
-        return second;
+    public final PrefixTranslator getPrefix() {
+        return delegate;
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public T apply(T input) {
-        T output = input;
+    public V apply(V input) {
+        final V output;
         if (input instanceof Records.PathGetter) {
             Operations.PathBuilder<?,?> builder = (Operations.PathBuilder<?,?>) Operations.fromRecord(input);
-            ZNodeLabel.Path path = builder.getPath();
-            if (getFromPrefix().prefixOf(path)) {
-                int prefixLen = getFromPrefix().length();
-                ZNodeLabel.Path transformed;
-                if (path.length() == prefixLen) {
-                    transformed = getToPrefix();
-                } else {
-                    String remaining = path.toString().substring(prefixLen);
-                    transformed = (ZNodeLabel.Path) ZNodeLabel.joined(getToPrefix().toString(), remaining);
-                }
-                builder.setPath(transformed);
-                output = (T) builder.build();
-            } else {
-                throw new IllegalArgumentException(String.format("%s not a prefix of %s", getFromPrefix(), path));
-            }
+            builder.setPath(delegate.apply(builder.getPath()));
+            output = (V) builder.build();
+        } else {
+            output = input;
         }
         return output;
-    }
-    
-    public static class NoPrefix<T extends Records.Coded> extends RecordPrefixTranslator<T> {
-
-        public NoPrefix() {
-            super(ZNodeLabel.Path.root(), ZNodeLabel.Path.root());
-        }
-
-        @Override
-        public T apply(T input) {
-            return input;
-        }
     }
 }

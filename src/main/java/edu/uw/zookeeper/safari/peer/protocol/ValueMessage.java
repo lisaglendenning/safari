@@ -4,21 +4,17 @@ import com.google.common.base.Objects;
 
 public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
 
-    private final V value;
+    protected final V value;
     
     protected ValueMessage(T identifier, V value) {
         super(identifier);
         this.value = value;
     }
-    
-    public V getValue() {
-        return value;
-    }
 
     @Override
     public String toString() {
         return Objects.toStringHelper(this)
-                .add("identifier", getIdentifier())
+                .add("identifier", identifier)
                 .add("value", value)
                 .toString();
     }
@@ -32,12 +28,12 @@ public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
             return false;
         }
         ValueMessage<?,?> other = (ValueMessage<?,?>) obj;
-        return Objects.equal(getIdentifier(), other.getIdentifier())
+        return Objects.equal(identifier, other.identifier)
                 && Objects.equal(value, other.value);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(getIdentifier(), value);
+        return Objects.hashCode(identifier, value);
     }
 }

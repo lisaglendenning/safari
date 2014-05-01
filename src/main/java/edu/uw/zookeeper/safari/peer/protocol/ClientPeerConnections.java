@@ -3,6 +3,8 @@ package edu.uw.zookeeper.safari.peer.protocol;
 import java.net.SocketAddress;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.logging.log4j.LogManager;
+
 import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
 
@@ -13,6 +15,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.RunnablePromiseTask;
@@ -23,7 +26,6 @@ import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.safari.common.SharedLookup;
-import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
 public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<?>> implements ClientConnectionFactory<ClientPeerConnection<?>> {
@@ -33,13 +35,13 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
+            CachedFunction<Identifier, ServerInetAddressView> lookup,
             ClientConnectionFactory<? extends Connection<? super MessagePacket,? extends MessagePacket,?>> connections) {
         return new ClientPeerConnections(identifier, timeOut, executor, lookup, connections, new StrongConcurrentSet<ConnectionsListener<? super ClientPeerConnection<?>>>());
     }
     
     protected final MessagePacket<MessageHandshake> handshake;
-    protected final CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> addressLookup;
+    protected final CachedFunction<Identifier, ServerInetAddressView> addressLookup;
     protected final CachedLookup<Identifier, ClientPeerConnection<?>> lookups;
     
     @SuppressWarnings("rawtypes")
@@ -47,7 +49,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            CachedFunction<Identifier, ControlSchema.Peers.Entity.PeerAddress> lookup,
+            CachedFunction<Identifier, ServerInetAddressView> lookup,
             ClientConnectionFactory<? extends Connection<? super MessagePacket,? extends MessagePacket,?>> connections,
             IConcurrentSet<ConnectionsListener<? super ClientPeerConnection<?>>> listeners) {
         super(identifier, timeOut, executor, connections, listeners);
@@ -60,7 +62,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
                             @Override
                             public ListenableFuture<ClientPeerConnection<?>> apply(
                                     Identifier peer) throws Exception {
-                                ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> lookupFuture = addressLookup.apply(peer);
+                                ListenableFuture<ServerInetAddressView> lookupFuture = addressLookup.apply(peer);
                                 ConnectionTask connection = new ConnectionTask(lookupFuture);
                                 try {
                                     return new ConnectTask(peer, connection);
@@ -69,7 +71,8 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
                                     throw e;
                                 }
                             }
-                        }));
+                        }),
+                LogManager.getLogger(getClass()));
     }
 
     @SuppressWarnings("rawtypes")
@@ -117,17 +120,17 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
     }
 
     @SuppressWarnings("rawtypes")
-    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ControlSchema.Peers.Entity.PeerAddress>, Connection<? super MessagePacket, ? extends MessagePacket, ?>> implements FutureCallback<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
+    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ServerInetAddressView>, Connection<? super MessagePacket, ? extends MessagePacket, ?>> implements FutureCallback<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
         
         protected ListenableFuture<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> future;
 
         public ConnectionTask(
-                ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> task) {
+                ListenableFuture<ServerInetAddressView> task) {
             this(task, PromiseTask.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>newPromise());
         }
         
         public ConnectionTask(
-                ListenableFuture<ControlSchema.Peers.Entity.PeerAddress> task, 
+                ListenableFuture<ServerInetAddressView> task, 
                 Promise<Connection<? super MessagePacket, ? extends MessagePacket, ?>> delegate) {
             super(task, delegate);
             this.future = null;
@@ -166,8 +169,8 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
                     cancel(true);
                 } else {
                     if (future == null) {
-                        ControlSchema.Peers.Entity.PeerAddress peer = task().get();
-                        future = connections().connect(peer.get().get());
+                        ServerInetAddressView peer = task().get();
+                        future = connections().connect(peer.get());
                         Futures.addCallback(future, this);
                     }
                 }

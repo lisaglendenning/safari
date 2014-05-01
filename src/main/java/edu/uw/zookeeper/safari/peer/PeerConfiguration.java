@@ -7,14 +7,19 @@ import java.util.concurrent.ExecutionException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 
+import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ZooKeeperApplication;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
@@ -23,6 +28,7 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.server.ConfigurableServerAddressView;
 
 public class PeerConfiguration {
@@ -45,9 +51,12 @@ public class PeerConfiguration {
                 Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
             checkState(control.isRunning());
             ServerInetAddressView address = PeerConfigurableServerAddressView.get(configuration);
-            ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
+            Identifier peerId = ControlZNode.CreateEntity.call(
+                    ControlSchema.Safari.Peers.PATH,
+                    address, 
+                    control.materializer()).get();
             TimeValue timeOut = ConfigurableTimeout.get(configuration);
-            PeerConfiguration instance = new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
+            PeerConfiguration instance = new PeerConfiguration(PeerAddressView.valueOf(peerId, address), timeOut);
             LogManager.getLogger(getClass()).info("{}", instance);
             return instance;
         }
@@ -69,10 +78,23 @@ public class PeerConfiguration {
         }
     }
     
-    public static void advertise(Identifier peerId, Materializer<?> materializer) throws KeeperException, InterruptedException, ExecutionException {
-        ControlSchema.Peers.Entity entity = ControlSchema.Peers.Entity.of(peerId);
-        Operation.ProtocolResponse<?> result = entity.presence().create(materializer).get();
-        Operations.unlessError(result.record());
+    public static ListenableFuture<Void> advertise(
+            final Identifier peer, 
+            final Materializer<ControlZNode<?>,?> materializer) {
+        ZNodePath path = ControlSchema.Safari.Peers.PATH.join(ZNodeLabel.fromString(peer.toString())).join(ControlSchema.Safari.Peers.Peer.Presence.LABEL);
+        return Futures.transform(materializer.create(path).call(), 
+                new Function<Operation.ProtocolResponse<?>, Void>() {
+                    @Override
+                    public Void apply(
+                            Operation.ProtocolResponse<?> input) {
+                        try {
+                            Operations.unlessError(input.record());
+                        } catch (KeeperException e) {
+                            throw new IllegalStateException(String.format("Error creating presence for %s", peer), e);
+                        }
+                        return null;
+                    }
+        });
     }
 
     public static final String CONFIG_PATH = "Peer";

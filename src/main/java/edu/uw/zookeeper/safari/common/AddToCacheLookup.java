@@ -3,8 +3,6 @@ package edu.uw.zookeeper.safari.common;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.Executor;
-
 import javax.annotation.Nullable;
 
 import org.apache.logging.log4j.LogManager;
@@ -14,9 +12,8 @@ import com.google.common.base.Function;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
-
 import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 
 public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFunction<? super K,V>> implements AsyncFunction<K,V> {
     
@@ -26,9 +23,6 @@ public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFuncti
         return new AddToCacheLookup<K,V>(cache, delegate, 
                 LogManager.getLogger(AddToCacheLookup.class));
     }
-
-    protected final static Executor sameThreadExecutor = 
-            MoreExecutors.sameThreadExecutor();
 
     protected final Logger logger;
     
@@ -46,7 +40,7 @@ public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFuncti
         return Futures.transform(
                 second().apply(input), 
                 new AddToCacheFunction(input), 
-                sameThreadExecutor);
+                SameThreadExecutor.getInstance());
     }
     
     protected class AddToCacheFunction implements Function<V,V> {

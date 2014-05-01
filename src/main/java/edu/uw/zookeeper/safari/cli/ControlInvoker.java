@@ -11,7 +11,8 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.client.cli.ArgumentDescriptor;
 import edu.uw.zookeeper.client.cli.ClientExecutorInvoker;
 import edu.uw.zookeeper.client.cli.CommandDescriptor;
@@ -21,9 +22,11 @@ import edu.uw.zookeeper.client.cli.Invoker;
 import edu.uw.zookeeper.client.cli.Invokes;
 import edu.uw.zookeeper.client.cli.Shell;
 import edu.uw.zookeeper.client.cli.TokenType;
-import edu.uw.zookeeper.safari.control.Control;
+import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.data.VolumeDescriptor;
+import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.data.PrefixCreator;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 import edu.uw.zookeeper.safari.peer.protocol.ObjectMapperBuilder;
 
@@ -66,7 +69,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
         }
     }
     
-    public static final Environment.Key<Materializer<?>> MATERIALIZER_KEY = Environment.Key.create("MATERIALIZER", Materializer.class);
+    public static final Environment.Key<Materializer<ControlZNode<?>,?>> MATERIALIZER_KEY = Environment.Key.create("MATERIALIZER", Materializer.class);
 
     protected final Shell shell;
     protected final ObjectMapper mapper;
@@ -81,7 +84,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
     @Override
     public void invoke(Invocation<Command> input)
             throws Exception {
-        Materializer<?> materializer = shell.getEnvironment().get(MATERIALIZER_KEY);
+        Materializer<ControlZNode<?>,?> materializer = shell.getEnvironment().get(MATERIALIZER_KEY);
         // TODO: DRY
         switch (input.getCommand().second()) {
         case ENTITY:
@@ -89,13 +92,14 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             switch ((EntityType) input.getArguments()[1]) {
             case VOLUME:
             {
-                final VolumeDescriptor vd = mapper.readValue((String) input.getArguments()[2], VolumeDescriptor.class);
-                ListenableFuture<ControlSchema.Volumes.Entity> future = ControlSchema.Volumes.Entity.create(vd, materializer);
-                Futures.addCallback(future, new FutureCallback<ControlSchema.Volumes.Entity>(){
+                final ZNodePath path = mapper.readValue((String) input.getArguments()[2], ZNodePath.class);
+                ListenableFuture<Identifier> future = ControlZNode.CreateEntity.call(
+                        ControlSchema.Safari.Volumes.PATH, path, materializer);
+                Futures.addCallback(future, new FutureCallback<Identifier>(){
                     @Override
-                    public void onSuccess(ControlSchema.Volumes.Entity result) {
+                    public void onSuccess(Identifier result) {
                         try {
-                            shell.println(String.format("Volume %s created => %s", vd, result.get()));
+                            shell.println(String.format("Volume %s created => %s", path, result));
                             shell.flush();
                         } catch (IOException e) {
                         }
@@ -112,12 +116,14 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             case REGION:
             {
                 final EnsembleView<ServerInetAddressView> ensemble = mapper.readValue((String) input.getArguments()[2], new TypeReference<EnsembleView<ServerInetAddressView>>() {});
-                ListenableFuture<ControlSchema.Regions.Entity> future = ControlSchema.Regions.Entity.create(ensemble, materializer);
-                Futures.addCallback(future, new FutureCallback<ControlSchema.Regions.Entity>(){
+                ListenableFuture<Identifier> future = 
+                        ControlZNode.CreateEntity.call(
+                                ControlSchema.Safari.Regions.PATH, ensemble, materializer);
+                Futures.addCallback(future, new FutureCallback<Identifier>(){
                     @Override
-                    public void onSuccess(ControlSchema.Regions.Entity result) {
+                    public void onSuccess(Identifier result) {
                         try {
-                            shell.println(String.format("Region %s created => %s", ensemble, result.get()));
+                            shell.println(String.format("Region %s created => %s", ensemble, result));
                             shell.flush();
                         } catch (IOException e) {
                         }
@@ -139,13 +145,13 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             switch ((EntityType) input.getArguments()[1]) {
             case VOLUME:
             {
-                final VolumeDescriptor vd = mapper.readValue((String) input.getArguments()[2], VolumeDescriptor.class);
-                ListenableFuture<ControlSchema.Volumes.Entity> future = ControlSchema.Volumes.Entity.lookup(materializer).apply(vd);
-                Futures.addCallback(future, new FutureCallback<ControlSchema.Volumes.Entity>(){
+                final ZNodePath path = mapper.readValue((String) input.getArguments()[2], ZNodePath.class);
+                ListenableFuture<Identifier> future = ControlZNode.LookupEntity.call(ControlSchema.Safari.Volumes.PATH, path, materializer);
+                Futures.addCallback(future, new FutureCallback<Identifier>(){
                     @Override
-                    public void onSuccess(ControlSchema.Volumes.Entity result) {
+                    public void onSuccess(Identifier result) {
                         try {
-                            shell.println(String.format("Volume %s found => %s", vd, result.get()));
+                            shell.println(String.format("Volume %s found => %s", path, result));
                             shell.flush();
                         } catch (IOException e) {
                         }
@@ -162,12 +168,12 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             case REGION:
             {
                 final EnsembleView<ServerInetAddressView> ensemble = mapper.readValue((String) input.getArguments()[2], new TypeReference<EnsembleView<ServerInetAddressView>>() {});
-                ListenableFuture<ControlSchema.Regions.Entity> future = ControlSchema.Regions.Entity.lookup(materializer).apply(ensemble);
-                Futures.addCallback(future, new FutureCallback<ControlSchema.Regions.Entity>(){
+                ListenableFuture<Identifier> future = ControlZNode.LookupEntity.call(ControlSchema.Safari.Regions.PATH, ensemble, materializer);
+                Futures.addCallback(future, new FutureCallback<Identifier>(){
                     @Override
-                    public void onSuccess(ControlSchema.Regions.Entity result) {
+                    public void onSuccess(Identifier result) {
                         try {
-                            shell.println(String.format("Region %s found => %s", ensemble, result.get()));
+                            shell.println(String.format("Region %s found => %s", ensemble, result));
                             shell.flush();
                         } catch (IOException e) {
                         }
@@ -195,13 +201,14 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
             shell.getCommands().withCommand(command);
         }
 
-        Materializer<?> materializer = Materializer.newInstance(
-                ControlSchema.getInstance().get(),
-                JacksonSerializer.create(mapper),
-                shell.getEnvironment().get(ClientExecutorInvoker.CLIENT_KEY).getConnectionClientExecutor());
+        Materializer<ControlZNode<?>,?> materializer = 
+                Materializer.<ControlZNode<?>, Message.ServerResponse<?>>fromHierarchy(
+                        ControlSchema.class,
+                        JacksonSerializer.create(mapper),
+                        shell.getEnvironment().get(ClientExecutorInvoker.CLIENT_KEY).getConnectionClientExecutor());
         shell.getEnvironment().put(MATERIALIZER_KEY, materializer);
-        
-        Control.createPrefix(materializer);
+
+        Futures.allAsList(PrefixCreator.forMaterializer(materializer).call()).get();
     }
 
     @Override

@@ -6,19 +6,29 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+import javax.annotation.Nullable;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.Operations;
+import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.TimeValue;
@@ -32,12 +42,15 @@ import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmConnection;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpoint;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.common.CachedFunction;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.FramedMessagePacketCodec;
@@ -74,6 +87,53 @@ public class PeerConnectionsService extends DependentService {
                     return value;
                 }
             };
+        }
+        
+        public static CachedFunction<Identifier, ServerInetAddressView> peerAddressLookup(
+            final Materializer<ControlZNode<?>,?> materializer) {
+            final Function<Identifier, ZNodePath> toPath = new Function<Identifier, ZNodePath>() {
+                @Override
+                public ZNodePath apply(Identifier peer) {
+                    return ControlSchema.Safari.Peers.PATH.join(ZNodeLabel.fromString(peer.toString())).join(ControlSchema.Safari.Peers.Peer.PeerAddress.LABEL);
+                }
+            };
+            final Function<Identifier, ServerInetAddressView> cached = new Function<Identifier, ServerInetAddressView>() {
+                @Override
+                public @Nullable ServerInetAddressView apply(
+                        final Identifier peer) {
+                    ServerInetAddressView address = null;
+                    materializer.cache().lock().readLock().lock();
+                    try {
+                        ControlSchema.Safari.Peers.Peer.PeerAddress node =
+                                (ControlSchema.Safari.Peers.Peer.PeerAddress) materializer.cache().cache().get(toPath.apply(peer));
+                        if (node != null) {
+                            address = node.data().get();
+                        }
+                    } finally {
+                        materializer.cache().lock().readLock().unlock();
+                    }
+                    return address;
+                }
+            };
+            final AsyncFunction<Identifier, ServerInetAddressView> lookup = new AsyncFunction<Identifier, ServerInetAddressView>() {
+                @Override
+                public ListenableFuture<ServerInetAddressView> apply(final Identifier peer) {
+                    final ZNodePath path = toPath.apply(peer);
+                    return Futures.transform(materializer.getData(path).call(),
+                            new Function<Operation.ProtocolResponse<?>, ServerInetAddressView>() {
+                                @Override
+                                public @Nullable ServerInetAddressView apply(Operation.ProtocolResponse<?> input) {
+                                    try {
+                                        Operations.unlessError(input.record());
+                                    } catch (KeeperException e) {
+                                        return null;
+                                    }
+                                    return cached.apply(peer);
+                                }
+                            });
+                }
+            };
+            return CachedFunction.create(cached, lookup, LogManager.getLogger(PeerConnectionsService.class));
         }
         
         public Module() {}
@@ -145,7 +205,7 @@ public class PeerConnectionsService extends DependentService {
             ClientConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> clientConnectionFactory,
             Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackServer,
             Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackClient,
-            Materializer<?> control,
+            Materializer<ControlZNode<?>,?> control,
             Injector injector) {
         PeerConnectionsService instance = new PeerConnectionsService(
                 identifier, 
@@ -175,13 +235,13 @@ public class PeerConnectionsService extends DependentService {
             ClientConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> clientConnectionFactory,
             Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackServer,
             Connection<? super MessagePacket, ? extends MessagePacket, ?> loopbackClient,
-            Materializer<?> control,
+            Materializer<ControlZNode<?>,?> control,
             Injector injector) {
         super(injector);
         this.logger = LogManager.getLogger(getClass());
         this.identifier = identifier;
         this.servers = ServerPeerConnections.newInstance(identifier, timeOut, executor, serverConnectionFactory);
-        this.clients = ClientPeerConnections.newInstance(identifier, timeOut, executor, ControlSchema.Peers.Entity.PeerAddress.lookup(control), clientConnectionFactory);
+        this.clients = ClientPeerConnections.newInstance(identifier, timeOut, executor, Module.peerAddressLookup(control), clientConnectionFactory);
         
         servers.put(ServerPeerConnection.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create(identifier, identifier, loopbackServer, timeOut, executor));
         clients.put(ClientPeerConnection.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create(identifier, identifier, loopbackClient, timeOut, executor));
@@ -208,9 +268,9 @@ public class PeerConnectionsService extends DependentService {
     
         @Override
         public void running() {
-            Materializer<?> materializer = injector().getInstance(ControlMaterializerService.class).materializer();
+            Materializer<ControlZNode<?>,?> materializer = injector().getInstance(ControlMaterializerService.class).materializer();
             try {
-                PeerConfiguration.advertise(identifier(), materializer);
+                PeerConfiguration.advertise(identifier(), materializer).get();
             } catch (Exception e) {
                 logger.warn("", e);
                 injector.getInstance(PeerConnectionsService.class).stopAsync();

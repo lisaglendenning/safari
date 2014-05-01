@@ -1,10 +1,10 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.data.VersionedId;
 
 public interface ShardedOperation extends Operation {
-    Identifier getIdentifier();
+    VersionedId getShard();
     
     public interface Request<V extends Operation.Request> extends ShardedOperation, Operation.Request {
         V getRequest();

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.Module;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.primitives.UnsignedLong;
 
 import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
@@ -18,6 +19,8 @@ import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderDeserializer;
 import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderSerializer;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodeName;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.jackson.databind.ProtocolRequestDeserializer;
 import edu.uw.zookeeper.jackson.databind.ProtocolRequestSerializer;
 import edu.uw.zookeeper.jackson.databind.RequestRecordDeserializer;
@@ -71,6 +74,7 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 serializers.add(ToStringRegistrySerializer.create(cls));
             }
             serializers
+                .add(UnsignedLongSerializer.create())
                 .add(RequestRecordSerializer.create())
                 .add(ResponseRecordSerializer.create())
                 .add(ProtocolRequestSerializer.create())
@@ -86,6 +90,7 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                     new FromStringRegistryDeserializer(cls));
             }
             deserializers
+                .put(UnsignedLong.class, UnsignedLongDeserializer.create())
                 .put(Records.Request.class, RequestRecordDeserializer.create())
                 .put(Records.Response.class, ResponseRecordDeserializer.create())
                 .put(Message.ClientRequest.class, ProtocolRequestDeserializer.create())
@@ -96,8 +101,8 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
         protected Class<?>[] getRegistryClasses() {
             Class<?>[] registryClasses = {
                     ZNodeLabel.class, 
-                    ZNodeLabel.Component.class,
-                    ZNodeLabel.Path.class,
+                    ZNodeName.class,
+                    ZNodePath.class,
                     ServerView.Address.class,
                     ServerInetAddressView.class,
                     EnsembleView.class,

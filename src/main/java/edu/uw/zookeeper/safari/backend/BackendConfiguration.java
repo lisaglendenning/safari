@@ -9,17 +9,17 @@ import java.net.UnknownHostException;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
-
-import org.apache.zookeeper.KeeperException;
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -28,12 +28,15 @@ import com.typesafe.config.Config;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ZooKeeperApplication;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.data.CreateOrEquals;
 
 public class BackendConfiguration {
 
@@ -71,12 +74,22 @@ public class BackendConfiguration {
         }
     }
 
-    public static void advertise(Identifier myEntity, BackendView view, Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
-        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.of(myEntity);
-        ControlSchema.Peers.Entity.Backend valueNode = ControlSchema.Peers.Entity.Backend.create(view, entityNode, materializer).get();
-        if (! view.equals(valueNode.get())) {
-            throw new IllegalStateException(String.format("%s != %s", view, valueNode.get()));
-        }
+    public static ListenableFuture<Optional<BackendView>> advertise(
+            final Identifier peer, 
+            final BackendView value, 
+            final Materializer<ControlZNode<?>,?> materializer) {
+        ZNodePath path = ControlSchema.Safari.Peers.Peer.Backend.pathOf(peer);
+        return Futures.transform(CreateOrEquals.create(path, value, materializer), 
+                new Function<Optional<BackendView>, Optional<BackendView>>() {
+                    @Override
+                    public Optional<BackendView> apply(
+                            Optional<BackendView> input) {
+                        if (input.isPresent()) {
+                            throw new IllegalStateException(String.format("%s != %s", value, input.get()));
+                        }
+                        return input;
+                    }
+        });
     }
     
     private final BackendView view;

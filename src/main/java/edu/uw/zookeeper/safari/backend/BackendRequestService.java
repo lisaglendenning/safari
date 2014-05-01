@@ -8,15 +8,16 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.KeeperException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
@@ -24,30 +25,40 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.ConnectionClientExecutorService;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.Operations;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
+import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.TimeValue;
-import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Message.ServerResponse;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
+import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.SessionListener;
+import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedLookup;
+import edu.uw.zookeeper.safari.SafariException;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
-import edu.uw.zookeeper.safari.control.Control;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
-import edu.uw.zookeeper.safari.data.VolumeCacheService;
+import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.data.PrefixCreator;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
@@ -57,8 +68,10 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 
 @DependsOn({BackendConnectionsService.class})
 public class BackendRequestService<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends DependentService {
@@ -83,10 +96,10 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
                 Injector injector,
                 BackendConnectionsService<?> connections,
                 ServerPeerConnections peers,
-                VolumeCacheService volumes,
-                ScheduledExecutorService executor) throws Exception {
+                VersionedVolumeCacheService volumes,
+                ScheduledExecutorService scheduler) throws Exception {
             return BackendRequestService.newInstance(
-                    injector, volumes, connections, peers, executor);
+                    injector, volumes, connections, peers, scheduler);
         }
 
         @Override
@@ -97,56 +110,46 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
     
     public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> BackendRequestService<C> newInstance(
             Injector injector,
-            VolumeCacheService volumes,
+            VersionedVolumeCacheService volumes,
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
-            ScheduledExecutorService executor) {
+            ScheduledExecutorService scheduler) {
         BackendRequestService<C> instance = new BackendRequestService<C>(
                 injector,
+                volumes,
                 connections, 
-                peers, 
-                newVolumePathLookup(), 
-                CachedLookup.sharedAndAdded(ShardedOperationTranslators.of(
-                        volumes.byId())),
-                executor);
-        instance.new Advertiser(injector, MoreExecutors.sameThreadExecutor());
+                peers,
+                scheduler);
+        instance.new Advertiser(injector, SameThreadExecutor.getInstance());
         return instance;
     }
-    
-    public static Function<ZNodeLabel.Path, Identifier> newVolumePathLookup() {
-        return new Function<ZNodeLabel.Path, Identifier>() {
-            @Override
-            public Identifier apply(ZNodeLabel.Path input) {
-                return BackendSchema.Volumes.Root.getShard(input);
-            }
-        };
-    }
-    
-    protected static final Executor SAME_THREAD_EXECUTOR = MoreExecutors.sameThreadExecutor();
 
     protected final Logger logger;
     protected final BackendConnectionsService<C> connections;
     protected final ConcurrentMap<ServerPeerConnection<?>, ServerPeerConnectionListener> peers;
-    protected final Function<ZNodeLabel.Path, Identifier> lookup;
-    protected final CachedLookup<Identifier, OperationPrefixTranslator> translator;
     protected final ServerPeerConnectionListener listener;
-    protected final ScheduledExecutorService executor;
+    protected final ScheduledExecutorService scheduler;
+    protected final VersionedVolumeCacheService volumes;
+    protected Materializer<BackendZNode<?>,Message.ServerResponse<?>> materializer;
     
     protected BackendRequestService(
             Injector injector,
+            VersionedVolumeCacheService volumes,
             BackendConnectionsService<C> connections,
             ServerPeerConnections peers,
-            Function<ZNodeLabel.Path, Identifier> lookup,
-            CachedLookup<Identifier, OperationPrefixTranslator> translator,
-            ScheduledExecutorService executor) {
+            ScheduledExecutorService scheduler) {
         super(injector);
         this.logger = LogManager.getLogger(getClass());
+        this.volumes = volumes;
         this.connections = connections;
-        this.lookup = lookup;
-        this.translator = translator;
-        this.executor = executor;
+        this.scheduler = scheduler;
         this.peers = new MapMaker().makeMap();
         this.listener = new ServerPeerConnectionListener(peers);
+        this.materializer = null;
+    }
+    
+    public Materializer<BackendZNode<?>,ServerResponse<?>> get() {
+        return materializer;
     }
     
     @Override
@@ -156,13 +159,13 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         OperationClientExecutor<C> client = OperationClientExecutor.newInstance(
                 ConnectMessage.Request.NewRequest.newInstance(), 
                 connections.get().get(),
-                executor);
-        Control.createPrefix(
-                Materializer.newInstance(
-                BackendSchema.getInstance().get(), 
-                JacksonSerializer.create(injector.getInstance(ObjectMapper.class)),
-                client));
-        ConnectionClientExecutorService.disconnect(client);
+                scheduler);
+        this.materializer = Materializer.<BackendZNode<?>,Message.ServerResponse<?>>fromHierarchy(
+                BackendSchema.class, 
+                JacksonSerializer.create(injector.getInstance(ObjectMapper.class)), 
+                client);
+        
+        Futures.successfulAsList(PrefixCreator.forMaterializer(materializer).call()).get();
         
         listener.start();
     }
@@ -170,6 +173,8 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
     @Override
     protected void shutDown() throws Exception {
         listener.stop();
+        
+        ConnectionClientExecutorService.disconnect((OperationClientExecutor<?>) materializer.cache().client());
         
         super.shutDown();
     }
@@ -185,11 +190,11 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         
         @Override
         public void running() {
-            Materializer<?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
+            Materializer<ControlZNode<?>,?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
             Identifier myEntity = injector.getInstance(PeerConfiguration.class).getView().id();
             BackendView view = injector.getInstance(BackendConfiguration.class).getView();
             try {
-                BackendConfiguration.advertise(myEntity, view, materializer);
+                BackendConfiguration.advertise(myEntity, view, materializer).get();
             } catch (Exception e) {
                 logger.warn("", e);
                 injector.getInstance(BackendRequestService.class).stopAsync();
@@ -250,6 +255,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
 
         @Override
         public void handleConnectionRead(MessagePacket message) {
+            logger.debug("{}", message);
             switch (message.getHeader().type()) {
             case MESSAGE_TYPE_HANDSHAKE:
             case MESSAGE_TYPE_HEARTBEAT:
@@ -266,73 +272,167 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         }
         
         protected void handleMessageSessionOpen(MessageSessionOpenRequest message) {
-            Long sessionId = message.getIdentifier();
-            BackendHandler client = clients.get(sessionId);
-            if (client == null) {
-                new SessionOpenTask(message);
-            } else {
-                Futures.addCallback(
-                        client.client().session(), 
-                        new SessionOpenResponseTask(message),
-                        SAME_THREAD_EXECUTOR);
-            }
+            SessionOpenTask task = new SessionOpenTask(message, SettableFuturePromise.<ConnectMessage.Response>create());
+            Futures.addCallback(
+                    task, 
+                    new SessionOpenListener(message),
+                    SameThreadExecutor.getInstance());
+            task.run();
         }
         
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
-            logger.debug("{}", message);
             BackendHandler client = clients.get(message.getIdentifier());
             if (client != null) {
-                client.submit(message.getValue());
+                client.submit((ShardedClientRequestMessage<?>) message.getMessage());
             } else {
                 // FIXME
                 throw new UnsupportedOperationException();
             }
         }
 
-        protected class SessionOpenTask implements Runnable {
+        protected class SessionOpenTask extends RunnablePromiseTask<MessageSessionOpenRequest,ConnectMessage.Response> implements FutureCallback<ConnectMessage.Response> {
         
-            protected final MessageSessionOpenRequest session;
-            protected final ListenableFuture<? extends C> connection;
+            private Optional<SessionOpenToConnectRequest> request = Optional.absent();
+            private Optional<ListenableFuture<C>> connection = Optional.absent();
+            private Optional<RegisterSessionTask> session = Optional.absent();
             
-            public SessionOpenTask(MessageSessionOpenRequest session) {
-                this.session = session;
-                this.connection = connections.get();
-                this.connection.addListener(this, SAME_THREAD_EXECUTOR);
+            public SessionOpenTask(
+                    MessageSessionOpenRequest task,
+                    Promise<ConnectMessage.Response> promise) {
+                super(task, promise);
+            }
+
+            @Override
+            public void onSuccess(ConnectMessage.Response result) {
+                set(result);
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                setException(t);
             }
             
             @Override
-            public void run() {
-                if (this.connection.isDone()) {
-                    try {
-                        C connection = this.connection.get();
-                        ConnectMessage.Request request;
-                        if (session.getValue() instanceof ConnectMessage.Request.NewRequest) {
-                            request = ConnectMessage.Request.NewRequest.newInstance(
-                                    TimeValue.milliseconds(session.getValue().getTimeOut()), 
-                                        connections.zxids().get());
-                        } else {
-                            request = ConnectMessage.Request.RenewRequest.newInstance(
-                                    session.getValue().toSession(), connections.zxids().get());
-                        }
-                        
-                        ShardedClientExecutor<C> client = ShardedClientExecutor.newInstance(
-                                lookup, 
-                                translator.asLookup(), 
-                                request, 
-                                connection,
-                                executor);
-                        new BackendHandler(session, client);
-                    } catch (InterruptedException e) {
-                        throw new AssertionError(e);
-                    } catch (ExecutionException e) {
-                        // TODO
-                        throw new UnsupportedOperationException(e);
+            public synchronized Optional<ConnectMessage.Response> call() throws Exception {
+                if (!request.isPresent()) {
+                    BackendHandler handler = clients.get(task.getIdentifier());
+                    if (handler != null) {
+                        Futures.addCallback(handler.client().session(), this, SameThreadExecutor.getInstance());
+                    } else {
+                        this.request = Optional.of(new SessionOpenToConnectRequest(task, SettableFuturePromise.<ConnectMessage.Request>create()));
+                        this.request.get().addListener(this, SameThreadExecutor.getInstance());
                     }
+                    return Optional.absent();
+                }
+                if (request.get().isDone()) {
+                    if (!connection.isPresent()) {
+                        connection = Optional.of(connections.get());
+                        connection.get().addListener(this, SameThreadExecutor.getInstance());
+                    } else {
+                        if (connection.get().isDone()) {
+                            if (! session.isPresent()) {
+                                ConnectTask<C> task;
+                                try {
+                                    task = ConnectTask.connect( 
+                                            request.get().get(),
+                                            connection.get().get());
+                                } catch (ExecutionException e) {
+                                    throw Throwables.propagate(e.getCause());
+                                } catch (InterruptedException e) {
+                                    throw new AssertionError(e);
+                                }
+                                session = Optional.of(new RegisterSessionTask(task, delegate()));
+                            }
+                        }
+                    }
+                }
+                return Optional.absent();
+            }
+            
+            protected class RegisterSessionTask extends PromiseTask<ConnectTask<C>,ConnectMessage.Response> implements Runnable, FutureCallback<Object>, Connection.Listener<Operation.Response> {
+                
+                private Optional<? extends ListenableFuture<? extends Message.ClientRequest<?>>> create = Optional.absent();
+                
+                public RegisterSessionTask(
+                        ConnectTask<C> task,
+                        Promise<ConnectMessage.Response> promise) {
+                    super(task, promise);
+                    task().addListener(this, SameThreadExecutor.getInstance());
+                }
+                
+                @Override
+                public synchronized void run() {
+                    if (isDone()) {
+                        task().task().second().unsubscribe(this);
+                        return;
+                    }
+                    if (task().isDone()) {
+                        if (!create.isPresent()) {
+                            try {
+                                final Long value = Long.valueOf(task().get().getSessionId());
+                                final ZNodePath path = BackendSchema.Safari.Sessions.Session.pathOf(SessionOpenTask.this.task().getIdentifier());
+                                // FIXME: magic constant xid
+                                final Message.ClientRequest<?> request = ProtocolRequestMessage.of(0, materializer.create(path, value).get().build());
+                                task().task().second().subscribe(this);
+                                this.create = Optional.of(task().task().second().write(request));
+                                Futures.addCallback(create.get(), this, SameThreadExecutor.getInstance());
+                            } catch (ExecutionException e) {
+                                setException(e.getCause());
+                            } catch (InterruptedException e) {
+                                throw new AssertionError(e);
+                            }
+                        }
+                    }
+                }
+
+                @Override
+                public void handleConnectionState(Automaton.Transition<edu.uw.zookeeper.net.Connection.State> state) {
+                    if (Connection.State.CONNECTION_CLOSED == state.to()) {
+                        onFailure(new KeeperException.ConnectionLossException());
+                    }
+                }
+
+                @Override
+                public void handleConnectionRead(Operation.Response message) {
+                    assert (((Operation.ProtocolResponse<?>) message).xid() == 0);
+                    try {
+                        Operations.unlessError(((Operation.ProtocolResponse<?>) message).record());
+                    } catch (KeeperException e) {
+                        setException(e);
+                        return;
+                    }
+                    ShardedClientExecutor<C> client = ShardedClientExecutor.newInstance(
+                            volumes.idToVersion(),
+                            volumes.idToZxid(),
+                            volumes.idToVolume(),
+                            volumes.idToPath(),
+                            task(), 
+                            task().task().second(),
+                            TimeValue.milliseconds(task().task().first().getTimeOut()),
+                            scheduler);
+                    BackendHandler handler = new BackendHandler(SessionOpenTask.this.task(), client);
+                    if (clients.putIfAbsent(handler.session().getIdentifier(), handler) != null) {
+                        // FIXME
+                        throw new UnsupportedOperationException();
+                    }
+                    onSuccess(Futures.getUnchecked(task()));
+                }
+
+                @Override
+                public void onSuccess(Object result) {
+                    if (result instanceof ConnectMessage.Response) {
+                        set((ConnectMessage.Response) result);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    setException(t);
                 }
             }
         }
-
-        protected class BackendHandler implements FutureCallback<ShardedResponseMessage<?>>, SessionListener, TaskExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>> {
+        
+        protected class BackendHandler implements FutureCallback<ShardedResponseMessage<?>>, SessionListener, TaskExecutor<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>> {
 
             protected final MessageSessionOpenRequest session;
             protected final ShardedClientExecutor<C> client;
@@ -342,16 +442,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
                     ShardedClientExecutor<C> client) {
                 this.session = session;
                 this.client = client;
-                if (clients.putIfAbsent(session.getIdentifier(), this) == null) {
-                    Futures.addCallback(
-                            client.session(), 
-                            new SessionOpenResponseTask(session),
-                            SAME_THREAD_EXECUTOR);
-                    this.client.subscribe(this);
-                } else {
-                    // TODO
-                    throw new UnsupportedOperationException(String.valueOf(session));
-                }
+                this.client.subscribe(this);
             }
             
             public MessageSessionOpenRequest session() {
@@ -363,10 +454,10 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
             }
 
             @Override
-            public ListenableFuture<ShardedResponseMessage<?>> submit(ShardedRequestMessage<?> request) {
-                ListenableFuture<ShardedResponseMessage<?>> future = client.submit(request);
-                Futures.addCallback(future, this, SAME_THREAD_EXECUTOR);
-                return future;
+            public ListenableFuture<ShardedResponseMessage<?>> submit(ShardedClientRequestMessage<?> request) {
+                RequestListener listener = RequestListener.create(request, client);
+                Futures.addCallback(listener, this, SameThreadExecutor.getInstance());
+                return listener;
             }
 
             @Override
@@ -404,11 +495,11 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
             }
         }
 
-        protected class SessionOpenResponseTask implements FutureCallback<ConnectMessage.Response> {
+        protected class SessionOpenListener implements FutureCallback<ConnectMessage.Response> {
 
             protected final MessageSessionOpenRequest request;
             
-            public SessionOpenResponseTask(
+            public SessionOpenListener(
                     MessageSessionOpenRequest request) {
                 this.request = request;
             }
@@ -428,8 +519,142 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
                     handler.onFailure(t);
                 }
                 // FIXME
-                throw new AssertionError(t);
+                throw new UnsupportedOperationException(t);
             }
+        }
+    }
+
+    protected class SessionOpenToConnectRequest extends RunnablePromiseTask<MessageSessionOpenRequest, ConnectMessage.Request> {
+
+        private final SessionLookup lookup;
+        
+        public SessionOpenToConnectRequest(
+                MessageSessionOpenRequest task,
+                Promise<ConnectMessage.Request> promise) {
+            super(task, promise);
+            final ConnectMessage.Request request = task.getMessage();
+            final ConnectMessage.Request message;
+            if (request instanceof ConnectMessage.Request.NewRequest) {
+                if ((request.getPasswd() != null) && (request.getPasswd().length > 0)) {
+                    message = null;
+                    this.lookup = new SessionLookup(
+                            task.getIdentifier(), 
+                            SettableFuturePromise.<BackendSchema.Safari.Sessions.Session.Data>create());
+                } else {
+                    this.lookup = null;
+                    message = ConnectMessage.Request.NewRequest.newInstance(
+                            TimeValue.milliseconds(request.getTimeOut()), 
+                                connections.zxids().get());
+                }
+            } else {
+                this.lookup = null;
+                message = ConnectMessage.Request.RenewRequest.newInstance(
+                        request.toSession(), connections.zxids().get());
+            }
+            if (message != null) {
+                set(message);
+            } else {
+                this.lookup.addListener(this, SameThreadExecutor.getInstance());
+            }
+        }
+
+        @Override
+        public Optional<ConnectMessage.Request> call() throws Exception {
+            if (lookup.isDone()) {
+                BackendSchema.Safari.Sessions.Session.Data backend;
+                try {
+                    backend = lookup.get();
+                } catch (ExecutionException e) {
+                    throw Throwables.propagate(e.getCause());
+                }
+                return Optional.<ConnectMessage.Request>of(
+                        ConnectMessage.Request.RenewRequest.newInstance(
+                        Session.create(
+                                backend.getSessionId().longValue(), 
+                                Session.Parameters.create(
+                                        task().getMessage().toSession().parameters().timeOut(),
+                                        backend.getPassword())), 
+                        connections.zxids().get()));
+            }
+            return Optional.absent();
+        }
+    }
+    
+    protected class SessionLookup extends RunnablePromiseTask<Long, BackendSchema.Safari.Sessions.Session.Data> {
+        
+        private final ListenableFuture<Message.ServerResponse<?>> lookup;
+        
+        public SessionLookup(Long session, 
+                Promise<BackendSchema.Safari.Sessions.Session.Data> promise) {
+            super(session, promise);
+            // TODO check cache first
+            this.lookup = materializer.submit(Operations.Requests.getData().setPath(path()).build());
+            this.lookup.addListener(this, SameThreadExecutor.getInstance());
+        }
+        
+        public ZNodePath path() {
+            return BackendSchema.Safari.Sessions.Session.pathOf(task());
+        }
+
+        @Override
+        public Optional<BackendSchema.Safari.Sessions.Session.Data> call() throws Exception {
+            if (! lookup.isDone()) {
+                return Optional.absent();
+            }
+            try {
+                Operations.unlessError(lookup.get().record());
+                materializer.cache().lock().readLock().lock();
+                try {
+                    return Optional.of((BackendSchema.Safari.Sessions.Session.Data) materializer.cache().cache().get(path()).data().get());
+                } finally {
+                    materializer.cache().lock().readLock().unlock();
+                }
+            } catch (ExecutionException e) {
+                throw Throwables.propagate(e.getCause());
+            }
+        }
+    }
+    
+    protected static class RequestListener extends RunnablePromiseTask<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>> {
+    
+        public static RequestListener create(
+                ShardedClientRequestMessage<?> request,
+                ShardedClientExecutor<?> client) {
+            ListenableFuture<ShardedServerResponseMessage<?>> response = client.submit(request);
+            RequestListener listener = new RequestListener(request, response, SettableFuturePromise.<ShardedResponseMessage<?>>create());
+            response.addListener(listener, SameThreadExecutor.getInstance());
+            return listener;
+        }
+        
+        private final ListenableFuture<ShardedServerResponseMessage<?>> response;
+        
+        public RequestListener(
+                ShardedClientRequestMessage<?> request,
+                ListenableFuture<ShardedServerResponseMessage<?>> response,
+                Promise<ShardedResponseMessage<?>> delegate) {
+            super(request, delegate);
+            this.response = response;
+        }
+
+        @Override
+        public Optional<ShardedResponseMessage<?>> call() throws Exception {
+            if (!response.isDone()) {
+                return Optional.absent();
+            }
+            ShardedResponseMessage<?> result;
+            try {
+                result = get();
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof SafariException) {
+                    result = ShardedErrorResponseMessage.valueOf(task().getShard(), task().xid(), (SafariException) e.getCause());
+                } else {
+                    setException(e.getCause());
+                    return Optional.absent();
+                }
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+            return Optional.<ShardedResponseMessage<?>>of(result);
         }
     }
 }

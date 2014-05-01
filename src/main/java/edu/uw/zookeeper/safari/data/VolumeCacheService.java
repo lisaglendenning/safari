@@ -1,50 +1,63 @@
 package edu.uw.zookeeper.safari.data;
 
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import javax.annotation.Nullable;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
-import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.MapMaker;
+import com.google.common.collect.Maps;
+import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
-import edu.uw.zookeeper.client.Materializer;
-import edu.uw.zookeeper.client.ZNodeViewCache;
-import edu.uw.zookeeper.client.ZNodeViewCache.CacheSessionListener;
 import edu.uw.zookeeper.common.Automaton.Transition;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.Processor;
+import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.data.Schema;
-import edu.uw.zookeeper.data.StampedReference;
-import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.data.ZNodeLabelTrie;
-import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.Operation.ProtocolResponse;
+import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.data.AbstractNameTrie;
+import edu.uw.zookeeper.data.AbstractWatchMatchListener;
+import edu.uw.zookeeper.data.DefaultsNode;
+import edu.uw.zookeeper.data.NameTrie;
+import edu.uw.zookeeper.data.SimpleLabelTrie;
+import edu.uw.zookeeper.data.WatchEvent;
+import edu.uw.zookeeper.data.WatchMatchListener;
+import edu.uw.zookeeper.data.WatchMatcher;
+import edu.uw.zookeeper.data.ZNodeName;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ProtocolState;
-import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
-import edu.uw.zookeeper.protocol.proto.OpCode;
-import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
+import edu.uw.zookeeper.safari.common.LockingCachedFunction;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.common.SharedLookup;
-import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 
-public class VolumeCacheService extends AbstractIdleService implements CacheSessionListener {
+public final class VolumeCacheService extends AbstractIdleService {
 
     public static Module module() {
         return new Module();
@@ -59,211 +72,597 @@ public class VolumeCacheService extends AbstractIdleService implements CacheSess
         }
 
         @Provides @Singleton
-        public VolumeCacheService getVolumeLookupService(
-                VolumeCache cache,
-                ControlMaterializerService controlClient,
+        public VolumeDescriptorCache getVolumeDescriptorCache() {
+            return VolumeDescriptorCache.create();
+        }
+        
+        @Provides @Singleton
+        public VolumeCacheService getVolumeCacheService(
+                VolumeDescriptorCache descriptors,
+                ControlMaterializerService control,
                 ServiceMonitor monitor) {
             return monitor.addOnStart(
-                    newInstance(controlClient.materializer(), cache));
+                    create(descriptors, control));
         }
 
         @Provides @Singleton
-        public VolumeCache getVolumeCache() {
-            return VolumeCache.newInstance();
+        public LatestVolumesWatcher getLatestVolumesWatcher(
+                VolumeCacheService service,
+                ControlMaterializerService control) {
+            return LatestVolumesWatcher.newInstance(service, control);
         }
     }
     
-    public static VolumeCacheService newInstance(
-            Materializer<?> client,
-            VolumeCache cache) {
-        return new VolumeCacheService(client, cache);
+    public static VolumeCacheService create(
+            VolumeDescriptorCache descriptors,
+            ControlMaterializerService control) {
+        return new VolumeCacheService(descriptors, control);
     }
-    
-    protected static final Executor sameThreadExecutor = MoreExecutors.sameThreadExecutor();
-    protected static final ZNodeLabel.Path VOLUMES_PATH = Control.path(ControlSchema.Volumes.class);
 
-    protected final Logger logger;
-    protected final Materializer<?> materializer;
-    protected final VolumeCache cache;
-    protected final CachedFunction<ZNodeLabel.Path, Volume> byPath;
-    protected final CachedFunction<Identifier, Volume> byId;
+    private final Logger logger;
+    private final ControlMaterializerService control;
+    private final VolumeDescriptorCache descriptors;
+    private final ReentrantReadWriteLock lock;
+    private final List<WatchMatchListener> listeners;
+    private final VolumeById byId;
+    private final VolumeByPath byPath;
+    private final VolumeBranchCallbacks callbacks;
     
     protected VolumeCacheService(
-            final Materializer<?> materializer,
-            final VolumeCache cache) {
-        this.logger = LogManager.getLogger(getClass());
-        this.materializer = materializer;
-        this.cache = cache;
-        this.byPath = CachedFunction.create(
-                new Function<ZNodeLabel.Path, Volume>() {
-                    @Override
-                    public @Nullable
-                    Volume apply(@Nullable ZNodeLabel.Path input) {
-                        return cache.get(input);
+            final VolumeDescriptorCache descriptors,
+            final ControlMaterializerService control) {
+        this.logger = LogManager.getLogger(this);
+        this.control = control;
+        this.descriptors = descriptors;
+        this.lock = new ReentrantReadWriteLock(true);
+        this.listeners = ImmutableList.<WatchMatchListener>of(
+                new VolumesDeletedListener(), 
+                new VolumeDeletedListener(), 
+                new VolumePathListener(), 
+                new VolumeLatestListener(), 
+                new VolumeStateListener());
+        this.byId = new VolumeById();
+        this.byPath = new VolumeByPath();
+        this.callbacks = new VolumeBranchCallbacks();
+    }
+    
+    public CachedFunction<Identifier, ZNodePath> idToPath() {
+        return descriptors.asLookup();
+    }
+    
+    public LockingCachedFunction<Identifier, VersionedVolume> idToVolume() {
+        return byId.lookup;
+    }
+
+    public AsyncFunction<ZNodePath, Volume> pathToVolume() {
+        return byPath.lookup;
+    }
+    
+    public boolean add(VersionedVolume volume) {
+        lock.writeLock().lock();
+        try {
+            descriptors.onSuccess(volume.getDescriptor());
+            boolean added = byId.add(volume);
+            if (added) {
+                byPath.add(volume);
+            }
+            return added;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public boolean remove(Identifier id) {
+        lock.writeLock().lock();
+        try {
+            boolean removed = byId.remove(id);
+            ZNodePath path = descriptors.remove(id);
+            if (path != null) {
+                byPath.remove(path, id);
+            }
+            callbacks.remove(id);
+            return removed;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void clear() {
+        lock.writeLock().lock();
+        try {
+            descriptors.clear();
+            byPath.clear();
+            byId.clear();
+            callbacks.clear();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    protected void startUp() {
+        for (WatchMatchListener listener: listeners) {
+            control.cacheEvents().subscribe(listener);
+        }
+    }
+
+    @Override
+    protected void shutDown() {
+        for (WatchMatchListener listener: listeners) {
+            control.cacheEvents().unsubscribe(listener);
+        }
+        clear();
+    }
+    
+    protected final class VolumesDeletedListener extends AbstractWatchMatchListener {
+
+        public VolumesDeletedListener() {
+            super(WatchMatcher.exact(
+                    ControlSchema.Safari.Volumes.PATH, 
+                    Watcher.Event.EventType.NodeDeleted));
+        }
+        
+        @Override
+        public void handleWatchEvent(WatchEvent event) {
+            clear();
+        }
+        
+        @Override
+        public void handleAutomatonTransition(Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+        }
+    }
+    
+    protected final class VolumeDeletedListener extends AbstractWatchMatchListener {
+
+        public VolumeDeletedListener() {
+            super(WatchMatcher.exact(
+                    ControlSchema.Safari.Volumes.Volume.PATH, 
+                    Watcher.Event.EventType.NodeDeleted));
+        }
+        
+        @Override
+        public void handleWatchEvent(WatchEvent event) {
+            Identifier id = Identifier.valueOf(event.getPath().label().toString());
+            remove(id);
+        }
+        
+        @Override
+        public void handleAutomatonTransition(Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+        }
+    }
+    
+    protected final class VolumePathListener extends AbstractWatchMatchListener {
+
+        public VolumePathListener() {
+            super(WatchMatcher.exact(
+                    ControlSchema.Safari.Volumes.Volume.Path.PATH, 
+                    Watcher.Event.EventType.NodeCreated, Watcher.Event.EventType.NodeDataChanged));
+        }
+        
+        @Override
+        public void handleWatchEvent(WatchEvent event) {
+            ControlSchema.Safari.Volumes.Volume.Path node = 
+                    (ControlSchema.Safari.Volumes.Volume.Path) control.materializer().cache().cache().get(event.getPath());
+            if (node.data().stamp() > 0L) {
+                ZNodePath path = node.data().get();
+                assert (path != null);
+                Identifier id = node.volume().name();
+                descriptors.onSuccess(VolumeDescriptor.valueOf(id, path));
+            }
+        }
+        
+        @Override
+        public void handleAutomatonTransition(Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+        }
+    }
+    
+    protected final class VolumeLatestListener extends AbstractWatchMatchListener {
+
+        public VolumeLatestListener() {
+            super(WatchMatcher.exact(
+                    ControlSchema.Safari.Volumes.Volume.Log.Latest.PATH, 
+                    Watcher.Event.EventType.NodeCreated, Watcher.Event.EventType.NodeDataChanged));
+        }
+        
+        @Override
+        public void handleWatchEvent(WatchEvent event) {
+            ControlSchema.Safari.Volumes.Volume.Log.Latest node = 
+                    (ControlSchema.Safari.Volumes.Volume.Log.Latest) control.materializer().cache().cache().get(event.getPath());
+            if (node.data().stamp() > 0L) {
+                lock.writeLock().lock();
+                try {
+                    UnsignedLong version = node.data().get();
+                    assert (version != null);
+                    Identifier id = node.log().volume().name();
+                    VersionedVolume existing = byId.cache.get(id);
+                    if ((existing == null) || (existing.getVersion().compareTo(version) < 0)) {
+                        ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = node.log().version(version);
+                        if (versionNode != null) {
+                            ControlSchema.Safari.Volumes.Volume.Log.Version.State stateNode = versionNode.state();
+                            if ((stateNode != null) && (stateNode.stamp() > 0L)) {
+                                callbacks.add(id, version, stateNode.data().get());
+                            }
+                        }
                     }
-                },
-                SharedLookup.create(
-                    new AsyncFunction<ZNodeLabel.Path, Volume>() {
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            }
+        }
+        
+        @Override
+        public void handleAutomatonTransition(Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+        }
+    }
+    
+    protected final class VolumeStateListener extends AbstractWatchMatchListener {
+
+        public VolumeStateListener() {
+            super(WatchMatcher.exact(
+                    ControlSchema.Safari.Volumes.Volume.Log.Version.State.PATH, 
+                    Watcher.Event.EventType.NodeCreated, Watcher.Event.EventType.NodeDataChanged));
+        }
+        
+        @Override
+        public void handleWatchEvent(WatchEvent event) {
+            ControlSchema.Safari.Volumes.Volume.Log.Version.State stateNode = 
+                    (ControlSchema.Safari.Volumes.Volume.Log.Version.State) control.materializer().cache().cache().get(event.getPath());
+            if (stateNode.data().stamp() > 0L) {
+                lock.writeLock().lock();
+                try {
+                    UnsignedLong version = stateNode.version().name();
+                    Identifier id = stateNode.version().log().volume().name();
+                    ControlSchema.Safari.Volumes.Volume.Log.Latest latestNode = 
+                            stateNode.version().log().latest();
+                    if ((latestNode != null) && (latestNode.data().stamp() > 0L) && latestNode.data().get().equals(version)) {
+                        VersionedVolume existing = byId.cache.get(id);
+                        if ((existing == null) || (existing.getVersion().compareTo(version) < 0)) {
+                            callbacks.add(id, version, stateNode.data().get());
+                        }
+                    }
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            }
+        }
+        
+        @Override
+        public void handleAutomatonTransition(Transition<ProtocolState> transition) {
+            // TODO Auto-generated method stub
+        }
+    }
+    
+    protected final class VolumeByPath {
+
+        private final VolumeOverlay overlay;
+        private final NameTrie<PathLookup> lookups;
+        private final LockingCachedFunction<ZNodePath, Volume> lookup;
+        
+        public VolumeByPath() {
+            this.overlay = VolumeOverlay.newInstance();
+            this.lookups = SimpleLabelTrie.forRoot(new PathLookup(AbstractNameTrie.<PathLookup>rootPointer()));
+            this.lookup = LockingCachedFunction.create(
+                    lock.writeLock(),
+                    new Function<ZNodePath, Volume>() {
                         @Override
-                        public ListenableFuture<Volume> apply(
-                                final ZNodeLabel.Path path)
-                                throws Exception {
-                            // since we can't hash on an arbitrary path,
-                            // we must do a scan
-                            Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>> processor = new Processor<Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>>, Optional<Volume>>() {
-                                @Override
-                                public Optional<Volume> apply(Optional<Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>>> input)
-                                        throws Exception {
-                                    Optional<Volume> result = Optional.fromNullable(cache.get(path));
-                                    // UNFORTUNATELY...the cache doesn't get updated automagically until after this message is processed
-                                    // so we need to dig into the message to see if it is the information we want
-                                    // and update the cache ourselves...
-                                    if (!result.isPresent() && input.isPresent()) {
-                                        Pair<Records.Request, ListenableFuture<? extends Operation.ProtocolResponse<?>>> operation = input.get();
-                                        if (operation.first().opcode() == OpCode.GET_DATA) {
-                                            ZNodeLabel.Path requestPath = ZNodeLabel.Path.of(((Records.PathGetter) operation.first()).getPath());
-                                            Schema.SchemaNode schemaNode = ControlSchema.getInstance().get().match(requestPath);
-                                            if (schemaNode == ControlSchema.getInstance().byElement(ControlSchema.Volumes.Entity.Volume.class)) {
-                                                Materializer.MaterializedNode node = materializer.get(requestPath);
-                                                if ((node != null) && (node.get() != null)) {
-                                                    VolumeDescriptor v = (VolumeDescriptor) node.get().get();
-                                                    if ((v != null) && v.contains(path)) {
-                                                        Operation.ProtocolResponse<?> response = operation.second().get();
-                                                        ZNodeViewCache.ViewUpdate update = ZNodeViewCache.ViewUpdate.of(
-                                                                requestPath, ZNodeViewCache.View.DATA, null, StampedReference.of(response.zxid(), (Records.DataGetter) response.record()));
-                                                        handleViewUpdate(update);
-                                                    }
-                                                }
-                                            }
-                                        }
+                        public @Nullable
+                        Volume apply(ZNodePath path) {
+                            lock.readLock().lock();
+                            try {
+                                VolumeOverlayNode node = overlay.apply(path);
+                                if (node != null) {
+                                    Identifier id = node.getId().get();
+                                    Volume volume = (Volume) byId.cache.get(id);
+                                    if ((volume != null) && Volume.contains(volume, path)) {
+                                        return volume;
                                     }
-                                    return result;
                                 }
-                            };
-                            return Control.FetchUntil.newInstance(VOLUMES_PATH, processor, materializer);
+                                return null;
+                            } finally {
+                                lock.readLock().unlock();
+                            }
                         }
-                    }));
-        this.byId = CachedFunction.create(
-                new Function<Identifier, Volume>() {
-                    @Override
-                    public @Nullable
-                    Volume apply(@Nullable Identifier input) {
-                        return cache.get(input);
-                    }
-                },
-                SharedLookup.create(
-                    new AsyncFunction<Identifier, Volume>() {
+                    }, 
+                    new AsyncFunction<ZNodePath, Volume>() {
                         @Override
-                        public ListenableFuture<Volume> apply(final Identifier input)
-                                throws Exception {
-                            final ControlSchema.Volumes.Entity entity = ControlSchema.Volumes.Entity.of(input);
-                            return Futures.transform(ControlSchema.Volumes.Entity.Volume.get(entity, materializer),
-                                    new Function<ControlSchema.Volumes.Entity.Volume, Volume>() {
-                                        @Override
-                                        public Volume apply(
-                                                ControlSchema.Volumes.Entity.Volume input) {
-                                            return Volume.of(entity.get(), input.get());
-                                        }
-                            }, sameThreadExecutor);
+                        public PathLookup apply(ZNodePath path) {
+                            lock.writeLock().lock();
+                            try {
+                                PathLookup node = PathLookup.putIfAbsent(lookups, path);
+                                node.reset();
+                                return node;
+                            } finally {
+                                lock.writeLock().unlock();
+                            }
                         }
-                    }));
-    }
-    
-    public VolumeCache cache() {
-        return cache;
-    }
-    
-    public CachedFunction<ZNodeLabel.Path, Volume> byPath() {
-        return byPath;
-    }
-            
-    public CachedFunction<Identifier, Volume> byId() {
-        return byId;
-    }
-
-    @Override
-    public void handleNodeUpdate(ZNodeViewCache.NodeUpdate event) {
-        ZNodeLabel.Path path = event.path().get();
-        if ((ZNodeViewCache.NodeUpdate.UpdateType.NODE_REMOVED != event.type()) 
-                || ! VOLUMES_PATH.prefixOf(path)) {
-            return;
+                    },
+                    logger);
         }
         
-        if (VOLUMES_PATH.equals(path)) {
-            cache.clear();
-        } else {
-            ZNodeLabel.Path pathHead = (ZNodeLabel.Path) path.head();
-            ZNodeLabel pathTail = path.tail();
-            if (VOLUMES_PATH.equals(pathHead)) {
-                Identifier volumeId = Identifier.valueOf(pathTail.toString());
-                cache.remove(volumeId);
+        public boolean add(VersionedVolume volume) {
+            if (volume instanceof Volume) {
+                overlay.add(volume.getVersion().longValue(), volume.getDescriptor().getPath(), volume.getDescriptor().getId());
+                for (Map.Entry<ZNodeName, Identifier> leaf: ((Volume) volume).getBranches().entrySet()) {
+                    ZNodePath path = volume.getDescriptor().getPath().join(leaf.getKey());
+                    overlay.add(volume.getVersion().longValue(), path, leaf.getValue());
+                }
+                PathLookup node = lookups.get(volume.getDescriptor().getPath());
+                new PathUpdater(((Volume) volume)).apply(node);
             } else {
-                Identifier volumeId = Identifier.valueOf(pathHead.tail().toString());
-                if (ControlSchema.Volumes.Entity.Volume.LABEL.equals(pathTail)) {
-                    cache.remove(volumeId);
+                remove(volume.getDescriptor().getPath(), volume.getDescriptor().getId());
+            }
+            return true;
+        }
+        
+        public boolean remove(ZNodePath path, Identifier id) {
+            return (overlay.remove(path, id) != null);
+            // TODO lookups ??
+        }
+        
+        public void clear() {
+            overlay.clear();
+            for (PathLookup node: lookups) {
+                node.cancel(true);
+            }
+            lookups.clear();
+        }
+    }
+    
+    protected static final class PathUpdater implements Function<PathLookup, Void> {
+        
+        private final Volume volume;
+        
+        public PathUpdater(Volume volume) {
+            this.volume = volume;
+        }
+        
+        @Override
+        public Void apply(PathLookup input) {
+            if (input != null) {
+                if (Volume.contains(volume, input.path())) {
+                    for (PathLookup child: input.values()) {
+                        apply(child);
+                    }
+                    input.set(volume);
+                    if (input.isEmpty()) {
+                        input.remove();
+                    }
                 }
             }
+            return null;
+        }
+    }
+    
+    protected final class PathLookup extends
+            DefaultsNode.AbstractDefaultsNode<PathLookup> implements
+            Promise<Volume> {
+
+        private Promise<Volume> promise;
+
+        public PathLookup(
+                NameTrie.Pointer<? extends PathLookup> parent) {
+            super(parent);
+            this.promise = null;
+            reset();
+        }
+
+        public synchronized void reset() {
+            if ((promise == null) || promise.isDone()) {
+                promise = LoggingPromise.create(logger,
+                        SettableFuturePromise.<Volume> create());
+            }
+        }
+
+        @Override
+        public void addListener(Runnable listener,
+                Executor executor) {
+            promise().addListener(listener, executor);
+        }
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            return promise().cancel(mayInterruptIfRunning);
+        }
+
+        @Override
+        public Volume get() throws InterruptedException,
+        ExecutionException {
+            return promise().get();
+        }
+
+        @Override
+        public Volume get(long timeout, TimeUnit unit)
+                throws InterruptedException, ExecutionException,
+                TimeoutException {
+            return promise().get(timeout, unit);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return promise().isCancelled();
+        }
+
+        @Override
+        public boolean isDone() {
+            return promise().isDone();
+        }
+
+        @Override
+        public boolean set(Volume value) {
+            return promise().set(value);
+        }
+
+        @Override
+        public boolean setException(Throwable throwable) {
+            return promise().setException(throwable);
+        }
+
+        protected synchronized Promise<Volume> promise() {
+            return promise;
+        }
+
+        @Override
+        protected PathLookup newChild(ZNodeName name) {
+            return new PathLookup(AbstractNameTrie.weakPointer(name, this));
         }
     }
 
-    @Override
-    public void handleViewUpdate(ZNodeViewCache.ViewUpdate event) {
-        ZNodeLabel.Path path = event.path();
-        if ((ZNodeViewCache.View.DATA != event.view())
-                || ! VOLUMES_PATH.prefixOf(path)
-                || VOLUMES_PATH.equals(path)) {
-            return;
+    protected final class VolumeById {
+
+        private final Map<Identifier, VersionedVolume> cache;
+        private final LockingCachedFunction<Identifier, VersionedVolume> lookup;
+        
+        public VolumeById() {
+            this.cache = Maps.newHashMap();
+            this.lookup = LockingCachedFunction.create(
+                    lock.writeLock(),
+                    new Function<Identifier, VersionedVolume>() {
+                        @Override
+                        public @Nullable
+                        VersionedVolume apply(Identifier id) {
+                            lock.readLock().lock();
+                            try {
+                                return cache.get(id);
+                            } finally {
+                                lock.readLock().unlock();
+                            }
+                        }
+                    }, 
+                    SharedLookup.create(
+                            new AsyncFunction<Identifier, VersionedVolume>() {
+                                @Override
+                                public VolumeUpdater apply(Identifier id) {
+                                    return new VolumeUpdater(id, SettableFuturePromise.<VersionedVolume>create());
+                                }
+                            }),
+                    logger);
         }
         
-        Materializer.MaterializedNode node = materializer.get(path);
-        ZNodeLabelTrie.Pointer<Materializer.MaterializedNode> pointer = node.parent().get();
-        if (! VOLUMES_PATH.equals(pointer.get().path())) {
-            Identifier volumeId = Identifier.valueOf(pointer.get().parent().get().label().toString());
-            if (ControlSchema.Volumes.Entity.Volume.LABEL.equals(pointer.label())) {
-                VolumeDescriptor volumeDescriptor = (VolumeDescriptor) node.get().get();
-                Volume volume = Volume.of(volumeId, volumeDescriptor);
-                Volume prev = (volumeDescriptor == null) ? cache.remove(volumeId) : cache.put(volume);
-                if (logger.isInfoEnabled()) {
-                    if (! Objects.equal(volume, prev)) {
-                        logger.info("Volume updated to {} (previously {})", volume, prev);
-                    }
+        public boolean add(VersionedVolume volume) {
+            VersionedVolume prev = cache.get(volume.getDescriptor().getId());
+            if (prev != null) {
+                assert (prev.getDescriptor().equals(volume.getDescriptor()));
+                if (prev.getVersion().compareTo(volume.getVersion()) >= 0) {
+                    return false;
                 }
+            }
+            cache.put(volume.getDescriptor().getId(), volume);
+            return true;
+        }
+        
+        public boolean remove(Identifier id) {
+            ListenableFuture<?> future = ((SharedLookup<?,?>) lookup.async()).first().get(id);
+            if (future != null) {
+                future.cancel(true);
+            }
+            return (cache.remove(id) != null);
+        }
+
+        public void clear() {
+            for (ListenableFuture<?> future: ((SharedLookup<?,?>) lookup.async()).first().values()) {
+                future.cancel(true);
+            }
+            cache.clear();
+        }
+    }
+    
+    protected final class VolumeUpdater extends PromiseTask<Identifier, VersionedVolume> {
+
+        public VolumeUpdater(
+                Identifier volume,
+                Promise<VersionedVolume> delegate) {
+            super(volume, delegate);
+        }
+        
+        @Override
+        public boolean set(VersionedVolume volume) {
+            lock.writeLock().lock();
+            try {
+                if (! add(volume)) {
+                    volume = byId.cache.get(volume.getDescriptor().getId());
+                }
+                assert (volume != null);
+                return super.set(volume);
+            } finally {
+                lock.writeLock().unlock();
             }
         }
     }
     
-    @Override
-    public void handleAutomatonTransition(Transition<ProtocolState> transition) {
-    }
+    protected final class VolumeBranchCallbacks {
 
-    @Override
-    public void handleNotification(ProtocolResponse<IWatcherEvent> notification) {
-    }
-
-    @Override
-    protected void startUp() throws Exception {
-        materializer.subscribe(this);
+        private final ConcurrentMap<Pair<Identifier, UnsignedLong>, VolumeBranchCallback> callbacks;
         
-        Materializer.MaterializedNode volumes = materializer.get(VOLUMES_PATH);
-        if (volumes != null) {
-            for (Map.Entry<ZNodeLabel.Component, Materializer.MaterializedNode> child: volumes.entrySet()) {
-                Identifier volumeId = Identifier.valueOf(child.getKey().toString());
-                Materializer.MaterializedNode volumeChild = child.getValue().get(ControlSchema.Volumes.Entity.Volume.LABEL);
-                if (volumeChild != null) {
-                    VolumeDescriptor volumeDescriptor = (VolumeDescriptor) volumeChild.get().get();
-                    if (volumeDescriptor != null) {
-                        Volume volume = Volume.of(volumeId, volumeDescriptor);
-                        cache.put(volume);
+        public VolumeBranchCallbacks() {
+            this.callbacks = new MapMaker().makeMap();
+        }
+        
+        public void add(
+                final Identifier id, 
+                final UnsignedLong version, 
+                final @Nullable VolumeState state) {
+            Pair<Identifier, UnsignedLong> k = Pair.create(id, version);
+            if (callbacks.containsKey(k)) {
+                return;
+            }
+            
+            VolumeBranchCallback callback = new VolumeBranchCallback(VolumeBranchListener.fromCache(k, state, idToPath()));
+            callbacks.put(k, callback);
+            callback.addListener(callback, SameThreadExecutor.getInstance());
+        }
+
+        public void remove(final Identifier id) {
+            Iterator<Pair<Identifier, UnsignedLong>> keys = callbacks.keySet().iterator();
+            while (keys.hasNext()) {
+                Pair<Identifier, UnsignedLong> next = keys.next();
+                if (next.first().equals(id)) {
+                    VolumeBranchCallback callback = callbacks.get(next);
+                    if (callback != null) {
+                        callback.cancel(true);
                     }
                 }
             }
         }
         
-        logger.info("{}", cache);
-    }
+        public void clear() {
+            for (VolumeBranchCallback callback: callbacks.values()) {
+                callback.cancel(true);
+            }
+        }
+        
+        protected class VolumeBranchCallback extends ForwardingListenableFuture<VersionedVolume> implements Runnable {
+            
+            private final VolumeBranchListener delegate;
+            
+            public VolumeBranchCallback(VolumeBranchListener delegate) {
+                this.delegate = delegate;
+            }
+            
+            @Override
+            public void run() {
+                if (! isDone()) {
+                    return;
+                }
+                callbacks.remove(delegate.task(), this);
+                try {
+                    VersionedVolume volume = get();
+                    ((VolumeUpdater) byId.lookup.async().apply(delegate.task().first())).set(volume);
+                } catch (CancellationException e) {
+                    return;
+                } catch (Exception e) {
+                    // TODO
+                    throw Throwables.propagate(e);
+                }
+            }
 
-    @Override
-    protected void shutDown() throws Exception {
-        materializer.unsubscribe(this);
+            @Override
+            protected VolumeBranchListener delegate() {
+                return delegate;
+            }
+        }
     }
 }

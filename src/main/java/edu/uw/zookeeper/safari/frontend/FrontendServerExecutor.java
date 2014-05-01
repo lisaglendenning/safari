@@ -1,10 +1,12 @@
 package edu.uw.zookeeper.safari.frontend;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
 import com.google.common.collect.MapMaker;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
@@ -14,10 +16,8 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.protocol.FourLetterRequest;
@@ -34,14 +34,16 @@ import edu.uw.zookeeper.protocol.ZxidReference;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
+import edu.uw.zookeeper.server.ProcessorTaskExecutor;
 import edu.uw.zookeeper.server.SessionManager;
+import edu.uw.zookeeper.server.SimpleSessionManager;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
-import edu.uw.zookeeper.server.SimpleServerExecutor.SimpleConnectExecutor;
 
-@DependsOn({RegionsConnectionsService.class, VolumeCacheService.class, AssignmentCacheService.class})
+@DependsOn({RegionsConnectionsService.class, VolumeCacheService.class})
 public class FrontendServerExecutor extends DependentService {
 
     public static Module module() {
@@ -56,7 +58,7 @@ public class FrontendServerExecutor extends DependentService {
         protected void configure() {
             bind(ZxidGenerator.class).to(ZxidEpochIncrementer.class).in(Singleton.class);
             bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
-            bind(SessionManager.class).to(new TypeLiteral<SimpleConnectExecutor<FrontendSessionExecutor>>() {}).in(Singleton.class);
+            bind(SessionManager.class).to(new TypeLiteral<SimpleSessionManager<FrontendSessionExecutor>>() {}).in(Singleton.class);
             bind(ResponseProcessor.class).in(Singleton.class);
             bind(FrontendServerExecutor.class).in(Singleton.class);
         }
@@ -68,7 +70,7 @@ public class FrontendServerExecutor extends DependentService {
         
         @Provides @Singleton
         public TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor() {
-            return SimpleServerExecutor.ProcessorTaskExecutor.of(
+            return ProcessorTaskExecutor.of(
                     FourLetterRequestProcessor.newInstance());
         }
         
@@ -79,25 +81,52 @@ public class FrontendServerExecutor extends DependentService {
         }
         
         @Provides @Singleton
-        public SimpleConnectExecutor<FrontendSessionExecutor> getConnectExecutor(
+        public SimpleSessionManager<FrontendSessionExecutor> getSessionManager(
                 Configuration configuration,
-                ZxidReference lastZxid,
-                ConcurrentMap<Long, FrontendSessionExecutor> sessions,
+                FrontendConfiguration frontend,
+                ConcurrentMap<Long, FrontendSessionExecutor> executors,
                 Provider<ResponseProcessor> processor,
                 VolumeCacheService volumes,
-                AssignmentCacheService assignments,
                 ClientPeerConnectionDispatchers dispatchers,
+                RegionsConnectionsService regions,
                 ScheduledExecutorService scheduler,
                 Executor executor) {
-            ParameterizedFactory<Session, FrontendSessionExecutor> factory = FrontendSessionExecutor.factory(
+            FrontendSessionExecutor.Factory factory = FrontendSessionExecutor.factory(
+                    false,
                     processor,
-                    volumes.byPath(),
-                    assignments.get().asLookup(),
-                    dispatchers.dispatchers(),
+                    volumes.idToVolume(),
+                    volumes.pathToVolume(),
+                    getRegions(regions),
+                    dispatchers.get(),
                     scheduler, 
                     executor);
-            return SimpleConnectExecutor.defaults(
-                    sessions, factory, configuration, lastZxid);
+            return SimpleSessionManager.fromConfiguration(
+                    (short) frontend.getAddress().get().hashCode(), 
+                    executors, factory, configuration);
+        }
+        
+        @Provides @Singleton
+        public FrontendConnectExecutor getConnectExecutor(
+                ZxidReference lastZxid,
+                ConcurrentMap<Long, FrontendSessionExecutor> executors,
+                Provider<ResponseProcessor> processor,
+                VolumeCacheService volumes,
+                ClientPeerConnectionDispatchers dispatchers,
+                RegionsConnectionsService regions,
+                ScheduledExecutorService scheduler,
+                Executor executor,
+                SimpleSessionManager<FrontendSessionExecutor> sessions) {
+            FrontendSessionExecutor.Factory factory = FrontendSessionExecutor.factory(
+                    true,
+                    processor,
+                    volumes.idToVolume(),
+                    volumes.pathToVolume(),
+                    getRegions(regions),
+                    dispatchers.get(),
+                    scheduler, 
+                    executor);
+            return FrontendConnectExecutor.defaults(
+                    factory, executors, sessions, lastZxid);
         }
 
         @Provides @Singleton
@@ -108,9 +137,19 @@ public class FrontendServerExecutor extends DependentService {
         @Provides @Singleton
         public ServerExecutor<FrontendSessionExecutor> getServerExecutor(
                 TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor,
-                SimpleConnectExecutor<FrontendSessionExecutor> connectExecutor,
+                FrontendConnectExecutor connectExecutor,
                 ConcurrentMap<Long, FrontendSessionExecutor> sessionExecutors) {
             return new SimpleServerExecutor<FrontendSessionExecutor>(sessionExecutors, connectExecutor, anonymousExecutor);
+        }
+        
+        protected Supplier<Set<Identifier>> getRegions(
+                final RegionsConnectionsService regions) {
+            return new Supplier<Set<Identifier>>() {
+                @Override
+                public Set<Identifier> get() {
+                    return regions.regions().keySet();
+                }  
+            };
         }
     }
     

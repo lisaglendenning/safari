@@ -2,8 +2,8 @@ package edu.uw.zookeeper.safari;
 
 import static org.junit.Assert.*;
 
-import java.util.concurrent.Callable;
-
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -17,19 +17,18 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.SimpleClientBuilder;
-import edu.uw.zookeeper.clients.common.CallUntilPresent;
+import edu.uw.zookeeper.clients.SubmitGenerator;
+import edu.uw.zookeeper.clients.common.CountingGenerator;
+import edu.uw.zookeeper.clients.common.Generator;
 import edu.uw.zookeeper.clients.common.Generators;
-import edu.uw.zookeeper.clients.common.IterationCallable;
-import edu.uw.zookeeper.clients.common.SubmitCallable;
-import edu.uw.zookeeper.clients.random.PathedRequestGenerator;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.proto.IExistsResponse;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.frontend.FrontendConfiguration;
 
@@ -100,6 +99,8 @@ public class SingleClientTest {
         }
     }
 
+    protected final Logger logger = LogManager.getLogger();
+    
     @Test(timeout=30000)
     public void testPipeline() throws Exception {
         Injector injector = SingleClientService.Module.injector();
@@ -114,15 +115,14 @@ public class SingleClientTest {
         
         int iterations = 32;
         int logInterval = 8;
-        Callable<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> callable = 
-                CallUntilPresent.create(IterationCallable.create(iterations, logInterval, 
-                    SubmitCallable.create(
-                            PathedRequestGenerator.exists(
-                                    Generators.constant(ZNodeLabel.Path.root())), 
-                            client.getClient().getConnectionClientExecutor())));
-        Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result = callable.call();
-        assertTrue(result.second().get().record() instanceof IExistsResponse);
-        
+        Generator<? extends Records.Request> requests = Generators.constant(Operations.Requests.exists().setPath(ZNodePath.root()).build());
+        CountingGenerator<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> operations = 
+                CountingGenerator.create(iterations, logInterval, 
+                        SubmitGenerator.create(requests, client.getClient().getConnectionClientExecutor()), logger);
+        while (operations.hasNext()) {
+             Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> operation = operations.next();
+             assertFalse(operation.second().get().record() instanceof Operation.Error);
+        }
         monitor.stopAsync().awaitTerminated();
     }
 }

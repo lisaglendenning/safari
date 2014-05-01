@@ -5,7 +5,7 @@ import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.safari.Identifier;
 
 public class PeerAddressView extends AbstractPair<Identifier, ServerInetAddressView> {
-    public static PeerAddressView of(Identifier first, ServerInetAddressView second) {
+    public static PeerAddressView valueOf(Identifier first, ServerInetAddressView second) {
         return new PeerAddressView(first, second);
     }
     

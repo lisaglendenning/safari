@@ -17,9 +17,8 @@ import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlTest;
-import edu.uw.zookeeper.safari.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.safari.frontend.FrontendServerService;
-import edu.uw.zookeeper.safari.peer.EnsembleConfiguration;
+import edu.uw.zookeeper.safari.peer.RegionConfiguration;
 
 @RunWith(JUnit4.class)
 public class FrontendTest {
@@ -30,8 +29,7 @@ public class FrontendTest {
 
     public static Injector injector(Injector parent) {
         return BackendTest.injector(parent).createChildInjector(
-                AssignmentCacheService.module(),
-                EnsembleConfiguration.module(),
+                RegionConfiguration.module(),
                 SimpleFrontendConfiguration.create());
     }
 

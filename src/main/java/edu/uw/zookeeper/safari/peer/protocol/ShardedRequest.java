@@ -2,20 +2,20 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.data.VersionedId;
 
-public class ShardedRequest<V extends Operation.Request> extends AbstractPair<Identifier, V> implements ShardedOperation.Request<V> {
+public class ShardedRequest<V extends Operation.Request> extends AbstractPair<VersionedId, V> implements ShardedOperation.Request<V> {
 
-    public static <V extends Operation.Request> ShardedRequest<V> of(Identifier id, V request) {
-        return new ShardedRequest<V>(id, request);
+    public static <V extends Operation.Request> ShardedRequest<V> of(VersionedId shard, V request) {
+        return new ShardedRequest<V>(shard, request);
     }
     
-    public ShardedRequest(Identifier id, V request) {
-        super(id, request);
+    public ShardedRequest(VersionedId shard, V request) {
+        super(shard, request);
     }
 
     @Override
-    public Identifier getIdentifier() {
+    public VersionedId getShard() {
         return first;
     }
 

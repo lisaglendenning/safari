@@ -16,8 +16,10 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.peer.PeerAddressView;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 
@@ -38,8 +40,8 @@ public class SimplePeerConfiguration extends AbstractModule {
         checkState(control.isRunning());
         ServerInetAddressView address = 
                 ServerInetAddressView.of((InetSocketAddress) addresses.get());
-        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.create(address, control.materializer()).get();
+        Identifier peer = ControlZNode.CreateEntity.call(ControlSchema.Safari.Peers.PATH, address, control.materializer()).get();
         TimeValue timeOut = TimeValue.create(0L, TimeUnit.MILLISECONDS);
-        return new PeerConfiguration(PeerAddressView.of(entityNode.get(), address), timeOut);
+        return new PeerConfiguration(PeerAddressView.valueOf(peer, address), timeOut);
     }
 }

@@ -2,54 +2,60 @@ package edu.uw.zookeeper.safari;
 
 import static org.junit.Assert.*;
 
-import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.zookeeper.KeeperException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import com.google.common.base.Function;
-import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
+import com.google.common.primitives.UnsignedLong;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 
 import edu.uw.zookeeper.DefaultRuntimeModule;
-import edu.uw.zookeeper.client.ConnectionClientExecutorService;
+import edu.uw.zookeeper.clients.IteratingClient;
+import edu.uw.zookeeper.clients.SubmitGenerator;
+import edu.uw.zookeeper.clients.common.CountingGenerator;
+import edu.uw.zookeeper.clients.common.Generator;
 import edu.uw.zookeeper.clients.common.Generators;
-import edu.uw.zookeeper.clients.common.IterationCallable;
-import edu.uw.zookeeper.clients.common.SubmitCallable;
-import edu.uw.zookeeper.clients.random.PathedRequestGenerator;
+import edu.uw.zookeeper.clients.random.PathRequestGenerator;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
+import edu.uw.zookeeper.data.ZNodeName;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.SingleClientTest.SingleClientService;
-import edu.uw.zookeeper.safari.backend.BackendSchema;
 import edu.uw.zookeeper.safari.backend.SimpleBackendConnections;
 import edu.uw.zookeeper.safari.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlTest;
+import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.control.SimpleControlConnectionsService;
 import edu.uw.zookeeper.safari.data.Volume;
-import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.safari.data.VolumeDescriptor;
-import edu.uw.zookeeper.safari.frontend.AssignmentCacheService;
+import edu.uw.zookeeper.safari.data.VolumeState;
 import edu.uw.zookeeper.safari.net.IntraVmAsNetModule;
-import edu.uw.zookeeper.safari.peer.EnsembleConfiguration;
+import edu.uw.zookeeper.safari.peer.RegionConfiguration;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 
 @RunWith(JUnit4.class)
@@ -81,15 +87,11 @@ public class MultipleRegionTest {
         ControlMaterializerService control = controlInjector.getInstance(ControlMaterializerService.class);
         control.startAsync().awaitRunning();
         
-        // Create root volume and reserve
-        Volume rootVolume = Volume.of(
-                ControlSchema.Volumes.Entity.create(VolumeDescriptor.all(), control.materializer()).get().get(),
-                VolumeDescriptor.all());
-        assertEquals(Identifier.zero(), 
-                ControlSchema.Volumes.Entity.Region.create(
-                    Identifier.zero(), 
-                    ControlSchema.Volumes.Entity.of(rootVolume.getId()), 
-                    control.materializer()).get().get());
+        // Create root volume
+        VolumeDescriptor rootVd = VolumeDescriptor.valueOf(
+                ControlZNode.CreateEntity.call(ControlSchema.Safari.Volumes.PATH, ZNodePath.root(), control.materializer()).get(),
+                ZNodePath.root());
+        // TODO reserve
         
         Injector[] regionInjectors = new Injector[num_regions];
         for (int i=0; i<num_regions; ++i) { 
@@ -116,60 +118,54 @@ public class MultipleRegionTest {
         
         ServiceMonitor monitor = rootInjector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
-        
-        // Create and assign a volume for each region
-        Volume[] volumes = new Volume[num_regions];
-        for (int i=0; i<num_regions; ++i) { 
-            Identifier id = regionInjectors[i].getInstance(EnsembleConfiguration.class).getEnsemble();
-            VolumeDescriptor vd = VolumeDescriptor.of(((ZNodeLabel.Path) ZNodeLabel.joined(ZNodeLabel.Path.root(), id.toString())));
 
-            // Add new leaf to root volume
-            rootVolume = Volume.of(
-                    rootVolume.getId(), 
-                    rootVolume.getDescriptor().add(vd.getRoot()));
-            assertEquals(rootVolume.getDescriptor(),
-                    ControlSchema.Volumes.Entity.Volume.set(
-                            rootVolume.getDescriptor(), 
-                            ControlSchema.Volumes.Entity.of(rootVolume.getId()), control.materializer()).get().get());
+        // Create and assign a volume for each region
+        UnsignedLong version = UnsignedLong.valueOf(1L);
+        List<Volume> volumes = Lists.newArrayListWithCapacity(num_regions);
+        for (int i=0; i<num_regions; ++i) { 
+
+            // TODO create volume root
             
             // Create volume
-            volumes[i] = Volume.of(
-                    ControlSchema.Volumes.Entity.create(vd, control.materializer()).get().get(),
-                    vd);
+            Identifier region = regionInjectors[i].getInstance(RegionConfiguration.class).getRegion();
+            ZNodePath path = ZNodePath.root().join(ZNodeLabel.fromString(region.toString()));
+            Identifier id = 
+                    ControlZNode.CreateEntity.call(ControlSchema.Safari.Volumes.PATH, path, control.materializer()).get();
             
-            // Assign volume
-            assertEquals(id,
-                    ControlSchema.Volumes.Entity.Region.create(
-                            id, ControlSchema.Volumes.Entity.of(volumes[i].getId()), 
-                            control.materializer()).get().get());
+            // Create volume version
+            VolumeState state = VolumeState.valueOf(region, ImmutableSet.<Identifier>of());
+            Operations.unlessError(control.materializer().create(ControlSchema.Safari.Volumes.Volume.Log.pathOf(id)).call().get().record());
+            Operations.unlessError(control.materializer().create(ControlSchema.Safari.Volumes.Volume.Log.Version.pathOf(id, version)).call().get().record());
+            Operations.unlessError(control.materializer().create(ControlSchema.Safari.Volumes.Volume.Log.Version.State.pathOf(id, version), state).call().get().record());
+            Operations.unlessError(control.materializer().create(ControlSchema.Safari.Volumes.Volume.Log.Latest.pathOf(id), version).call().get().record());
+            
+            volumes.set(
+                    i, 
+                    Volume.valueOf(
+                        id,
+                        path,
+                        version,
+                        region,
+                        ImmutableMap.<ZNodeName, Identifier>of()));
         }
         
-        // Assign root to region 0
-        Identifier id = regionInjectors[0].getInstance(EnsembleConfiguration.class).getEnsemble();
-        assertEquals(id, ControlSchema.Volumes.Entity.Region.set(
-                id, ControlSchema.Volumes.Entity.of(rootVolume.getId()), 
-                control.materializer()).get().get());
+        // TODO Update root volume
         
-        // Clear caches
-        for (Injector injector: regionInjectors) {
-            injector.getInstance(VolumeCacheService.class).cache().clear();
-            injector.getInstance(AssignmentCacheService.class).get().asCache().clear();
-        }
 
-        SingleClientService[] clients = new SingleClientService[regionInjectors.length];
+        SingleClientService[] service = new SingleClientService[regionInjectors.length];
         for (int i=0; i<num_regions; ++i) { 
-            clients[i] = regionInjectors[i].getInstance(SingleClientService.class);
-            clients[i].startAsync().awaitRunning();
+            service[i] = regionInjectors[i].getInstance(SingleClientService.class);
+            service[i].startAsync().awaitRunning();
         }
         
-        // create root
-        Message.ServerResponse<?> response = clients[0].getClient().getConnectionClientExecutor().submit(
-                Operations.Requests.create().setPath(rootVolume.getDescriptor().getRoot()).build()).get();
+        // TODO create roots
+/*        Message.ServerResponse<?> response = clients[0].getClient().getConnectionClientExecutor().submit(
+                Operations.Requests.create().setPath(ZNodePath.root()).build()).get();
         Operations.unlessError(response.record());
         for (int i=0; i<num_regions; ++i) {
-            ZNodeLabel.Path path = (ZNodeLabel.Path) ZNodeLabel.joined(BackendSchema.Volumes.path(), rootVolume.getId());
-            Identifier assigned = ControlSchema.Volumes.Entity.Region.get(ControlSchema.Volumes.Entity.of(rootVolume.getId()), control.materializer()).get().get();
-            Identifier region = regionInjectors[i].getInstance(EnsembleConfiguration.class).getEnsemble();
+            ZNodePath path = (ZNodePath) ZNodePath.joined(BackendSchema.Volumes.path(), rootVolume.getId());
+            Identifier assigned = ControlSchema.Volumes.ControlSchema.Region.get(ControlSchema.ControlSchema.Entity.of(rootVolume.getId()), control.materializer()).get().get();
+            Identifier region = regionInjectors[i].getInstance(RegionConfiguration.class).getRegion();
             response = backdoors.get(i).submit(
                     Operations.Requests.sync().setPath(path).build()).get();
             Operations.maybeError(response.record(), KeeperException.Code.NONODE);
@@ -185,12 +181,12 @@ public class MultipleRegionTest {
         // create all volume roots
         for (Volume v: volumes) {
             response = clients[0].getClient().getConnectionClientExecutor().submit(
-                    Operations.Requests.create().setPath(v.getDescriptor().getRoot()).build()).get();
+                    Operations.Requests.create().setPath(v.getSnapshot().getRoot()).build()).get();
             Operations.unlessError(response.record());
             for (int i=0; i<num_regions; ++i) {
-                ZNodeLabel.Path path = (ZNodeLabel.Path) ZNodeLabel.joined(BackendSchema.Volumes.path(), v.getId());
-                Identifier assigned = ControlSchema.Volumes.Entity.Region.get(ControlSchema.Volumes.Entity.of(v.getId()), control.materializer()).get().get();
-                Identifier region = regionInjectors[i].getInstance(EnsembleConfiguration.class).getEnsemble();
+                ZNodePath path = (ZNodePath) ZNodePath.joined(BackendSchema.Volumes.path(), v.getId());
+                Identifier assigned = ControlSchema.Volumes.ControlSchema.Region.get(ControlSchema.ControlSchema.Entity.of(v.getId()), control.materializer()).get().get();
+                Identifier region = regionInjectors[i].getInstance(RegionConfiguration.class).getRegion();
                 response = backdoors.get(i).submit(
                         Operations.Requests.sync().setPath(path).build()).get();
                 Operations.maybeError(response.record(), KeeperException.Code.NONODE);
@@ -203,97 +199,34 @@ public class MultipleRegionTest {
                 }
             }
         }
+*/
 
         // alternate volume operations for both clients
         int iterations = 4;
         int logInterval = 4;
-        List<Callable<Optional<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>>>> callables = Lists.newArrayListWithCapacity(num_regions);
+        ListeningExecutorService executor = rootInjector.getInstance(ListeningExecutorService.class);
+        Generator<ZNodePath> paths = Generators.iterator(
+                Iterators.cycle(
+                        Iterables.transform(volumes, 
+                            new Function<Volume, ZNodePath>() {
+                                @Override
+                                public ZNodePath apply(Volume input) {
+                                    return input.getDescriptor().getPath();
+                                }
+                            })));
+        List<IteratingClient> clients = Lists.newArrayListWithCapacity(num_regions);
         for (int i=0; i<num_regions; ++i) {
-            callables.add(
-                IterationCallable.create(iterations, logInterval,
-                    SubmitCallable.create(
-                        PathedRequestGenerator.exists(
-                                Generators.cycle(
-                                        Iterables.transform(
-                                            Arrays.asList(volumes),
-                                            new Function<Volume, ZNodeLabel.Path>() {
-                                                @Override
-                                                public ZNodeLabel.Path apply(Volume input) {
-                                                    return input.getDescriptor().getRoot();
-                                                }}))), 
-                                clients[i].getClient().getConnectionClientExecutor().get().get())));
+            final CountingGenerator<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> operations = 
+                    CountingGenerator.create(iterations, logInterval, 
+                            SubmitGenerator.create(
+                                    PathRequestGenerator.create(paths, Generators.constant(Operations.Requests.exists())), 
+                                    service[i].getClient().getConnectionClientExecutor().get().get()), logger);
+            IteratingClient client = IteratingClient.create(executor, operations, LoggingPromise.create(logger, SettableFuturePromise.<Void>create()));
+            clients.add(client);
+            executor.execute(client);
         }
-        List<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> results =
-            CallUntilAllPresent.create(
-                    ListCallable.create(callables)).call();
-        for (Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> result: results) {
-            Operations.unlessError(result.second().get().record());
-        }
-        
-        for (OperationClientExecutor<?> backdoor: backdoors) {
-            Operations.unlessError(ConnectionClientExecutorService.disconnect(backdoor).record());
-        }
+        Futures.successfulAsList(clients).get();
         
         monitor.stopAsync().awaitTerminated();
-    }
-    
-    public static class CallUntilAllPresent<V> implements Callable<List<V>> {
-
-        public static <V> CallUntilAllPresent<V> create(
-                Callable<List<Optional<V>>> callable) {
-            return new CallUntilAllPresent<V>(callable);
-        }
-        
-        private final Callable<List<Optional<V>>> callable;
-        
-        public CallUntilAllPresent(
-                Callable<List<Optional<V>>> callable) {
-            this.callable = callable;
-        }
-        
-        @Override
-        public List<V> call() throws Exception {
-            List<V> results = null;
-            while (results == null) {
-                boolean absent = false;
-                List<Optional<V>> partial = callable.call();
-                for (Optional<V> e: partial) {
-                    if (! e.isPresent()) {
-                        absent = true;
-                        break;
-                    }
-                }
-                if (! absent) {
-                    results = Lists.newArrayListWithCapacity(partial.size());
-                    for (Optional<V> e: partial) {
-                        results.add(e.get());
-                    }
-                }
-            }
-            return results;
-        }
-    }
-    
-    public static class ListCallable<V> implements Callable<List<V>> {
-
-        public static <V> ListCallable<V> create (List<Callable<V>> callables) {
-            return new ListCallable<V>(callables);
-        }
-        
-        private final List<Callable<V>> callables;
-        
-        public ListCallable(List<Callable<V>> callables) {
-            this.callables = callables;
-        }
-        
-        @Override
-        public List<V> call() throws Exception {
-            List<V> results = Lists.newArrayListWithCapacity(callables.size());
-            for (Callable<V> callable: callables) {
-                results.add(callable.call());
-            }
-            return results;
-        }
-        
     }
 }

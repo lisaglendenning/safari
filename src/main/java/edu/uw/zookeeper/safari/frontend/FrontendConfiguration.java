@@ -1,21 +1,24 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.concurrent.ExecutionException;
-
-import org.apache.zookeeper.KeeperException;
-
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ZooKeeperApplication;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.data.CreateOrEquals;
 import edu.uw.zookeeper.server.ConfigurableServerAddressView;
 
 public class FrontendConfiguration {
@@ -40,12 +43,22 @@ public class FrontendConfiguration {
         }
     }
     
-    public static void advertise(Identifier peerId, ServerInetAddressView address, Materializer<?> materializer) throws InterruptedException, ExecutionException, KeeperException {
-        ControlSchema.Peers.Entity entityNode = ControlSchema.Peers.Entity.of(peerId);
-        ControlSchema.Peers.Entity.ClientAddress valueNode = ControlSchema.Peers.Entity.ClientAddress.create(address, entityNode, materializer).get();
-        if (! address.equals(valueNode.get())) {
-            throw new IllegalStateException(String.format("%s != %s", address, valueNode.get()));
-        }        
+    public static ListenableFuture<Optional<ServerInetAddressView>> advertise(
+            final Identifier peer, 
+            final ServerInetAddressView value, 
+            final Materializer<ControlZNode<?>,?> materializer) {    
+        ZNodePath path = ControlSchema.Safari.Peers.Peer.ClientAddress.pathOf(peer);
+        return Futures.transform(CreateOrEquals.create(path, value, materializer), 
+                new Function<Optional<ServerInetAddressView>, Optional<ServerInetAddressView>>() {
+                    @Override
+                    public Optional<ServerInetAddressView> apply(
+                            Optional<ServerInetAddressView> input) {
+                        if (input.isPresent()) {
+                            throw new IllegalStateException(String.format("%s != %s", value, input.get()));
+                        }
+                        return input;
+                    }
+        });
     }
 
     @Configurable(path="frontend", key="timeout", value="30 seconds", help="time")

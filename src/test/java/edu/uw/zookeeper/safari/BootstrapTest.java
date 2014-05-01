@@ -18,10 +18,9 @@ import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlTest;
-import edu.uw.zookeeper.safari.frontend.AssignmentCacheService;
 import edu.uw.zookeeper.safari.frontend.FrontendServerService;
 import edu.uw.zookeeper.safari.frontend.SimpleFrontendConfiguration;
-import edu.uw.zookeeper.safari.peer.EnsembleMemberService;
+import edu.uw.zookeeper.safari.peer.RegionMemberService;
 
 @RunWith(JUnit4.class)
 public class BootstrapTest {
@@ -32,15 +31,14 @@ public class BootstrapTest {
 
     public static Injector injector(Injector parent) {
         return BackendTest.injector(parent).createChildInjector(
-                AssignmentCacheService.module(),
-                EnsembleMemberService.module(),
+                RegionMemberService.module(),
                 SimpleFrontendConfiguration.create());
     }
 
     @DependsOn({ 
         ControlMaterializerService.class, 
         BackendRequestService.class,
-        EnsembleMemberService.class,
+        RegionMemberService.class,
         FrontendServerService.class })
     public static class SimpleMainService extends DependentService {
 

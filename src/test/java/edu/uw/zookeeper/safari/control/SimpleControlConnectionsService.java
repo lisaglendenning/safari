@@ -65,9 +65,10 @@ public class SimpleControlConnectionsService extends ControlConnectionsService<C
             NetServerModule serverModule,
             NetClientModule clientModule,
             RuntimeModule runtime) {
+        SimpleServerConnectionsBuilder connectionsBuilder = SimpleServerConnectionsBuilder.defaults(address, serverModule);
         SimpleServerBuilder<SimpleServerExecutor.Builder> server = SimpleServerBuilder.fromBuilders(
-                SimpleServerExecutor.builder(), 
-                SimpleServerConnectionsBuilder.defaults(address, serverModule))
+                SimpleServerExecutor.builder(connectionsBuilder.getConnectionBuilder()), 
+                connectionsBuilder)
                     .setRuntimeModule(runtime)
                     .setDefaults();
         EnsembleView<ServerInetAddressView> ensemble = EnsembleView.of(address);

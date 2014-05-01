@@ -1,28 +1,34 @@
 package edu.uw.zookeeper.safari.control;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 
 import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.Futures;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ConnectionClientExecutorService;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.NodeWatchEvent;
 import edu.uw.zookeeper.data.Serializers;
-import edu.uw.zookeeper.data.WatchPromiseTrie;
+import edu.uw.zookeeper.data.WatchListeners;
+import edu.uw.zookeeper.data.ZNodeCache;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.SessionListener;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
+import edu.uw.zookeeper.safari.data.PrefixCreator;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 
@@ -63,42 +69,80 @@ public class ControlMaterializerService extends ConnectionClientExecutorService<
                 serializer, 
                 connections, 
                 new StrongConcurrentSet<SessionListener>(), 
-                MoreExecutors.sameThreadExecutor());
+                SameThreadExecutor.getInstance());
     }
 
     protected final Injector injector;
-    protected final Materializer<Message.ServerResponse<?>> materializer;
-    protected final WatchPromiseTrie watches;
+    protected final Materializer<ControlZNode<?>, Message.ServerResponse<?>> materializer;
+    protected final WatchListeners notifications;
+    protected final CacheEventWatchListeners cacheEvents;
 
     protected ControlMaterializerService(
             Injector injector,
-            Serializers.ByteCodec<Object> serializer, 
+            Serializers.ByteCodec<Object> codec, 
             ControlConnectionsService<?> connections,
             IConcurrentSet<SessionListener> listeners,
             Executor executor) {
         super(connections.factory(), listeners, executor);
         this.injector = injector;
-        this.materializer = Materializer.newInstance(
-                        ControlSchema.getInstance().get(),
-                        serializer,
+        this.materializer = Materializer.<ControlZNode<?>, Message.ServerResponse<?>>fromHierarchy(
+                        ControlSchema.class,
+                        codec,
                         this);
-        this.watches = WatchPromiseTrie.newInstance();
+        this.notifications = WatchListeners.newInstance(materializer.schema().get());
+        this.cacheEvents = new CacheEventWatchListeners(WatchListeners.newInstance(materializer.schema().get()));
     }
     
-    public Materializer<Message.ServerResponse<?>> materializer() {
+    public Materializer<ControlZNode<?>, Message.ServerResponse<?>> materializer() {
         return materializer;
     }
 
-    public WatchPromiseTrie watches() {
-        return watches;
+    public WatchListeners notifications() {
+        return notifications;
+    }
+
+    public WatchListeners cacheEvents() {
+        return cacheEvents.get();
     }
     
     @Override
     protected void startUp() throws Exception {
+        materializer.cache().events().subscribe(cacheEvents);
+        materializer.cache().subscribe(notifications);
+        
         DependentService.addOnStart(injector, this);
         
         super.startUp();
 
-        Control.createPrefix(materializer());
+        Futures.successfulAsList(PrefixCreator.forMaterializer(materializer()).call()).get();
+    }
+
+    @Override
+    protected void shutDown() throws Exception {
+        materializer.cache().unsubscribe(notifications);
+        materializer.cache().events().unsubscribe(cacheEvents);
+        
+        super.shutDown();
+    }
+    
+    public static class CacheEventWatchListeners implements Supplier<WatchListeners>, ZNodeCache.CacheListener {
+
+        protected final WatchListeners watchers;
+        
+        public CacheEventWatchListeners(WatchListeners watchers) {
+            this.watchers = watchers;
+        }
+        
+        @Override
+        public WatchListeners get() {
+            return watchers;
+        }
+
+        @Override
+        public void handleCacheEvent(Set<NodeWatchEvent> events) {
+            for (NodeWatchEvent event: events) {
+                watchers.handleWatchEvent(event);
+            }
+        }
     }
 }

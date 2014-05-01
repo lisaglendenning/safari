@@ -1,11 +1,24 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
-import edu.uw.zookeeper.protocol.Encodable;
-import edu.uw.zookeeper.safari.Identifier;
+import com.google.common.base.Objects;
 
-public abstract class ShardedMessage<T extends Encodable> extends ValueMessage<Identifier, T> {
+import edu.uw.zookeeper.safari.data.VersionedId;
 
-    protected ShardedMessage(Identifier id, T value) {
-        super(id, value);
+public abstract class ShardedMessage<V> extends ValueMessage<VersionedId,V> {
+
+    protected ShardedMessage(VersionedId shard, V value) {
+        super(shard, value);
+    }
+    
+    public VersionedId getShard() {
+        return identifier;
+    }
+
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this)
+                .add("shard", identifier)
+                .add("value", value)
+                .toString();
     }
 }

@@ -9,14 +9,14 @@ public class MessageSessionRequest extends SessionMessage<ShardedRequestMessage<
 
     public static MessageSessionRequest of(
             Long identifier, 
-            ShardedRequestMessage<?> value) {
-        return new MessageSessionRequest(identifier, value);
+            ShardedRequestMessage<?> message) {
+        return new MessageSessionRequest(identifier, message);
     }
     
     @JsonCreator
     public MessageSessionRequest(
             @JsonProperty("identifier") Long identifier, 
-            @JsonProperty("value") ShardedRequestMessage<?> value) {
-        super(identifier, value);
+            @JsonProperty("message") ShardedRequestMessage<?> message) {
+        super(identifier, message);
     }
 }

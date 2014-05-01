@@ -20,12 +20,11 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.client.Materializer;
+import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
-import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
 import edu.uw.zookeeper.protocol.server.ServerConnectionFactoryBuilder;
@@ -36,9 +35,10 @@ import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
-import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.data.FetchUntil;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 
 @DependsOn({FrontendServerExecutor.class})
@@ -94,39 +94,41 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
         }
     }
     
-    public static class AllVolumesAssigned implements Processor<Object, Optional<Boolean>> {
+    public static class AllVolumesAvailable implements Processor<Object, Optional<Boolean>> {
         
-        public static ZNodeLabel.Path root() {
-            return ROOT;
-        }
-        
-        public static ListenableFuture<Boolean> call(Materializer<?> materializer) {
-            return Control.FetchUntil.newInstance(
-                    AllVolumesAssigned.root(), 
-                    new AllVolumesAssigned(materializer), 
+        public static ListenableFuture<Boolean> call(Materializer<ControlZNode<?>,?> materializer) {
+            return FetchUntil.newInstance(
+                    ControlSchema.Safari.Volumes.PATH, 
+                    new AllVolumesAvailable(materializer), 
                     materializer);
         }
         
-        protected static final ZNodeLabel.Path ROOT = Control.path(ControlSchema.Volumes.class);
+        protected final Materializer<ControlZNode<?>,?> materializer;
         
-        protected final Materializer<?> materializer;
-        
-        public AllVolumesAssigned(Materializer<?> materializer) {
+        public AllVolumesAvailable(Materializer<ControlZNode<?>,?> materializer) {
             this.materializer = materializer;
         }
 
         @Override
         public Optional<Boolean> apply(Object input) throws Exception {
-            Materializer.MaterializedNode root = materializer.get(ROOT);
-            if (root != null) {
-                for (Materializer.MaterializedNode e: root.values()) {
-                    if (! e.containsKey(ControlSchema.Volumes.Entity.Region.LABEL)) {
-                        return Optional.absent();
+            materializer.cache().lock().readLock().lock();
+            try {
+                ControlSchema.Safari.Volumes root = ControlSchema.Safari.Volumes.get(materializer.cache().cache());
+                if (root != null) {
+                    for (ControlZNode<?> e: root.values()) {
+                        ControlSchema.Safari.Volumes.Volume.Log log = ((ControlSchema.Safari.Volumes.Volume) e).getLog();
+                        // for now we'll use the existence of a log version
+                        // as a proxy for a volume being active
+                        if ((log == null) || log.isEmpty()) {
+                            return Optional.absent();
+                        }
                     }
+                    return Optional.of(Boolean.valueOf(true));
                 }
-                return Optional.of(Boolean.valueOf(true));
+                return Optional.absent();
+            } finally {
+                materializer.cache().lock().readLock().unlock();
             }
-            return Optional.absent();
         }
     }
 
@@ -174,7 +176,7 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
         DependentService.addOnStart(injector, this);
 
         // global barrier - wait for all volumes to be assigned
-        AllVolumesAssigned.call( 
+        AllVolumesAvailable.call( 
                 injector().getInstance(ControlMaterializerService.class).materializer()).get();
 
         connections.subscribe(this);
@@ -202,11 +204,11 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
         
         @Override
         public void running() {
-            Materializer<?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
+            Materializer<ControlZNode<?>,?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
             Identifier peerId = injector.getInstance(PeerConfiguration.class).getView().id();
             ServerInetAddressView address = injector.getInstance(FrontendConfiguration.class).getAddress();
             try {
-                FrontendConfiguration.advertise(peerId, address, materializer);
+                FrontendConfiguration.advertise(peerId, address, materializer).get();
             } catch (Exception e) {
                 logger.warn("", e);
                 stopAsync();

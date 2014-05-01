@@ -11,20 +11,14 @@ public class MessageSessionOpenResponse extends OpenSessionMessage<ConnectMessag
 
     public static MessageSessionOpenResponse of(
             Long identifier,
-            ConnectMessage.Response value) {
-        return new MessageSessionOpenResponse(identifier, value);
+            ConnectMessage.Response message) {
+        return new MessageSessionOpenResponse(identifier, message);
     }
     
     @JsonCreator
     public MessageSessionOpenResponse(
             @JsonProperty("identifier") Long identifier,
-            @JsonProperty("value") Records.Response value) {
-        this(identifier, (ConnectMessage.Response) value);
-    }
-
-    public MessageSessionOpenResponse(
-            Long identifier,
-            ConnectMessage.Response value) {
-        super(identifier, value);
+            @JsonProperty("message") Records.Response message) {
+        super(identifier, (ConnectMessage.Response) message);
     }
 }
