@@ -10,6 +10,7 @@ import com.google.common.collect.ForwardingNavigableSet;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.UnsignedInteger;
 
+import edu.uw.zookeeper.common.Hex;
 import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.Serializes;
 
@@ -22,7 +23,7 @@ public final class Identifier implements Comparable<Identifier> {
     @Serializes(from=String.class, to=Identifier.class)
     public static Identifier valueOf(String string) {
         UnsignedInteger value = UnsignedInteger.valueOf(string, RADIX);
-        return new Identifier(value);
+        return valueOf(value);
     }
 
     public static Identifier valueOf(byte[] bytes) {
@@ -30,18 +31,15 @@ public final class Identifier implements Comparable<Identifier> {
     }
 
     public static Identifier valueOf(int bits) {
-        return new Identifier(UnsignedInteger.fromIntBits(bits));
+        return valueOf(UnsignedInteger.fromIntBits(bits));
+    }
+
+    public static Identifier valueOf(UnsignedInteger value) {
+        return new Identifier(value);
     }
     
     public static String toString(UnsignedInteger value) {
-        // String.format won't left pad zeros for a string
-        String str = value.toString(RADIX);
-        StringBuilder sb = new StringBuilder();
-        for (int toPrepend=CHARACTERS-str.length(); toPrepend>0; toPrepend--) {
-            sb.append('0');
-        }
-        sb.append(str);
-        return sb.toString();
+        return Hex.toPaddedHexString(value.toString(RADIX), CHARACTERS);
     }
 
     public static final int BYTES = Ints.BYTES;
@@ -68,7 +66,7 @@ public final class Identifier implements Comparable<Identifier> {
     protected final UnsignedInteger value;
     protected final String asString;
     
-    public Identifier(UnsignedInteger value) {
+    protected Identifier(UnsignedInteger value) {
         this.value = checkNotNull(value);
         this.asString = toString(value);
     }

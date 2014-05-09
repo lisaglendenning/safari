@@ -20,8 +20,8 @@ import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
 import edu.uw.zookeeper.safari.control.ControlTest;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
-import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
 import edu.uw.zookeeper.safari.peer.PeerTest;
+import edu.uw.zookeeper.safari.peer.RegionConfiguration;
 
 @RunWith(JUnit4.class)
 public class BackendTest {
@@ -33,6 +33,7 @@ public class BackendTest {
     public static Injector injector(Injector parent) {
         return PeerTest.injector(parent).createChildInjector(
                 VolumeCacheService.module(),
+                RegionConfiguration.module(),
                 SimpleBackendRequestServiceModule.create());
     }
     
@@ -47,15 +48,16 @@ public class BackendTest {
 
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(SimpleBackendConnections.module());
+            return ImmutableList.<com.google.inject.Module>of(
+                    VersionedVolumeCacheService.module(),
+                    SimpleBackendConnections.module());
         }
     }
     
     @DependsOn({ 
         ControlMaterializerService.class, 
         VolumeCacheService.class,
-        BackendRequestService.class,
-        PeerConnectionsService.class })
+        BackendRequestService.class})
     public static class BackendTestService extends DependentService {
 
         public static class Module extends AbstractModule {

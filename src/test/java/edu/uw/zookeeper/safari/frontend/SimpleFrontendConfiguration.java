@@ -27,7 +27,7 @@ public class SimpleFrontendConfiguration extends FrontendServerService.Module {
             Factory<? extends SocketAddress> addresses) {
         ServerInetAddressView address = 
                 ServerInetAddressView.of((InetSocketAddress) addresses.get());
-        TimeValue timeOut = TimeValue.create(Session.Parameters.NEVER_TIMEOUT, Session.Parameters.TIMEOUT_UNIT);
+        TimeValue timeOut = TimeValue.create(Session.Parameters.noTimeout(), Session.Parameters.timeoutUnit());
         return new FrontendConfiguration(address, timeOut);
     }
 

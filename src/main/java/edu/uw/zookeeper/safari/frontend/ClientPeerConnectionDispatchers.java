@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.safari.frontend;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 
@@ -20,7 +21,7 @@ import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.net.Connection;
@@ -68,13 +69,13 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
         return dispatchers.asLookup();
     }
 
-    protected class CreateDispatcherTask extends RunnablePromiseTask<Pair<Identifier,? extends ListenableFuture<? extends ClientPeerConnection<?>>>, ClientPeerConnectionDispatcher> {
+    protected class CreateDispatcherTask extends PromiseTask<Pair<Identifier,? extends ListenableFuture<? extends ClientPeerConnection<?>>>, ClientPeerConnectionDispatcher> implements Callable<Optional<ClientPeerConnectionDispatcher>> {
 
         public CreateDispatcherTask(
                 Pair<Identifier,? extends ListenableFuture<? extends ClientPeerConnection<?>>> task,
                 Promise<ClientPeerConnectionDispatcher> delegate) {
             super(task, delegate);
-            task.second().addListener(this, SameThreadExecutor.getInstance());
+            task.second().addListener(CallablePromiseTask.create(this, this), SameThreadExecutor.getInstance());
         }
         
         @Override

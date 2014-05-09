@@ -229,17 +229,36 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         @Override
         public void onSuccess(PendingShardedTask result) {
             Identifier id = result.getSharded().task().getShard().getIdentifier();
-            ShardProcessor processor = processors.get(id);
-            if (processor != null) {
-                if (!processors.get(id).responses.send(result)) {
-                    result.getSharded().cancel(true);
+            if (!id.equals(Identifier.zero())) {
+                ShardProcessor processor = processors.get(id);
+                if (processor != null) {
+                    if (!processor.responses.send(result)) {
+                        result.getSharded().cancel(true);
+                    }
+                }
+            } else {
+                ShardedRequestTask task = result.getSharded();
+                Message.ServerResponse<?> response = null;
+                try {
+                    response = (Message.ServerResponse<?>) result.get();
+                } catch (ExecutionException e) {
+                    task.setException(e.getCause());
+                    onFailure(e.getCause());
+                    return;
+                } catch (CancellationException e) {
+                    task.cancel(true);
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+                if (! task.isDone()) {
+                    task.set(ShardedServerResponseMessage.valueOf(task.task().getShard(), response));
                 }
             }
         }
 
         @Override
         public void onFailure(Throwable t) {
-            // TODO Auto-generated method stub
+            ShardedClientExecutor.this.onFailure(t);
         }
         
         @Override
@@ -259,32 +278,47 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                 if (!futures.isEmpty()) {
                     wait(Futures.allAsList(futures));
                     return false;
-                }
-            }
-            ShardProcessor processor = processors.get(id);
-            if (processor == null) {
-                ListenableFuture<ZNodePath> future = idToPath.apply(id);
-                if (! future.isDone()) {
-                    wait(future);
+                } else {
+                    if (mailbox.remove(input)) {
+                        PendingShardedTask task = PendingShardedTask.create(input, new SoftReference<Message.ClientRequest<?>>(input.task().getRequest()), LoggingPromise.create(logger, SettableFuturePromise.<Message.ServerResponse<?>>create()));
+                        if (! pending.send(task)) {
+                            input.cancel(true);
+                            return false;
+                        }
+                        return true;
+                    }
                     return false;
                 }
-                ZNodePath path = future.get();
-                Supplier<VersionTransition> version = idToVersion.apply(id);
-                AsyncFunction<Long,UnsignedLong> zxid = idToZxid.apply(id);
-                AsyncFunction<UnsignedLong,Volume> volume = idToVolume.apply(id);
-                processor = new ShardProcessor(id, path, version, zxid, volume);
-                ShardProcessor existing = processors.putIfAbsent(id, processor);
-                if (existing != null) {
-                    processor = existing;
+            } else {
+                ShardProcessor processor = processors.get(id);
+                if (processor == null) {
+                    ListenableFuture<ZNodePath> future = idToPath.apply(id);
+                    if (! future.isDone()) {
+                        wait(future);
+                        return false;
+                    }
+                    ZNodePath path = future.get();
+                    Supplier<VersionTransition> version = idToVersion.apply(id);
+                    AsyncFunction<Long,UnsignedLong> zxid = idToZxid.apply(id);
+                    AsyncFunction<UnsignedLong,Volume> volume = idToVolume.apply(id);
+                    processor = new ShardProcessor(id, path, version, zxid, volume);
+                    ShardProcessor existing = processors.putIfAbsent(id, processor);
+                    if (existing != null) {
+                        processor = existing;
+                    }
                 }
+                return mailbox.remove(input) && processor.requests.send(input);
             }
-            if (! mailbox.remove(input)) {
-                return false;
+        }
+
+        @Override
+        protected void doStop() {
+            ShardedClientExecutor.this.doStop();
+            
+            ShardedRequestTask request;
+            while ((request = mailbox.poll()) != null) {
+                request.cancel(true);
             }
-            if (! processor.requests.send(input)) {
-                return false;
-            }
-            return true;
         }
         
         // TODO: delete processors for transferred volumes
@@ -363,7 +397,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                                     input.setException(new OutdatedVersionException(request.task().getShard()));
                                 }
                             }
-                            PendingShardedTask task = PendingShardedTask.create(request, new SoftReference<Message.ClientRequest<?>>(translated), SettableFuturePromise.<Message.ServerResponse<?>>create());
+                            PendingShardedTask task = PendingShardedTask.create(request, new SoftReference<Message.ClientRequest<?>>(translated), LoggingPromise.create(logger, SettableFuturePromise.<Message.ServerResponse<?>>create()));
                             if (! pending.send(task)) {
                                 input.cancel(true);
                                 return false;
@@ -375,8 +409,11 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                             return false;
                         }
                     } else {
-                        ((Promise<Identifier>) input).set(identifier);
-                        return mailbox.remove(input);
+                        if (mailbox.remove(input)) {
+                            ((Promise<Identifier>) input).set(identifier);
+                            return true;
+                        }
+                        return false;
                     }
                 }
             }

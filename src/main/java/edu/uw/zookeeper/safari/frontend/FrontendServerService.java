@@ -8,11 +8,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
@@ -21,8 +18,8 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.data.Materializer;
-import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.RuntimeModule;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.NetServerModule;
@@ -36,9 +33,7 @@ import edu.uw.zookeeper.safari.common.DependentModule;
 import edu.uw.zookeeper.safari.common.DependentService;
 import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.control.ControlMaterializerService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.FetchUntil;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 
 @DependsOn({FrontendServerExecutor.class})
@@ -93,44 +88,6 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
                     FrontendServerExecutor.module());
         }
     }
-    
-    public static class AllVolumesAvailable implements Processor<Object, Optional<Boolean>> {
-        
-        public static ListenableFuture<Boolean> call(Materializer<ControlZNode<?>,?> materializer) {
-            return FetchUntil.newInstance(
-                    ControlSchema.Safari.Volumes.PATH, 
-                    new AllVolumesAvailable(materializer), 
-                    materializer);
-        }
-        
-        protected final Materializer<ControlZNode<?>,?> materializer;
-        
-        public AllVolumesAvailable(Materializer<ControlZNode<?>,?> materializer) {
-            this.materializer = materializer;
-        }
-
-        @Override
-        public Optional<Boolean> apply(Object input) throws Exception {
-            materializer.cache().lock().readLock().lock();
-            try {
-                ControlSchema.Safari.Volumes root = ControlSchema.Safari.Volumes.get(materializer.cache().cache());
-                if (root != null) {
-                    for (ControlZNode<?> e: root.values()) {
-                        ControlSchema.Safari.Volumes.Volume.Log log = ((ControlSchema.Safari.Volumes.Volume) e).getLog();
-                        // for now we'll use the existence of a log version
-                        // as a proxy for a volume being active
-                        if ((log == null) || log.isEmpty()) {
-                            return Optional.absent();
-                        }
-                    }
-                    return Optional.of(Boolean.valueOf(true));
-                }
-                return Optional.absent();
-            } finally {
-                materializer.cache().lock().readLock().unlock();
-            }
-        }
-    }
 
     public static <C extends ServerProtocolConnection<?,?>> FrontendServerService<C> newInstance(
             ServerConnectionFactory<C> connections,
@@ -146,7 +103,7 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
                 timeOut,
                 handlers,
                 injector);
-        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
+        instance.new Advertiser(SameThreadExecutor.getInstance());
         return instance;
     }
 
@@ -174,10 +131,6 @@ public class FrontendServerService<C extends ServerProtocolConnection<?,?>> exte
     @Override
     protected void startUp() throws Exception {
         DependentService.addOnStart(injector, this);
-
-        // global barrier - wait for all volumes to be assigned
-        AllVolumesAvailable.call( 
-                injector().getInstance(ControlMaterializerService.class).materializer()).get();
 
         connections.subscribe(this);
         connections.startAsync().awaitRunning();

@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
 import java.net.SocketAddress;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.logging.log4j.LogManager;
@@ -13,12 +14,14 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.CallablePromiseTask;
+import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -63,7 +66,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
                             public ListenableFuture<ClientPeerConnection<?>> apply(
                                     Identifier peer) throws Exception {
                                 ListenableFuture<ServerInetAddressView> lookupFuture = addressLookup.apply(peer);
-                                ConnectionTask connection = new ConnectionTask(lookupFuture);
+                                Connect connection = new Connect(lookupFuture, LoggingPromise.create(logger, SettableFuturePromise.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create()));
                                 try {
                                     return new ConnectTask(peer, connection);
                                 } catch (Exception e) {
@@ -120,58 +123,54 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
     }
 
     @SuppressWarnings("rawtypes")
-    protected class ConnectionTask extends RunnablePromiseTask<ListenableFuture<ServerInetAddressView>, Connection<? super MessagePacket, ? extends MessagePacket, ?>> implements FutureCallback<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
-        
-        protected ListenableFuture<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> future;
+    protected class Connect extends PromiseTask<ListenableFuture<ServerInetAddressView>,Connection<? super MessagePacket, ? extends MessagePacket, ?>> implements Callable<Optional<Connection<? super MessagePacket, ? extends MessagePacket, ?>>>, FutureCallback<Connection<? super MessagePacket, ? extends MessagePacket, ?>>, Runnable {
 
-        public ConnectionTask(
-                ListenableFuture<ServerInetAddressView> task) {
-            this(task, PromiseTask.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>newPromise());
-        }
+        protected final CallablePromiseTask<Connect, Connection<? super MessagePacket, ? extends MessagePacket, ?>> delegate;
+        protected Optional<? extends ListenableFuture<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>>> future;
         
-        public ConnectionTask(
-                ListenableFuture<ServerInetAddressView> task, 
-                Promise<Connection<? super MessagePacket, ? extends MessagePacket, ?>> delegate) {
-            super(task, delegate);
-            this.future = null;
-            
-            task().addListener(this, MoreExecutors.sameThreadExecutor());
+        public Connect(
+                ListenableFuture<ServerInetAddressView> address,
+                Promise<Connection<? super MessagePacket, ? extends MessagePacket, ?>> promise) {
+            super(address, promise);
+            this.delegate = CallablePromiseTask.create(this, this);
+            this.future = Optional.absent();
+            address.addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, SameThreadExecutor.getInstance());
         }
         
         @Override
-        public synchronized boolean cancel(boolean mayInterruptIfRunning) {
-            boolean cancel = super.cancel(mayInterruptIfRunning);
-            if (cancel) {
-                task().cancel(mayInterruptIfRunning);
-                if (future != null) {
-                    future.cancel(mayInterruptIfRunning);
+        public synchronized void run() {
+            if (isDone()) {
+                if (isCancelled()) {
+                    task().cancel(false);
+                    if (future.isPresent()) {
+                        future.get().cancel(false);
+                    }
+                } else {
+                    try {
+                        get();
+                    } catch (Exception e) {
+                        task().cancel(false);
+                        if (future.isPresent()) {
+                            future.get().cancel(false);
+                        }
+                    }
                 }
+            } else {
+                delegate.run();
             }
-            return cancel;
         }
 
-        @Override
-        public synchronized boolean setException(Throwable t) {
-            boolean setException = super.setException(t);
-            if (setException) {
-                task().cancel(true);
-                if (future != null) {
-                    future.cancel(true);
-                }
-            }
-            return setException;
-        }
-        
         @Override
         public synchronized Optional<Connection<? super MessagePacket, ? extends MessagePacket, ?>> call() throws Exception {
             if (task().isDone()) {
                 if (task().isCancelled()) {
                     cancel(true);
                 } else {
-                    if (future == null) {
+                    if (!future.isPresent()) {
                         ServerInetAddressView peer = task().get();
-                        future = connections().connect(peer.get());
-                        Futures.addCallback(future, this);
+                        future = Optional.of(connections().connect(peer.get()));
+                        Futures.addCallback(future.get(), this, SameThreadExecutor.getInstance());
                     }
                 }
             }
@@ -194,22 +193,22 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
     @SuppressWarnings("rawtypes")
     protected class ConnectTask extends PromiseTask<Identifier, ClientPeerConnection<?>> implements FutureCallback<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
     
-        protected final ConnectionTask connection;
+        protected final Connect connection;
         
         public ConnectTask(
                 Identifier task,
-                ConnectionTask connection) {
+                Connect connection) {
             this(task, connection, PromiseTask.<ClientPeerConnection<?>>newPromise());
         }
 
         public ConnectTask(
                 Identifier task,
-                ConnectionTask connection,
-                Promise<ClientPeerConnection<?>> delegate) {
-            super(task, delegate);
+                Connect connection,
+                Promise<ClientPeerConnection<?>> promise) {
+            super(task, promise);
             this.connection = connection;
             
-            Futures.addCallback(connection, this);
+            Futures.addCallback(connection, this, SameThreadExecutor.getInstance());
         }
         
         @Override

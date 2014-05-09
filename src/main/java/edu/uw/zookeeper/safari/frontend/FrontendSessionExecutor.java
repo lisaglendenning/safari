@@ -4,11 +4,13 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+
 import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
 
@@ -30,7 +32,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Provider;
 
 import edu.uw.zookeeper.protocol.Session;
-import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
 import edu.uw.zookeeper.common.Actors.ExecutedPeekingQueuedActor;
 import edu.uw.zookeeper.common.LoggingPromise;
@@ -39,7 +40,7 @@ import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.ZNodePath;
@@ -47,6 +48,7 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.NotificationListener;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.ProtocolMessageAutomaton;
 import edu.uw.zookeeper.protocol.SessionListener;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
@@ -69,7 +71,7 @@ import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.server.AbstractSessionExecutor;
 
-public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServerResponseMessage<IWatcherEvent>> implements Processors.UncheckedProcessor<Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>, Message.ServerResponse<?>> {
+public class FrontendSessionExecutor extends AbstractSessionExecutor implements Processors.UncheckedProcessor<Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>, Message.ServerResponse<?>> {
     
     public static Factory factory(
             boolean renew,
@@ -145,9 +147,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             ScheduledExecutorService scheduler,
             Executor executor) {
-        Automaton<ProtocolState,ProtocolState> state = Automatons.createSynchronized(
-                Automatons.createSimple(
-                        ProtocolState.CONNECTED));
+        Automatons.SynchronizedEventfulAutomaton<ProtocolState, Object,?> state =
+                Automatons.createSynchronizedEventful(
+                        Automatons.createEventful(
+                                Automatons.createLogging(
+                                        LogManager.getLogger(FrontendSessionExecutor.class),
+                                        ProtocolMessageAutomaton.asAutomaton(
+                                                ProtocolState.CONNECTED))));
         IConcurrentSet<SessionListener> listeners = new StrongConcurrentSet<SessionListener>();
         return new FrontendSessionExecutor(processor, idToVolume, pathToVolume, regions, dispatchers, executor, renew, session, state, listeners, scheduler);
     }
@@ -198,7 +204,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
             Executor executor,
             boolean renew,
             Session session,
-            Automaton<ProtocolState,ProtocolState> state,
+            Automatons.EventfulAutomaton<ProtocolState, Object> state,
             IConcurrentSet<SessionListener> listeners,
             ScheduledExecutorService scheduler) {
         super(session, state, listeners, scheduler);
@@ -219,9 +225,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
     }
     
     @Override
-    public ListenableFuture<Message.ServerResponse<?>> submit(
+    protected ListenableFuture<Message.ServerResponse<?>> doSubmit(
             Message.ClientRequest<?> request) {
-        timer.send(request);
         final FrontendRequestTask task;
         switch (request.record().opcode()) {
         case PING:
@@ -260,15 +265,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
     @Override
     public Message.ServerResponse<?> apply(Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response> input) {
         return processor.apply(Pair.create(session.id(), input));
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public void onSuccess(ShardedServerResponseMessage<IWatcherEvent> result) {
-        handleNotification((Message.ServerResponse<IWatcherEvent>) apply(
-                Pair.create( 
-                        Optional.<Operation.ProtocolRequest<?>>absent(),
-                        (Records.Response) result.record()))); 
     }
     
     protected class FrontendRequestTask extends PromiseTask<Pair<? extends Message.ClientRequest<?>, ? extends Promise<Records.Response>>, Message.ServerResponse<?>> implements Runnable {
@@ -401,6 +397,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
             }
         }
         
+        @SuppressWarnings("unchecked")
         @Override
         public void handleNotification(
                 ShardedServerResponseMessage<IWatcherEvent> notification) {
@@ -409,7 +406,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
             Set<String> watches = (type == Watcher.Event.EventType.NodeChildrenChanged) ? childWatches : dataWatches;
             if (watches.remove(event.getPath())) {
                 // FIXME should we be filtering here or just pass everything on?
-                onSuccess(notification);
+                FrontendSessionExecutor.this.handleNotification((Message.ServerResponse<IWatcherEvent>) apply(
+                        Pair.create( 
+                                Optional.<Operation.ProtocolRequest<?>>absent(),
+                                (Records.Response) notification.record()))); 
             }
         }
     }
@@ -623,8 +623,9 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
             return false;
         }
         
-        protected class BroadcastResponseTask extends RunnablePromiseTask<Pair<? extends ShardedClientRequestMessage<?>, FrontendRequestTask>, Records.Response> {
+        protected class BroadcastResponseTask extends PromiseTask<Pair<? extends ShardedClientRequestMessage<?>, FrontendRequestTask>, Records.Response> implements Runnable, Callable<Optional<Records.Response>> {
 
+            protected final CallablePromiseTask<BroadcastResponseTask, Records.Response> delegate;
             protected final Map<Identifier, ListenableFuture<?>> responses;
             
             public BroadcastResponseTask(FrontendRequestTask task) {
@@ -633,12 +634,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
                         task.task().first()), task),
                     task.task().second());
                 this.responses = Maps.newHashMapWithExpectedSize(backends.asCache().size());
+                this.delegate = CallablePromiseTask.create(this, this);
             }
 
             // FIXME try again on failure
             @Override
             public synchronized Optional<Records.Response> call() throws Exception {
-                Sets.SetView<Identifier> difference = Sets.difference(backends.asCache().keySet(), responses.keySet());
+                Set<Identifier> difference = Sets.difference(backends.asCache().keySet(), responses.keySet()).immutableCopy();
                 if (difference.isEmpty()) {
                     Map<Identifier, ListenableFuture<?>> updates = Maps.newHashMapWithExpectedSize(responses.size());
                     for (Map.Entry<Identifier, ListenableFuture<?>> entry: responses.entrySet()) {
@@ -679,6 +681,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor<ShardedServ
                     }
                 }
                 return Optional.absent();
+            }
+
+            @Override
+            public synchronized void run() {
+                delegate.run();
             }
         }
         

@@ -203,7 +203,6 @@ public class BackendConfiguration {
                     
                     Set<Map.Entry<Object, Object>> serverProperties = Sets.filter(properties.entrySet(),
                             new Predicate<Map.Entry<Object, Object>>(){
-
                                 @Override
                                 public boolean apply(Map.Entry<Object, Object> input) {
                                     // TODO Auto-generated method stub

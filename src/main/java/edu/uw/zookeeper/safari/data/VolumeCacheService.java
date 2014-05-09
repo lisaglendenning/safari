@@ -178,6 +178,11 @@ public final class VolumeCacheService extends AbstractIdleService {
             lock.writeLock().unlock();
         }
     }
+    
+    @Override
+    protected Executor executor() {
+        return SameThreadExecutor.getInstance();
+    }
 
     @Override
     protected void startUp() {

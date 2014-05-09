@@ -6,11 +6,11 @@ import java.util.concurrent.Executor;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterators;
 import com.google.common.util.concurrent.AbstractIdleService;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Injector;
 
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 
 public abstract class DependentService extends AbstractIdleService {
 
@@ -82,7 +82,7 @@ public abstract class DependentService extends AbstractIdleService {
 
     @Override
     protected Executor executor() {
-        return MoreExecutors.sameThreadExecutor();
+        return SameThreadExecutor.getInstance();
     }
     
     @Override

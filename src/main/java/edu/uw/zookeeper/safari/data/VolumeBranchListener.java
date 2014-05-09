@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.data;
 
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 
 import javax.annotation.Nullable;
@@ -15,7 +16,9 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.CallablePromiseTask;
+import edu.uw.zookeeper.common.PromiseTask;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.EmptyZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
@@ -23,7 +26,7 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.common.CachedFunction;
 
-public class VolumeBranchListener extends RunnablePromiseTask<Pair<Identifier,UnsignedLong>,VersionedVolume> implements Runnable {
+public class VolumeBranchListener extends PromiseTask<Pair<Identifier,UnsignedLong>,VersionedVolume> implements Runnable, Callable<Optional<VersionedVolume>> {
     
     public static VolumeBranchListener fromCache(
             final Pair<Identifier,UnsignedLong> version, 
@@ -41,9 +44,12 @@ public class VolumeBranchListener extends RunnablePromiseTask<Pair<Identifier,Un
         }
         ImmutableMap<Identifier, ListenableFuture<ZNodePath>> paths = builder.build();
         
-        return new VolumeBranchListener(version, state, paths, SettableFuturePromise.<VersionedVolume>create());
+        VolumeBranchListener instance = new VolumeBranchListener(version, state, paths, SettableFuturePromise.<VersionedVolume>create());
+        instance.run();
+        return instance;
     }
     
+    private final CallablePromiseTask<VolumeBranchListener, VersionedVolume> delegate;
     private final VolumeState state;
     private final ImmutableMap<Identifier, ListenableFuture<ZNodePath>> paths;
     private final ListenableFuture<?> future;
@@ -57,6 +63,8 @@ public class VolumeBranchListener extends RunnablePromiseTask<Pair<Identifier,Un
         this.state = state;
         this.paths = paths;
         this.future = Futures.successfulAsList(paths.values());
+        this.delegate = CallablePromiseTask.create(this, this);
+        future.addListener(this, SameThreadExecutor.getInstance());
     }
     
     public @Nullable VolumeState getVolumeState() {
@@ -92,5 +100,10 @@ public class VolumeBranchListener extends RunnablePromiseTask<Pair<Identifier,Un
         } catch (Exception e) {
             throw e;
         }
+    }
+
+    @Override
+    public void run() {
+        delegate.run();
     }
 }

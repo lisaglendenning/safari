@@ -3,6 +3,7 @@ package edu.uw.zookeeper.safari.frontend;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
 
@@ -45,7 +46,7 @@ import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.data.CacheNodeCreatedListener;
 import edu.uw.zookeeper.safari.data.FixedQuery;
-import edu.uw.zookeeper.safari.data.FixedQueryWatcher;
+import edu.uw.zookeeper.safari.data.RunnableWatcher;
 import edu.uw.zookeeper.safari.peer.RegionConfiguration;
 import edu.uw.zookeeper.safari.peer.PeerConfiguration;
 import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
@@ -143,7 +144,7 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
         return CachedFunction.create(cached, lookup, LogManager.getLogger(RegionsConnectionsService.class));
     }
 
-    public static FixedQueryWatcher<?> newRegionDirectoryWatcher(
+    public static RunnableWatcher<?> newRegionDirectoryWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -154,7 +155,12 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
         final FixedQuery<?> query = FixedQuery.forRequests(client, 
                 Operations.Requests.sync().setPath(matcher.getPath()).build(),
                 Operations.Requests.getChildren().setPath(matcher.getPath()).setWatch(true).build());
-        return FixedQueryWatcher.newInstance(service, watch, matcher, query);
+        return RunnableWatcher.newInstance(service, watch, matcher, new Runnable() {
+            @Override
+            public void run() {
+                query.call();
+            }
+        });
     }
     
     private final Identifier region;
@@ -192,6 +198,11 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
             }
         }
         return connection;
+    }
+    
+    @Override
+    protected Executor executor() {
+        return SameThreadExecutor.getInstance();
     }
 
     @Override

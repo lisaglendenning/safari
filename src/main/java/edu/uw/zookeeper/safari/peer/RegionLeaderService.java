@@ -16,15 +16,16 @@ import edu.uw.zookeeper.safari.control.ControlZNode;
 
 public class RegionLeaderService extends AbstractIdleService {
 
-    public static RegionLeaderService newInstance(RegionRoleService role, ControlMaterializerService control) {
-        return new RegionLeaderService(role, control);
+    public static RegionLeaderService create(Identifier region, ControlMaterializerService control) {
+        return new RegionLeaderService(region, control);
     }
     
-    protected final RegionRoleService role;
+    protected final Identifier region;
     protected final ControlMaterializerService control;
     
-    protected RegionLeaderService(RegionRoleService role, ControlMaterializerService control) {
-        this.role = role;
+    protected RegionLeaderService(
+            Identifier region, ControlMaterializerService control) {
+        this.region = region;
         this.control = control;
     }
     
@@ -48,7 +49,7 @@ public class RegionLeaderService extends AbstractIdleService {
             }
             for (Map.Entry<ZNodeName, ControlZNode<?>> e: control.materializer().cache().cache().get(ControlSchema.Safari.Volumes.PATH).entrySet()) {
                 Identifier v = Identifier.valueOf(e.getKey().toString());
-                if (regions.ceiling(v).equals(role.getRegion())) {
+                if (regions.ceiling(v).equals(region)) {
                     myVolumes.add(v);
                 }
             }

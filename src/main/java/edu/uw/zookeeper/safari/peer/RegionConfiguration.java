@@ -45,7 +45,7 @@ public class RegionConfiguration {
                     myView, 
                     control.materializer()).get();
             RegionConfiguration instance = new RegionConfiguration(regionId);
-            LogManager.getLogger(getClass()).info("{}", instance);
+            LogManager.getLogger(RegionConfiguration.class).info("{}", instance);
             return instance;
         }
     }

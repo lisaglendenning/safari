@@ -11,6 +11,7 @@ import net.engio.mbassy.common.StrongConcurrentSet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
@@ -204,6 +205,11 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
         }
     }
 
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("frontend", Session.toString(frontend.id())).add("backend", Session.toString(backend.id())).toString();
+    }
+    
     @Override
     protected boolean doSend(RequestTask message) {
         final Identifier id = message.task().getShard().getIdentifier();

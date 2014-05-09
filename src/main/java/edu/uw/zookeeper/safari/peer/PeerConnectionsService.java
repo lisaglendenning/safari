@@ -18,7 +18,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
@@ -31,6 +30,7 @@ import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.common.ParameterizedFactory;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Codec;
@@ -217,7 +217,7 @@ public class PeerConnectionsService extends DependentService {
                 loopbackClient,
                 control,
                 injector);
-        instance.new Advertiser(MoreExecutors.sameThreadExecutor());
+        instance.new Advertiser(SameThreadExecutor.getInstance());
         return instance;
     }
 

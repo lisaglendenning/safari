@@ -19,6 +19,6 @@ public class FromStringRegistryDeserializer extends FromStringDeserializer<Objec
     @Override
     protected Object _deserialize(String value, DeserializationContext ctxt)
             throws IOException, JsonProcessingException {
-        return Serializers.getInstance().toClass(value, getValueClass());
+        return Serializers.getInstance().toClass(value, handledType());
     }
 }

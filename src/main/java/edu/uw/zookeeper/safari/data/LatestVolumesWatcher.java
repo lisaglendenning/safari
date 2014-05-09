@@ -49,7 +49,7 @@ public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
         return instance;
     }
     
-    public static FixedQueryWatcher<?> newVolumeDirectoryWatcher(
+    public static RunnableWatcher<?> newVolumeDirectoryWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -60,7 +60,12 @@ public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
         final FixedQuery<?> query = FixedQuery.forRequests(client, 
                 Operations.Requests.sync().setPath(matcher.getPath()).build(),
                 Operations.Requests.getChildren().setPath(matcher.getPath()).setWatch(true).build());
-        return FixedQueryWatcher.newInstance(service, watch, matcher, query);
+        return RunnableWatcher.newInstance(service, watch, matcher, new Runnable() {
+            @Override
+            public void run() {
+                query.call();
+            }
+        });
     }
     
     public static PathToQueryWatcher<?,?> newVolumeDeletedWatcher(

@@ -1,6 +1,7 @@
 package edu.uw.zookeeper.safari.backend;
 
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -32,7 +33,7 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.TimeValue;
@@ -73,7 +74,7 @@ import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 
-@DependsOn({BackendConnectionsService.class})
+@DependsOn({BackendConnectionsService.class, VersionedVolumeCacheService.class})
 public class BackendRequestService<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends DependentService {
 
     public static Module module() {
@@ -104,7 +105,9 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
 
         @Override
         protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(BackendConnectionsService.module());
+            return ImmutableList.<com.google.inject.Module>of(
+                    VersionedVolumeCacheService.module(),
+                    BackendConnectionsService.module());
         }
     }
     
@@ -157,7 +160,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         super.startUp();
         
         OperationClientExecutor<C> client = OperationClientExecutor.newInstance(
-                ConnectMessage.Request.NewRequest.newInstance(), 
+                ConnectMessage.Request.NewRequest.newInstance(injector.getInstance(BackendConfiguration.class).getTimeOut(), 0L), 
                 connections.get().get(),
                 scheduler);
         this.materializer = Materializer.<BackendZNode<?>,Message.ServerResponse<?>>fromHierarchy(
@@ -290,8 +293,9 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
             }
         }
 
-        protected class SessionOpenTask extends RunnablePromiseTask<MessageSessionOpenRequest,ConnectMessage.Response> implements FutureCallback<ConnectMessage.Response> {
+        protected class SessionOpenTask extends PromiseTask<MessageSessionOpenRequest,ConnectMessage.Response> implements FutureCallback<ConnectMessage.Response>, Runnable, Callable<Optional<ConnectMessage.Response>> {
         
+            private final CallablePromiseTask<SessionOpenTask, ConnectMessage.Response> delegate;
             private Optional<SessionOpenToConnectRequest> request = Optional.absent();
             private Optional<ListenableFuture<C>> connection = Optional.absent();
             private Optional<RegisterSessionTask> session = Optional.absent();
@@ -300,6 +304,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
                     MessageSessionOpenRequest task,
                     Promise<ConnectMessage.Response> promise) {
                 super(task, promise);
+                this.delegate = CallablePromiseTask.create(this, this);
             }
 
             @Override
@@ -310,6 +315,11 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
             @Override
             public void onFailure(Throwable t) {
                 setException(t);
+            }
+            
+            @Override
+            public synchronized void run() {
+                delegate.run();
             }
             
             @Override
@@ -358,18 +368,17 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
                         Promise<ConnectMessage.Response> promise) {
                     super(task, promise);
                     task().addListener(this, SameThreadExecutor.getInstance());
+                    promise.addListener(this, SameThreadExecutor.getInstance());
                 }
                 
                 @Override
                 public synchronized void run() {
                     if (isDone()) {
                         task().task().second().unsubscribe(this);
-                        return;
-                    }
-                    if (task().isDone()) {
+                    } else if (task().isDone()) {
                         if (!create.isPresent()) {
                             try {
-                                final Long value = Long.valueOf(task().get().getSessionId());
+                                final BackendSchema.Safari.Sessions.Session.Data value = BackendSchema.Safari.Sessions.Session.Data.valueOf(task().get().getSessionId(), task().get().getPasswd());
                                 final ZNodePath path = BackendSchema.Safari.Sessions.Session.pathOf(SessionOpenTask.this.task().getIdentifier());
                                 // FIXME: magic constant xid
                                 final Message.ClientRequest<?> request = ProtocolRequestMessage.of(0, materializer.create(path, value).get().build());
@@ -524,7 +533,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         }
     }
 
-    protected class SessionOpenToConnectRequest extends RunnablePromiseTask<MessageSessionOpenRequest, ConnectMessage.Request> {
+    protected class SessionOpenToConnectRequest extends PromiseTask<MessageSessionOpenRequest, ConnectMessage.Request> implements Callable<Optional<ConnectMessage.Request>> {
 
         private final SessionLookup lookup;
         
@@ -554,7 +563,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
             if (message != null) {
                 set(message);
             } else {
-                this.lookup.addListener(this, SameThreadExecutor.getInstance());
+                this.lookup.addListener(CallablePromiseTask.create(this, this), SameThreadExecutor.getInstance());
             }
         }
 
@@ -580,7 +589,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         }
     }
     
-    protected class SessionLookup extends RunnablePromiseTask<Long, BackendSchema.Safari.Sessions.Session.Data> {
+    protected class SessionLookup extends PromiseTask<Long, BackendSchema.Safari.Sessions.Session.Data> implements Callable<Optional<BackendSchema.Safari.Sessions.Session.Data>> {
         
         private final ListenableFuture<Message.ServerResponse<?>> lookup;
         
@@ -589,7 +598,7 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
             super(session, promise);
             // TODO check cache first
             this.lookup = materializer.submit(Operations.Requests.getData().setPath(path()).build());
-            this.lookup.addListener(this, SameThreadExecutor.getInstance());
+            this.lookup.addListener(CallablePromiseTask.create(this, this), SameThreadExecutor.getInstance());
         }
         
         public ZNodePath path() {
@@ -615,14 +624,14 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
         }
     }
     
-    protected static class RequestListener extends RunnablePromiseTask<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>> {
+    protected static class RequestListener extends PromiseTask<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>> implements Callable<Optional<ShardedResponseMessage<?>>> {
     
         public static RequestListener create(
                 ShardedClientRequestMessage<?> request,
                 ShardedClientExecutor<?> client) {
             ListenableFuture<ShardedServerResponseMessage<?>> response = client.submit(request);
             RequestListener listener = new RequestListener(request, response, SettableFuturePromise.<ShardedResponseMessage<?>>create());
-            response.addListener(listener, SameThreadExecutor.getInstance());
+            response.addListener(CallablePromiseTask.create(listener, listener), SameThreadExecutor.getInstance());
             return listener;
         }
         
@@ -638,23 +647,23 @@ public class BackendRequestService<C extends ProtocolConnection<? super Message.
 
         @Override
         public Optional<ShardedResponseMessage<?>> call() throws Exception {
-            if (!response.isDone()) {
-                return Optional.absent();
-            }
-            ShardedResponseMessage<?> result;
-            try {
-                result = get();
-            } catch (ExecutionException e) {
-                if (e.getCause() instanceof SafariException) {
-                    result = ShardedErrorResponseMessage.valueOf(task().getShard(), task().xid(), (SafariException) e.getCause());
-                } else {
-                    setException(e.getCause());
-                    return Optional.absent();
+            if (response.isDone()) {
+                ShardedResponseMessage<?> result;
+                try {
+                    result = response.get();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof SafariException) {
+                        result = ShardedErrorResponseMessage.valueOf(task().getShard(), task().xid(), (SafariException) e.getCause());
+                    } else {
+                        setException(e.getCause());
+                        return Optional.absent();
+                    }
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
                 }
-            } catch (InterruptedException e) {
-                throw new AssertionError(e);
+                return Optional.<ShardedResponseMessage<?>>of(result);
             }
-            return Optional.<ShardedResponseMessage<?>>of(result);
+            return Optional.absent();
         }
     }
 }

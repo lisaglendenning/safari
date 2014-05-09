@@ -5,18 +5,17 @@ import com.google.common.util.concurrent.Service;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.WatchMatcher;
-import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 
 
-public class FixedQueryWatcher<O extends Operation.ProtocolResponse<?>> extends AbstractWatchListener implements Runnable {
+public class RunnableWatcher<T extends Runnable> extends AbstractWatchListener implements Runnable {
 
-    public static <O extends Operation.ProtocolResponse<?>> FixedQueryWatcher<O> newInstance(
+    public static <T extends Runnable> RunnableWatcher<T> newInstance(
             Service service,
             WatchListeners watch,
             WatchMatcher matcher,
-            FixedQuery<O> query) {
-        FixedQueryWatcher<O> instance = new FixedQueryWatcher<O>(service, watch, matcher, query);
+            T runnable) {
+        RunnableWatcher<T> instance = new RunnableWatcher<T>(service, watch, matcher, runnable);
         service.addListener(instance, SameThreadExecutor.getInstance());
         if (service.isRunning()) {
             instance.starting();
@@ -25,24 +24,24 @@ public class FixedQueryWatcher<O extends Operation.ProtocolResponse<?>> extends 
         return instance;
     }
     
-    protected final FixedQuery<O> query;
+    protected final T runnable;
 
-    public FixedQueryWatcher(
+    public RunnableWatcher(
             Service service,
             WatchListeners watch,
             WatchMatcher matcher,
-            FixedQuery<O> query) {
+            T runnable) {
         super(service, watch, matcher);
-        this.query = query;
+        this.runnable = runnable;
     }
     
-    public FixedQuery<O> query() {
-        return query();
+    public T runnable() {
+        return runnable();
     }
     
     @Override
     public void run() {
-        query.call();
+        runnable.run();
     }
     
     @Override

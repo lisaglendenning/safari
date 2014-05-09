@@ -109,10 +109,6 @@ public class SingleClientTest {
         ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
         monitor.startAsync().awaitRunning();
 
-        // create root
-        client.getClient().getConnectionClientExecutor().submit(
-                Operations.Requests.create().build());
-        
         int iterations = 32;
         int logInterval = 8;
         Generator<? extends Records.Request> requests = Generators.constant(Operations.Requests.exists().setPath(ZNodePath.root()).build());
@@ -123,6 +119,7 @@ public class SingleClientTest {
              Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> operation = operations.next();
              assertFalse(operation.second().get().record() instanceof Operation.Error);
         }
+        
         monitor.stopAsync().awaitTerminated();
     }
 }

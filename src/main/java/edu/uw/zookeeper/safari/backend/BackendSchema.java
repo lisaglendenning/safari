@@ -235,8 +235,8 @@ public class BackendSchema extends BackendZNode<Void> {
             @ZNode(createMode=CreateMode.EPHEMERAL, dataType=Session.Data.class)
             public static class Session extends BackendZNode.SessionZNode<Session.Data> {
 
-                public static AbsoluteZNodePath pathOf(Long session) {
-                    return Sessions.PATH.join(ZNodeLabel.fromString(session.toString()));
+                public static AbsoluteZNodePath pathOf(long session) {
+                    return Sessions.PATH.join(ZNodeLabel.fromString(SessionIdHex.toString(session)));
                 }
     
                 public Session(ValueNode<ZNodeSchema> schema,
@@ -245,16 +245,20 @@ public class BackendSchema extends BackendZNode<Void> {
                     super(schema, codec, parent);
                 }
                 
-                public static class Data extends AbstractPair<Long, byte[]> {
+                public static class Data extends AbstractPair<BackendZNode.SessionZNode.SessionIdHex, byte[]> {
 
+                    public static Data valueOf(long sessionId, byte[] password) {
+                        return new Data(BackendZNode.SessionZNode.SessionIdHex.valueOf(sessionId), password);
+                    }
+                    
                     @JsonCreator
                     public Data(
-                            @JsonProperty("sessionId") Long sessionId, 
+                            @JsonProperty("sessionId") SessionIdHex sessionId, 
                             @JsonProperty("password") byte[] password) {
                         super(sessionId, password);
                     }
                     
-                    public Long getSessionId() {
+                    public SessionIdHex getSessionId() {
                         return first;
                     }
                     

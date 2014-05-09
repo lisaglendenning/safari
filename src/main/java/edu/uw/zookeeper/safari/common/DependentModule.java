@@ -18,5 +18,5 @@ public abstract class DependentModule extends AbstractModule {
         }
     }
 
-    protected abstract List<Module> getDependentModules();
+    protected abstract List<? extends Module> getDependentModules();
 }

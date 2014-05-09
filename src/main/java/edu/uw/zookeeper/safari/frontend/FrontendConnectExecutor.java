@@ -6,13 +6,12 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
 
-import com.google.common.base.Optional;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
+import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
@@ -80,7 +79,7 @@ public class FrontendConnectExecutor implements TaskExecutor<ConnectMessage.Requ
         return result;
     }
 
-    protected class Callback extends RunnablePromiseTask<ConnectMessage.Response, ConnectMessage.Response> implements FutureCallback<Set<ClientPeerConnectionExecutor>> {
+    protected class Callback extends PromiseTask<ConnectMessage.Response, ConnectMessage.Response> implements FutureCallback<Set<ClientPeerConnectionExecutor>>, Runnable {
 
         public Callback(
                 ConnectMessage.Response task, 
@@ -89,7 +88,7 @@ public class FrontendConnectExecutor implements TaskExecutor<ConnectMessage.Requ
         }
 
         @Override
-        public Optional<ConnectMessage.Response> call() throws Exception {
+        public void run() {
             FrontendSessionExecutor executor = executors.get(Long.valueOf(task.getSessionId()));
             if (executor != null) {
                 Futures.addCallback(executor.backends().connect(), 
@@ -98,7 +97,6 @@ public class FrontendConnectExecutor implements TaskExecutor<ConnectMessage.Requ
                 // FIXME
                 throw new UnsupportedOperationException();
             }
-            return Optional.absent();
         }
 
         @Override

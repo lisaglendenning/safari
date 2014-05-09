@@ -24,6 +24,7 @@ import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.safari.frontend.FrontendServerService;
 import edu.uw.zookeeper.safari.net.IntraVmModule;
 import edu.uw.zookeeper.safari.net.NettyModule;
+import edu.uw.zookeeper.safari.peer.RegionConfiguration;
 import edu.uw.zookeeper.safari.peer.RegionMemberService;
 import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
 
@@ -58,6 +59,7 @@ public class MainApplicationModule extends DependentModule {
                 NettyModule.create(), 
                 ControlMaterializerService.module(),
                 VolumeCacheService.module(),
+                RegionConfiguration.module(),
                 BackendRequestService.module(),
                 PeerConnectionsService.module(),
                 RegionMemberService.module(),

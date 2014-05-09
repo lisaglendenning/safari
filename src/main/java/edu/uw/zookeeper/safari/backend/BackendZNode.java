@@ -3,12 +3,13 @@ package edu.uw.zookeeper.safari.backend;
 import java.util.Map;
 
 import com.google.common.base.Converter;
-import com.google.common.primitives.UnsignedLong;
 
+import edu.uw.zookeeper.common.Hex;
 import edu.uw.zookeeper.data.Name;
 import edu.uw.zookeeper.data.NameTrie;
 import edu.uw.zookeeper.data.NameType;
 import edu.uw.zookeeper.data.Serializers;
+import edu.uw.zookeeper.data.Serializes;
 import edu.uw.zookeeper.data.ValueNode;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodeSchema;
@@ -107,20 +108,52 @@ public abstract class BackendZNode<V> extends SafariZNode<BackendZNode<?>,V> {
         }
     }
 
-    public static abstract class SessionZNode<V> extends BackendNamedZNode<V,UnsignedLong> {
+    public static abstract class SessionZNode<V> extends BackendNamedZNode<V,SessionZNode.SessionIdHex> {
+        
+        public static final class SessionIdHex {
+
+            @Serializes(from=String.class, to=SessionIdHex.class)
+            public static SessionIdHex valueOf(String string) {
+                return valueOf(Hex.parseLong(string));
+            }
+            
+            public static SessionIdHex valueOf(long value) {
+                return new SessionIdHex(value);
+            }
+            
+            public static String toString(long value) {
+                return Hex.toPaddedHexString(value);
+            }
+
+            private final long value;
+            
+            protected SessionIdHex(long value) {
+                this.value = value;
+            }
+            
+            public long longValue() {
+                return value;
+            }
+            
+            @Serializes(from=SessionIdHex.class, to=String.class)
+            @Override
+            public String toString() {
+                return toString(longValue());
+            }
+        }
 
         @Name(type=NameType.PATTERN)
-        public static final String LABEL = "[0-9]+";
+        public static final String LABEL = "[0-9a-f]+";
         
         protected SessionZNode(
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,
                 NameTrie.Pointer<? extends BackendZNode<?>> parent) {
-            this(UnsignedLong.valueOf(parent.name().toString()), schema, codec, parent);
+            this(SessionIdHex.valueOf(parent.name().toString()), schema, codec, parent);
         }
         
         protected SessionZNode(
-                UnsignedLong name,
+                SessionIdHex name,
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,
                 NameTrie.Pointer<? extends BackendZNode<?>> parent) {
@@ -128,7 +161,7 @@ public abstract class BackendZNode<V> extends SafariZNode<BackendZNode<?>,V> {
         }
 
         protected SessionZNode(
-                UnsignedLong name,
+                SessionIdHex name,
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,
                 Records.ZNodeStatGetter stat,

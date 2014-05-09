@@ -7,6 +7,7 @@ import java.util.NavigableMap;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -91,20 +92,15 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 ControlMaterializerService control,
                 ServiceMonitor monitor,
                 ScheduledExecutorService scheduler) {
-            return monitor.addOnStart(
+            VersionedVolumeCacheService instance = monitor.addOnStart(
                     create(new Predicate<Identifier>() {
                         @Override
                         public boolean apply(Identifier input) {
                             return region.getRegion().equals(input);
                         }
                     }, volumes.asLookup(), control, scheduler));
-        }
-
-        @Provides @Singleton
-        public VersionVolumesWatcher getLatestVolumesWatcher(
-                VersionedVolumeCacheService service,
-                ControlMaterializerService control) {
-            return VersionVolumesWatcher.newInstance(service, control);
+            VersionVolumesWatcher.newInstance(instance, control);
+            return instance;
         }
     }
     
@@ -266,6 +262,11 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
             control.cacheEvents().unsubscribe(listener);
         }
         clear();
+    }
+
+    @Override
+    protected Executor executor() {
+        return SameThreadExecutor.getInstance();
     }
     
     protected CachedVolume getCachedVolume(Identifier id) {

@@ -1,14 +1,19 @@
 package edu.uw.zookeeper.safari.peer;
 
+import java.util.List;
+import java.util.concurrent.Callable;
+
 import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.RunnablePromiseTask;
-import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.CallablePromiseTask;
+import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.ISetDataRequest;
@@ -17,19 +22,23 @@ import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 
-public final class LeaderProposal extends RunnablePromiseTask<Pair<AbsoluteZNodePath,Identifier>, LeaderEpoch> {
+public final class LeaderProposal extends PromiseTask<Pair<AbsoluteZNodePath,Identifier>, LeaderEpoch> implements Runnable, Callable<Optional<LeaderEpoch>> {
 
-    public static LeaderProposal newInstance(
+    public static LeaderProposal create(
             Identifier region, 
             Identifier peer, 
             Optional<Integer> epoch,
-            Materializer<ControlZNode<?>,?> materializer) {
-        return new LeaderProposal(region, peer, epoch, materializer, SettableFuturePromise.<LeaderEpoch>create());
+            Materializer<ControlZNode<?>,?> materializer,
+            Promise<LeaderEpoch> promise) {
+        LeaderProposal instance = new LeaderProposal(region, peer, epoch, materializer, promise);
+        instance.run();
+        return instance;
     }
 
+    private final CallablePromiseTask<LeaderProposal,LeaderEpoch> runnable;
     private final Optional<Integer> epoch;
     private final Materializer<ControlZNode<?>,?> materializer;
-    private ListenableFuture<? extends Operation.ProtocolResponse<?>> request;
+    private Optional<ListenableFuture<List<Operation.ProtocolResponse<?>>>> request;
     
     public LeaderProposal(
             Identifier region, 
@@ -40,45 +49,48 @@ public final class LeaderProposal extends RunnablePromiseTask<Pair<AbsoluteZNode
         super(Pair.create(ControlSchema.Safari.Regions.Region.Leader.pathOf(region), peer), delegate);
         this.materializer = materializer;
         this.epoch = epoch;
-        this.request = null;
+        this.request = Optional.absent();
+        this.runnable = CallablePromiseTask.create(this, this);
         
         addListener(this, SameThreadExecutor.getInstance());
     }
     
     @Override
     public synchronized void run() {
-        super.run();
-        
         if (isDone()) {
             if (isCancelled()) {
-                if (request != null) {
-                    request.cancel(false);
+                if (request.isPresent()) {
+                    request.get().cancel(false);
                 }
             }
+        } else {
+            runnable.run();
         }
     }
     
     @Override
     public Optional<LeaderEpoch> call() throws Exception {
-        Optional<LeaderEpoch> result = Optional.absent();
-        if (request == null) {
+        if (!request.isPresent()) {
             // create2 isn't in the stable release
             // so we'll have to issue multiple requests to get the version anyway
+            ImmutableList.Builder<ListenableFuture<? extends Operation.ProtocolResponse<?>>> futures = ImmutableList.builder();
             if (epoch.isPresent()) {
                 Materializer<ControlZNode<?>,?>.Operator<Operations.Requests.SerializedData<ISetDataRequest, Operations.Requests.SetData, Identifier>> request = materializer.<Identifier>setData(task().first(), task().second());
                 request.get().delegate().setVersion(epoch.get());
-                request.call();
+                futures.add(request.call());
             } else {
-                materializer.create(task().first(), task().second()).call();
+                futures.add(materializer.create(task().first(), task().second()).call());
             }
-            materializer.sync(task().first());
-            request = materializer.getData(task().first()).call();
-            request.addListener(this, SameThreadExecutor.getInstance());
-        } else if (request.isDone()) {
+            futures.add(materializer.sync(task().first()).call()).add(materializer.getData(task().first()).call());
+            request = Optional.of(Futures.allAsList(futures.build()));
+            request.get().addListener(this, SameThreadExecutor.getInstance());
+        } else if (request.get().isDone()) {
+            Optional<LeaderEpoch> result = Optional.absent();
             try {
-                Operations.unlessError(
-                        request.get().record(),
-                        String.valueOf(request.get()));
+                for (Operation.ProtocolResponse<?> response: request.get().get()) {
+                    Operations.unlessError(response.record(),
+                            String.valueOf(request.get()));
+                }
                 materializer.cache().lock().readLock().lock();
                 try {
                     ControlZNode<?> node = materializer.cache().cache().get(task().first());
@@ -91,10 +103,12 @@ public final class LeaderProposal extends RunnablePromiseTask<Pair<AbsoluteZNode
             
             // shouldn't get here, but let's just try again
             if (! result.isPresent()) {
-                request = null;
-                result = call();
+                request = Optional.absent();
+                return call();
+            } else {
+                return result;
             }
         }
-        return result;
+        return Optional.absent();
     }
 }

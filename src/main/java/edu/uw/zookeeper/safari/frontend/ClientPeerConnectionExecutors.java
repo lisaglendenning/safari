@@ -17,13 +17,13 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.common.collect.Sets.SetView;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.ForwardingPromise;
+import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
@@ -121,7 +121,9 @@ public class ClientPeerConnectionExecutors {
     }
     
     public ListenableFuture<Set<ClientPeerConnectionExecutor>> connect() {
-        return new Connect(SettableFuturePromise.<Set<ClientPeerConnectionExecutor>>create());
+        Connect task = new Connect();
+        task.run();
+        return task;
     }
     
     public void stop() {
@@ -132,7 +134,7 @@ public class ClientPeerConnectionExecutors {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("frontend", frontend).toString();
+        return Objects.toStringHelper(this).add("frontend", Session.toString(frontend.first().id())).toString();
     }
     
     protected class Callback implements Function<ClientPeerConnectionExecutor, ClientPeerConnectionExecutor> {
@@ -141,7 +143,7 @@ public class ClientPeerConnectionExecutors {
         
         @Override
         public ClientPeerConnectionExecutor apply(ClientPeerConnectionExecutor input) {
-            logger.trace("{} ({})", input, this);
+            logger.trace("Connected {} ({})", input, this);
             Identifier region = input.dispatcher().identifier();
             ClientPeerConnectionExecutor prev = asCache().put(region, input);
             if (prev != null) {
@@ -152,6 +154,11 @@ public class ClientPeerConnectionExecutors {
             input.subscribe(notifications);
             return input;
         }
+        
+        @Override
+        public String toString() {
+            return ClientPeerConnectionExecutors.this.toString();
+        }
     }
     
     protected class Connect extends ForwardingPromise<Set<ClientPeerConnectionExecutor>> implements Runnable {
@@ -159,15 +166,14 @@ public class ClientPeerConnectionExecutors {
         protected final Map<Identifier, ListenableFuture<ClientPeerConnectionExecutor>> futures;
         protected final Promise<Set<ClientPeerConnectionExecutor>> promise;
         
-        public Connect(
-                Promise<Set<ClientPeerConnectionExecutor>> promise) {
-            this.promise = promise;
+        public Connect() {
+            this.promise = LoggingPromise.create(logger, SettableFuturePromise.<Set<ClientPeerConnectionExecutor>>create());
             this.futures = Maps.newHashMap();
         }
         
         @Override
         public synchronized void run() {
-            SetView<Identifier> difference = Sets.difference(regions.get(), futures.keySet());
+            Set<Identifier> difference = Sets.difference(regions.get(), futures.keySet()).immutableCopy();
             if (difference.isEmpty()) {
                 ImmutableSet.Builder<ClientPeerConnectionExecutor> results = ImmutableSet.builder();
                 Iterator<Map.Entry<Identifier, ListenableFuture<ClientPeerConnectionExecutor>>> entries = futures.entrySet().iterator();
