@@ -20,7 +20,7 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 
@@ -29,14 +29,14 @@ import edu.uw.zookeeper.safari.control.ControlZNode;
  */
 public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
 
-    public static LatestVolumesWatcher newInstance(
+    public static LatestVolumesWatcher create(
             Service service,
-            ControlMaterializerService control) {
-        newVolumeLatestListener(control, control.materializer().cache(), service, control.cacheEvents());
-        newVolumeDeletedWatcher(service, control.notifications(), control);
+            ControlClientService control) {
+        newVolumeLatestListener(control.materializer(), control.materializer().cache(), service, control.cacheEvents());
+        newVolumeDeletedWatcher(service, control.notifications(), control.materializer());
         LatestVolumesWatcher instance = new LatestVolumesWatcher(
-                newVolumeLatestWatcher(service, control.notifications(), control),
-                control,
+                newVolumeLatestWatcher(service, control.notifications(), control.materializer()),
+                control.materializer(),
                 service,
                 control.cacheEvents(), 
                 control.materializer().cache());
@@ -45,7 +45,7 @@ public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
             instance.starting();
             instance.running();
         }
-        newVolumeDirectoryWatcher(service, control.notifications(), control);
+        newVolumeDirectoryWatcher(service, control.notifications(), control.materializer());
         return instance;
     }
     

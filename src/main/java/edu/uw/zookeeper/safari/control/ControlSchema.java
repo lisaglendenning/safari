@@ -1,22 +1,14 @@
 package edu.uw.zookeeper.safari.control;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-
-import java.net.UnknownHostException;
 import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
 import java.util.NavigableMap;
 import java.util.NavigableSet;
 import java.util.SortedMap;
 
-import javax.annotation.Nullable;
-
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
+import com.google.common.base.Optional;
 import com.google.common.collect.Maps;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.primitives.UnsignedLongs;
@@ -26,9 +18,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.data.Materializer;
-import edu.uw.zookeeper.common.Reference;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.CreateMode;
@@ -50,15 +40,10 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.data.ZNodeSchema;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.protocol.proto.Records.ZNodeStatGetter;
 import edu.uw.zookeeper.safari.Hash;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.backend.BackendView;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.control.ControlZNode.ControlNamedZNode;
-import edu.uw.zookeeper.safari.data.SafariZNode;
-import edu.uw.zookeeper.safari.data.VolumeDescriptor;
 import edu.uw.zookeeper.safari.data.VolumeState;
+import edu.uw.zookeeper.safari.region.LeaderEpoch;
 
 @ZNode(acl=Acls.Definition.ANYONE_ALL)
 public class ControlSchema extends ControlZNode<Void> {
@@ -94,7 +79,7 @@ public class ControlSchema extends ControlZNode<Void> {
                 new Function<ServerInetAddressView, Hash.Hashed>() {
                     @Override
                     public Hash.Hashed apply(ServerInetAddressView value) {
-                        return Hash.default32().apply(ServerInetAddressView.toString(value));
+                        return Hash.default32().apply(value.toString());
                     }
                 };
             
@@ -224,17 +209,17 @@ public class ControlSchema extends ControlZNode<Void> {
                     }
                 }
                 
-                @ZNode(dataType=BackendView.class)
-                public static class Backend extends ControlZNode<BackendView> {
+                @ZNode(dataType=ServerInetAddressView.class)
+                public static class StorageAddress extends ControlZNode<ServerInetAddressView> {
 
                     @Name
-                    public static ZNodeLabel LABEL = ZNodeLabel.fromString("backend");
+                    public static ZNodeLabel LABEL = ZNodeLabel.fromString("storageAddress");
 
                     public static AbsoluteZNodePath pathOf(Identifier peer) {
                         return Peer.pathOf(peer).join(LABEL);
                     }
         
-                    public Backend(ValueNode<ZNodeSchema> schema,
+                    public StorageAddress(ValueNode<ZNodeSchema> schema,
                             ByteCodec<Object> codec,
                             Pointer<ControlZNode<?>> parent) {
                         super(schema, codec, parent);
@@ -244,7 +229,7 @@ public class ControlSchema extends ControlZNode<Void> {
         }
     
         @ZNode
-        public static class Regions extends ControlEntityDirectoryZNode<EnsembleView<ServerInetAddressView>, Regions.Region.Backend, Regions.Region> {
+        public static class Regions extends ControlEntityDirectoryZNode<EnsembleView<ServerInetAddressView>, Regions.Region.Ensemble, Regions.Region> {
 
             @Name
             public static ZNodeLabel LABEL = ZNodeLabel.fromString("regions");
@@ -274,8 +259,8 @@ public class ControlSchema extends ControlZNode<Void> {
             }
 
             @Override
-            public Class<Region.Backend> hashedType() {
-                return Region.Backend.class;
+            public Class<Region.Ensemble> hashedType() {
+                return Region.Ensemble.class;
             }
             
             @Override
@@ -329,8 +314,8 @@ public class ControlSchema extends ControlZNode<Void> {
                     return (Members) get(Members.LABEL);
                 }
                 
-                public Backend getBackend() {
-                    return (Backend) get(Backend.LABEL);
+                public Ensemble getBackend() {
+                    return (Ensemble) get(Ensemble.LABEL);
                 }
                 
 /*
@@ -349,16 +334,16 @@ public class ControlSchema extends ControlZNode<Void> {
 */
 
                 @ZNode(dataType=EnsembleView.class)
-                public static class Backend extends ControlZNode<EnsembleView<ServerInetAddressView>> {
+                public static class Ensemble extends ControlZNode<EnsembleView<ServerInetAddressView>> {
     
                     @Name
-                    public static ZNodeLabel LABEL = ZNodeLabel.fromString("backend");
+                    public static ZNodeLabel LABEL = ZNodeLabel.fromString("ensemble");
 
                     public static AbsoluteZNodePath pathOf(Identifier region) {
                         return Region.pathOf(region).join(LABEL);
                     }
         
-                    public Backend(ValueNode<ZNodeSchema> schema,
+                    public Ensemble(ValueNode<ZNodeSchema> schema,
                             ByteCodec<Object> codec,
                             Pointer<ControlZNode<?>> parent) {
                         super(schema, codec, parent);
@@ -408,8 +393,12 @@ public class ControlSchema extends ControlZNode<Void> {
                     @Name
                     public static ZNodeLabel LABEL = ZNodeLabel.fromString("leader");
 
-                    public static AbsoluteZNodePath pathOf(Identifier id) {
-                        return Region.pathOf(id).join(LABEL);
+                    public static AbsoluteZNodePath pathOf(Identifier region) {
+                        return Region.pathOf(region).join(LABEL);
+                    }
+                    
+                    public static Leader get(NameTrie<ControlZNode<?>> trie, Identifier region) {
+                        return (Leader) trie.get(pathOf(region));
                     }
         
                     public Leader(
@@ -417,6 +406,19 @@ public class ControlSchema extends ControlZNode<Void> {
                             ByteCodec<Object> codec,
                             Pointer<ControlZNode<?>> parent) {
                         super(schema, codec, parent);
+                    }
+                    
+                    public Optional<LeaderEpoch> getLeaderEpoch() {
+                        StampedValue<?> nodeData = data();
+                        StampedValue<Records.ZNodeStatGetter> nodeStat = stat();
+                        Identifier leader = (Identifier) nodeData.get();
+                        Records.ZNodeStatGetter stat = nodeStat.get();
+                        if ((leader != null) && (stat != null)) {
+                            if (nodeData.stamp() >= stat.getMzxid()) {
+                                return Optional.of(LeaderEpoch.of(stat.getVersion(), leader));
+                            }
+                        }
+                        return Optional.absent();
                     }
                 }
             }

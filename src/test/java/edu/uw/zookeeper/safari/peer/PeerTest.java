@@ -1,53 +1,28 @@
 package edu.uw.zookeeper.safari.peer;
 
 
-import java.util.List;
-import java.util.concurrent.ExecutionException;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import com.google.common.collect.ImmutableList;
-import com.google.inject.Injector;
+import com.google.inject.name.Named;
 
-import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
-import edu.uw.zookeeper.safari.control.ControlTest;
-import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
+import edu.uw.zookeeper.safari.AbstractMainTest;
+import edu.uw.zookeeper.safari.Component;
+import edu.uw.zookeeper.safari.Modules;
+import edu.uw.zookeeper.safari.control.ControlModules;
 
 @RunWith(JUnit4.class)
-public class PeerTest {
-    
-    public static Injector injector() {
-        return injector(ControlTest.injector());
-    }
-    
-    public static Injector injector(Injector parent) {
-        return parent.createChildInjector(
-                SimplePeerConnectionsModule.create());
-    }
-    
-    public static class SimplePeerConnectionsModule extends PeerConnectionsService.Module {
+public class PeerTest extends AbstractMainTest {
 
-        public static SimplePeerConnectionsModule create() {
-            return new SimplePeerConnectionsModule();
-        }
-
-        @Override
-        protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(SimplePeerConfiguration.create());
-        }
-    }
-
-    @Test(timeout=5000)
-    public void test() throws InterruptedException, ExecutionException {
-        Injector injector = injector();
-        injector.getInstance(ControlMaterializerService.class).startAsync().awaitRunning();
-        injector.getInstance(PeerConnectionsService.class).startAsync().awaitRunning();
-        ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
-        monitor.startAsync().awaitRunning();
-        Thread.sleep(500);
-        monitor.stopAsync().awaitTerminated();
+    @Test(timeout=10000)
+    public void testStartAndStop() throws Exception {
+        final long pause = 1000L;
+        Component<Named> root = Modules.newRootComponent();
+        Component<?> control = ControlModules.newControlSingletonEnsemble(root);
+        Component<?> peer = PeerModules.newPeer(
+                ImmutableList.of(root, control));
+        pauseWithComponents(ImmutableList.of(root, control, peer), pause);
     }
 }

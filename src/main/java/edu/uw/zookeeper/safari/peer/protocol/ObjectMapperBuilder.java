@@ -10,11 +10,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.primitives.UnsignedLong;
 
-import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
-import edu.uw.zookeeper.ServerAddressView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.ServerView;
 import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderDeserializer;
 import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderSerializer;
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -30,7 +27,7 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.Version;
-import edu.uw.zookeeper.safari.backend.BackendZNode;
+import edu.uw.zookeeper.safari.storage.StorageZNode;
 
 public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.ObjectMapperBuilder {
 
@@ -102,13 +99,10 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                     ZNodeLabel.class, 
                     ZNodeName.class,
                     ZNodePath.class,
-                    ServerAddressView.class,
-                    ServerView.Address.class,
                     ServerInetAddressView.class,
                     EnsembleView.class,
-                    EnsembleRoleView.class,
                     Identifier.class,
-                    BackendZNode.SessionZNode.SessionIdHex.class };
+                    StorageZNode.SessionZNode.SessionIdHex.class };
             return registryClasses;
         }
     }

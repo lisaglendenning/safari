@@ -29,6 +29,7 @@ import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.common.WaitingActor;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -46,7 +47,6 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.SafariException;
-import edu.uw.zookeeper.safari.common.WaitingActor;
 import edu.uw.zookeeper.safari.data.EmptyVolume;
 import edu.uw.zookeeper.safari.data.VersionTransition;
 import edu.uw.zookeeper.safari.data.VersionedId;
@@ -54,29 +54,29 @@ import edu.uw.zookeeper.safari.data.VersionedVolume;
 import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
+import edu.uw.zookeeper.safari.storage.StorageSchema;
 
 public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedClientRequestMessage<?>, ShardedServerResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C, ShardedClientExecutor.PendingShardedTask> {
 
-    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> newInstance(
+    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> fromConnect(
             Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
             Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
             Function<Identifier, ? extends AsyncFunction<UnsignedLong,Volume>> idToVolume,
             AsyncFunction<Identifier, ZNodePath> idToPath,
-            ConnectMessage.Request request,
-            C connection,
+            ConnectTask<C> connect,
             ScheduledExecutorService scheduler) {
-        return newInstance(
+        return create(
                 idToVersion,
                 idToZxid,
                 idToVolume,
                 idToPath,
-                ConnectTask.connect(request, connection),
-                connection,
-                TimeValue.milliseconds(request.getTimeOut()),
+                connect,
+                connect.task().second(),
+                TimeValue.milliseconds(connect.task().first().getTimeOut()),
                 scheduler);
     }
 
-    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> newInstance(
+    public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> create(
             Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
             Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
             Function<Identifier, ? extends AsyncFunction<UnsignedLong,Volume>> idToVolume,
@@ -213,7 +213,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         @Override
         public void handleNotification(Operation.ProtocolResponse<IWatcherEvent> notification) {
             ZNodePath path = ZNodePath.fromString(notification.record().getPath());
-            Identifier id = BackendSchema.Safari.Volumes.shardOfPath(path);
+            Identifier id = StorageSchema.Safari.Volumes.shardOfPath(path);
             ShardProcessor processor = processors.get(id);
             if (processor != null) {
                 processor.responses.send(Futures.immediateFuture(notification));
@@ -341,7 +341,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                 this.version = version;
                 this.zxid = zxid;
                 this.volume = volume;
-                ZNodePath toPrefix = identifier.equals(Identifier.zero()) ? ZNodePath.root() : BackendSchema.Safari.Volumes.Volume.Root.pathOf(identifier);
+                ZNodePath toPrefix = identifier.equals(Identifier.zero()) ? ZNodePath.root() : StorageSchema.Safari.Volumes.Volume.Root.pathOf(identifier);
                 this.requests = new RequestProcessor(MessageRequestPrefixTranslator.forPrefix(fromPrefix, toPrefix));
                 this.responses = new ResponseProcessor(MessageResponsePrefixTranslator.forPrefix(toPrefix, fromPrefix));
             }

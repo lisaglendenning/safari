@@ -3,34 +3,34 @@ package edu.uw.zookeeper.safari.peer.protocol;
 import java.net.SocketAddress;
 import java.util.concurrent.ScheduledExecutorService;
 
-import net.engio.mbassy.common.IConcurrentSet;
-import net.engio.mbassy.common.StrongConcurrentSet;
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Service;
+
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
-import edu.uw.zookeeper.net.ConnectionFactory.ConnectionsListener;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
 @SuppressWarnings("rawtypes")
-public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<?>> implements ServerConnectionFactory<ServerPeerConnection<?>>, ConnectionsListener<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
+public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<?>> implements ServerConnectionFactory<ServerPeerConnection<?>> {
 
     public static ServerPeerConnections newInstance(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
             ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections) {
-        return new ServerPeerConnections(identifier, timeOut, executor, connections, new StrongConcurrentSet<ConnectionsListener<? super ServerPeerConnection<?>>>());
+        return new ServerPeerConnections(identifier, timeOut, executor, connections);
     }
     
     public ServerPeerConnections(
             Identifier identifier,
             TimeValue timeOut,
             ScheduledExecutorService executor,
-            ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections,
-            IConcurrentSet<ConnectionsListener<? super ServerPeerConnection<?>>> listeners) {
-        super(identifier, timeOut, executor, connections, listeners);
+            ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections) {
+        super(identifier, timeOut, executor, connections, ImmutableList.<Service.Listener>of());
+        addListener(new Listener(), SameThreadExecutor.getInstance());
     }
 
     @Override
@@ -38,30 +38,30 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
         return (ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>>) connections;
     }
 
-    @Override
-    public void handleConnectionOpen(Connection<? super MessagePacket, ? extends MessagePacket, ?> connection) {
-        if (! (connection instanceof ServerPeerConnection)) {
-            new ServerAcceptTask(connection);
-        }
-    }
     
     @Override
     public SocketAddress listenAddress() {
         return IdentifierSocketAddress.of(identifier(), connections().listenAddress());
     }
+    
+    protected class Listener extends Service.Listener implements ConnectionsListener<Connection<? super MessagePacket, ? extends MessagePacket, ?>> {
 
-    @Override
-    protected void startUp() throws Exception {
-        connections().subscribe(this);
+        @Override
+        public void handleConnectionOpen(Connection<? super MessagePacket, ? extends MessagePacket, ?> connection) {
+            if (! (connection instanceof ServerPeerConnection)) {
+                new ServerAcceptTask(connection);
+            }
+        }
         
-        super.startUp();
-    }
-
-    @Override
-    protected void shutDown() throws Exception {
-        connections().unsubscribe(this);
+        @Override
+        public void starting() {
+            connections().subscribe(this);
+        }
         
-        super.shutDown();
+        @Override
+        public void stopping(State from) {
+            connections().unsubscribe(this);
+        }
     }
     
     protected class ServerAcceptTask implements Connection.Listener<MessagePacket> {

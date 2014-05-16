@@ -12,14 +12,14 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import edu.uw.zookeeper.common.CachedFunction;
+import edu.uw.zookeeper.common.CachedLookup;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.CachedLookup;
 
 public final class VolumeDescriptorCache implements FutureCallback<VolumeDescriptor> {
 

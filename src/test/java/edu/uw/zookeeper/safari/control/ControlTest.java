@@ -1,72 +1,26 @@
 package edu.uw.zookeeper.safari.control;
 
 
-import java.util.concurrent.ExecutionException;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.inject.AbstractModule;
-import com.google.inject.Guice;
-import com.google.inject.Injector;
-import com.google.inject.Provides;
-import com.google.inject.Singleton;
-
-import edu.uw.zookeeper.DefaultRuntimeModule;
-import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.safari.common.GuiceRuntimeModule;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
-import edu.uw.zookeeper.safari.net.IntraVmAsNetModule;
-import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
-import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
+import com.google.common.collect.ImmutableList;
+import com.google.inject.name.Named;
+import edu.uw.zookeeper.safari.AbstractMainTest;
+import edu.uw.zookeeper.safari.Component;
+import edu.uw.zookeeper.safari.Modules;
 
 @RunWith(JUnit4.class)
-public class ControlTest {
+public class ControlTest extends AbstractMainTest {
     
-    public static Injector injector() {
-        return injector(Guice.createInjector(
-                GuiceRuntimeModule.create(DefaultRuntimeModule.defaults()),
-                IntraVmAsNetModule.create(),
-                JacksonModule.create()));
-    }
-
-    public static Injector injector(Injector parent) {
-        return parent.createChildInjector(
-                SimpleControlConnectionsService.module(),
-                module());
-    }
-    
-    public static ControlModule module() {
-        return new ControlModule();
-    }
-
-    public static class ControlModule extends AbstractModule {
-
-        public ControlModule() {}
-        
-        @Override
-        protected void configure() {
-        }
-
-        @Provides @Singleton
-        public ControlMaterializerService getControlMaterializerService(
-                Injector injector,
-                ObjectMapper mapper,
-                ControlConnectionsService<?> connections) {
-            return ControlMaterializerService.newInstance(
-                    injector, JacksonSerializer.create(mapper), connections);
-        }
-    }
-    
-    @Test(timeout=5000)
-    public void test() throws InterruptedException, ExecutionException {
-        Injector injector = injector();
-        injector.getInstance(ControlMaterializerService.class).startAsync().awaitRunning();
-        ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
-        monitor.startAsync().awaitRunning();
-        Thread.sleep(500);
-        monitor.stopAsync().awaitTerminated();
+    @Test(timeout=10000)
+    public void testStartAndStop() throws Exception {
+        final long pause = 1000L;
+        Component<Named> root = Modules.newRootComponent();
+        Component<?> server = ControlModules.newControlSingletonEnsemble(root);
+        Component<?> client = ControlModules.newControlClient(
+                ImmutableList.of(root, server));
+        pauseWithComponents(ImmutableList.of(root, server, client), pause);
     }
 }

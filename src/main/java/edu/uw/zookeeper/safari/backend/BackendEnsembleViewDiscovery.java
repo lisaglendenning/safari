@@ -1,7 +1,6 @@
 package edu.uw.zookeeper.safari.backend;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.util.concurrent.Callable;
 
 import javax.management.MBeanServerConnection;
@@ -14,7 +13,6 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterators;
 
-import edu.uw.zookeeper.EnsembleRoleView;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
@@ -36,17 +34,17 @@ public class BackendEnsembleViewDiscovery implements Callable<EnsembleView<Serve
         try {
             connector = JMXConnectorFactory.connect(url);
             MBeanServerConnection mbeans = connector.getMBeanServerConnection();
-            EnsembleRoleView<InetSocketAddress, ServerInetAddressView> roles = ServerViewJmxQuery.ensembleViewOf(mbeans);
+            EnsembleView<ServerRoleView> roles = ServerViewJmxQuery.ensembleViewOf(mbeans);
             if (roles == null) {
-                return EnsembleView.of(ServerViewJmxQuery.addressViewOf(mbeans));
+                return EnsembleView.copyOf(ServerViewJmxQuery.addressViewOf(mbeans));
             } else {
-                return EnsembleView.from(ImmutableSortedSet.copyOf(Iterators.transform(
+                return EnsembleView.create(ImmutableSortedSet.copyOf(Iterators.transform(
                         roles.iterator(), 
-                        new Function<ServerRoleView<InetSocketAddress, ServerInetAddressView>, ServerInetAddressView>() {
+                        new Function<ServerRoleView, ServerInetAddressView>() {
                             @Override
                             public ServerInetAddressView apply(
-                                    ServerRoleView<InetSocketAddress, ServerInetAddressView> input) {
-                                return input.first();
+                                    ServerRoleView input) {
+                                return input.address();
                             }
                         })));
             }

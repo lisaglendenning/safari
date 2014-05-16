@@ -9,11 +9,11 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.safari.common.CachedFunction;
 
 public abstract class GetDataFromMaterializer {
     

@@ -1,67 +1,35 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.concurrent.ExecutionException;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import com.google.inject.AbstractModule;
-import com.google.inject.Inject;
-import com.google.inject.Injector;
-import com.google.inject.Singleton;
-
-import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.safari.backend.BackendTest;
-import edu.uw.zookeeper.safari.common.DependentService;
-import edu.uw.zookeeper.safari.common.DependsOn;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
-import edu.uw.zookeeper.safari.control.ControlTest;
-import edu.uw.zookeeper.safari.frontend.FrontendServerService;
+import com.google.common.collect.ImmutableList;
+import com.google.inject.name.Named;
+import edu.uw.zookeeper.safari.AbstractMainTest;
+import edu.uw.zookeeper.safari.Component;
+import edu.uw.zookeeper.safari.Modules;
+import edu.uw.zookeeper.safari.SafariModule;
+import edu.uw.zookeeper.safari.control.ControlModules;
+import edu.uw.zookeeper.safari.region.RegionModules;
+import edu.uw.zookeeper.safari.storage.StorageModules;
 
 @RunWith(JUnit4.class)
-public class FrontendTest {
+public class FrontendTest extends AbstractMainTest {
 
-    public static Injector injector() {
-        return injector(ControlTest.injector());
-    }
-
-    public static Injector injector(Injector parent) {
-        return BackendTest.injector(parent).createChildInjector(
-                SimpleFrontendConfiguration.create());
-    }
-
-    @DependsOn({ 
-        ControlMaterializerService.class, 
-        FrontendServerService.class })
-    public static class FrontendTestService extends DependentService {
-
-        public static class Module extends AbstractModule {
-
-            public static Injector injector() {
-                return FrontendTest.injector().createChildInjector(
-                        new Module());
-            }
-            
-            @Override
-            protected void configure() {
-                bind(FrontendTestService.class).in(Singleton.class);
-            }
-        }
-        
-        @Inject
-        protected FrontendTestService(Injector injector) {
-            super(injector);
-        }
-    }
-    
-    @Test(timeout=5000)
-    public void test() throws InterruptedException, ExecutionException {
-        Injector injector = FrontendTestService.Module.injector();
-        injector.getInstance(FrontendTestService.class).startAsync().awaitRunning();
-        ServiceMonitor monitor = injector.getInstance(ServiceMonitor.class);
-        monitor.startAsync().awaitRunning();
-        Thread.sleep(500);
-        monitor.stopAsync().awaitTerminated();
+    @Test(timeout=12000)
+    public void testStartAndStop() throws Exception {
+        final long pause = 5000L;
+        final Component<Named> root = Modules.newRootComponent();
+        final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
+        final Component<?> server = StorageModules.newStorageSingletonEnsemble(root);
+        final Component<?> client = RegionModules.newSingletonRegionMember(
+                server, 
+                ImmutableList.of(root, control), 
+                ImmutableList.<SafariModule>of(Module.create()),
+                FrontendModules.FrontendProvider.class);
+        pauseWithComponents(
+                ImmutableList.<Component<?>>of(root, control, server, client), 
+                pause);
     }
 }

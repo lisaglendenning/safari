@@ -14,6 +14,7 @@ import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.CallablePromiseTask;
@@ -24,7 +25,6 @@ import edu.uw.zookeeper.data.EmptyZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
 
 public class VolumeBranchListener extends PromiseTask<Pair<Identifier,UnsignedLong>,VersionedVolume> implements Runnable, Callable<Optional<VersionedVolume>> {
     

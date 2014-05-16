@@ -6,27 +6,28 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import net.engio.mbassy.common.IConcurrentSet;
+import net.engio.mbassy.common.StrongConcurrentSet;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
-import edu.uw.zookeeper.common.ForwardingService;
+import edu.uw.zookeeper.common.ForwardingServiceListener;
+import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.safari.Identifier;
 
-public abstract class PeerConnections<C extends PeerConnection<?,?>> extends ForwardingService implements ConnectionFactory<C> {
+public abstract class PeerConnections<C extends PeerConnection<?,?>> extends ServiceListenersService implements ConnectionFactory<C> {
 
-    protected final Logger logger = LogManager.getLogger(getClass());
     protected final Identifier identifier;
     protected final TimeValue timeOut;
     protected final ScheduledExecutorService executor;
@@ -41,8 +42,9 @@ public abstract class PeerConnections<C extends PeerConnection<?,?>> extends For
             TimeValue timeOut,
             ScheduledExecutorService executor,
             ConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections,
-            IConcurrentSet<ConnectionsListener<? super C>> listeners) {
-        this.listeners = listeners;
+            Iterable<? extends Service.Listener> listeners) {
+        super(ImmutableList.<Service.Listener>builder().addAll(listeners).add(ForwardingServiceListener.forService(connections)).build());
+        this.listeners = new StrongConcurrentSet<ConnectionsListener<? super C>>();
         this.identifier = identifier;
         this.timeOut = timeOut;
         this.executor = executor;
@@ -90,14 +92,6 @@ public abstract class PeerConnections<C extends PeerConnection<?,?>> extends For
         return peers.values().iterator();
     }
 
-    protected boolean remove(C connection) {
-        boolean removed = peers.remove(connection.remoteAddress().getIdentifier(), connection);
-        if (removed) {
-            logger.info("Removed {}", connection);
-        }
-        return removed;
-    }
-    
     public C put(C v) {
         C prev = peers.put(v.remoteAddress().getIdentifier(), v);
         new ConnectionListener(v);
@@ -122,6 +116,19 @@ public abstract class PeerConnections<C extends PeerConnection<?,?>> extends For
         }
         return prev;
     }
+    
+    @Override
+    protected Executor executor() {
+        return SameThreadExecutor.getInstance();
+    }
+
+    protected boolean remove(C connection) {
+        boolean removed = peers.remove(connection.remoteAddress().getIdentifier(), connection);
+        if (removed) {
+            logger.info("Removed {}", connection);
+        }
+        return removed;
+    }
 
     protected class ConnectionListener extends Factories.Holder<C> implements Connection.Listener<Object> {
     
@@ -145,10 +152,5 @@ public abstract class PeerConnections<C extends PeerConnection<?,?>> extends For
         @Override
         public void handleConnectionRead(Object message) {
         }
-    }
-
-    @Override
-    protected Service delegate() {
-        return connections;
     }
 }

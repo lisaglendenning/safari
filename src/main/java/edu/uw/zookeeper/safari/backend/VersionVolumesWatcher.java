@@ -14,7 +14,7 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.data.CacheNodeCreatedListener;
@@ -29,10 +29,10 @@ public class VersionVolumesWatcher extends CacheNodeCreatedListener {
 
     public static VersionVolumesWatcher newInstance(
             Service service,
-            ControlMaterializerService control) {
-        newLeaseXomegaListener(control, control.materializer().cache(), service, control.cacheEvents());
+            ControlClientService control) {
+        newLeaseXomegaListener(control.materializer(), control.materializer().cache(), service, control.cacheEvents());
         VersionVolumesWatcher instance = new VersionVolumesWatcher(
-                newVolumeLogWatcher(service, control.notifications(), control),
+                newVolumeLogWatcher(service, control.notifications(), control.materializer()),
                 service,
                 control.cacheEvents(), 
                 control.materializer().cache());

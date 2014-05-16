@@ -40,6 +40,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.ForwardingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
@@ -57,8 +58,7 @@ import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.data.Lease;
@@ -69,7 +69,7 @@ import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.data.VolumeBranchListener;
 import edu.uw.zookeeper.safari.data.VolumeDescriptorCache;
 import edu.uw.zookeeper.safari.data.VolumeState;
-import edu.uw.zookeeper.safari.peer.RegionConfiguration;
+import edu.uw.zookeeper.safari.region.Region;
 
 public final class VersionedVolumeCacheService extends AbstractIdleService {
 
@@ -87,19 +87,20 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
 
         @Provides @Singleton
         public VersionedVolumeCacheService getVersionedVolumeCacheService(
-                final RegionConfiguration region,
+                final @Region Identifier region,
                 VolumeDescriptorCache volumes,
-                ControlMaterializerService control,
-                ServiceMonitor monitor,
-                ScheduledExecutorService scheduler) {
-            VersionedVolumeCacheService instance = monitor.addOnStart(
-                    create(new Predicate<Identifier>() {
+                ControlClientService control,
+                ScheduledExecutorService scheduler,
+                ServiceMonitor monitor) {
+            VersionedVolumeCacheService instance = create(
+                    new Predicate<Identifier>() {
                         @Override
                         public boolean apply(Identifier input) {
-                            return region.getRegion().equals(input);
+                            return region.equals(input);
                         }
-                    }, volumes.asLookup(), control, scheduler));
+                    }, volumes.asLookup(), control, scheduler);
             VersionVolumesWatcher.newInstance(instance, control);
+            monitor.add(instance);
             return instance;
         }
     }
@@ -107,14 +108,14 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
     public static VersionedVolumeCacheService create(
             Predicate<Identifier> isResident,
             CachedFunction<Identifier, ZNodePath> idToPath,
-            ControlMaterializerService control,
+            ControlClientService control,
             ScheduledExecutorService scheduler) {
         return new VersionedVolumeCacheService(isResident, idToPath, control, scheduler, LogManager.getLogger(VersionedVolumeCacheService.class));
     }
     
     private final Logger logger;
     private final ScheduledExecutorService scheduler;
-    private final ControlMaterializerService control;
+    private final ControlClientService control;
     private final Predicate<Identifier> isResident;
     private final CachedFunction<Identifier, ZNodePath> idToPath;
     private final List<WatchMatchListener> listeners;
@@ -126,7 +127,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
     protected VersionedVolumeCacheService(
             Predicate<Identifier> isResident,
             CachedFunction<Identifier, ZNodePath> idToPath,
-            ControlMaterializerService control,
+            ControlClientService control,
             ScheduledExecutorService scheduler,
             Logger logger) {
         this.logger = logger;

@@ -27,7 +27,6 @@ import edu.uw.zookeeper.protocol.PingTask;
 import edu.uw.zookeeper.protocol.TimeOutActor;
 import edu.uw.zookeeper.protocol.TimeOutParameters;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
 @SuppressWarnings("rawtypes")
 public abstract class PeerConnection<T extends Connection<? super MessagePacket,? extends MessagePacket,?>, C extends PeerConnection<T,C>> extends ForwardingConnection<MessagePacket,MessagePacket,T,C> implements Connection.Listener<MessagePacket> {

@@ -15,9 +15,9 @@ public class Main extends ZooKeeperApplication.ForwardingApplication {
         super(delegate);
     }
 
-    protected static class MainBuilder implements ZooKeeperApplication.RuntimeBuilder<Main, MainBuilder> {
-        
-        protected final RuntimeModule runtime;
+    protected static class MainBuilder extends ZooKeeperApplication.AbstractRuntimeBuilder<Main, MainBuilder> {
+
+        protected static final String DESCRIPTION = "ZooKeeper Safari Server";
         
         public MainBuilder() {
             this(null);
@@ -25,35 +25,22 @@ public class Main extends ZooKeeperApplication.ForwardingApplication {
 
         public MainBuilder(
                 RuntimeModule runtime) {
-            this.runtime = runtime;
+            super(runtime);
         }
 
         @Override
-        public RuntimeModule getRuntimeModule() {
-            return runtime;
-        }
-
-        @Override
-        public MainBuilder setRuntimeModule(RuntimeModule runtime) {
-            return newInstance(runtime);
-        }
-
-        @Override
-        public MainBuilder setDefaults() {
-            return this;
-        }
-
-        @Override
-        public Main build() {
-            return setDefaults().doBuild();
-        }
-
         protected MainBuilder newInstance(RuntimeModule runtime) {
             return new MainBuilder(runtime);
         }
 
+        @Override
         protected Main doBuild() {
-            return new Main(MainApplicationModule.getApplication(getRuntimeModule()));
+            getRuntimeModule().getConfiguration().getArguments().setDescription(getDescription());
+            return new Main(Module.createInjector(getRuntimeModule()).getInstance(Application.class));
+        }
+        
+        protected String getDescription() {
+            return DESCRIPTION;
         }
     }
 }

@@ -16,7 +16,6 @@ import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
-import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -38,23 +37,23 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.DependsOn;
+import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.common.ServiceListenersService;
+import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.common.Services;
+import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.data.CacheNodeCreatedListener;
 import edu.uw.zookeeper.safari.data.FixedQuery;
 import edu.uw.zookeeper.safari.data.RunnableWatcher;
-import edu.uw.zookeeper.safari.peer.RegionConfiguration;
-import edu.uw.zookeeper.safari.peer.PeerConfiguration;
-import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
+import edu.uw.zookeeper.safari.peer.Peer;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
+import edu.uw.zookeeper.safari.region.Region;
 
-@DependsOn({PeerConnectionsService.class})
-public class RegionsConnectionsService extends AbstractIdleService implements AsyncFunction<Identifier, ClientPeerConnection<?>> {
+public class RegionsConnectionsService extends ServiceListenersService implements AsyncFunction<Identifier, ClientPeerConnection<?>> {
 
     public static Module module() {
         return new Module();
@@ -66,16 +65,25 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
 
         @Provides @Singleton
         public RegionsConnectionsService getRegionsConnectionsService(
-                PeerConfiguration peer,
-                RegionConfiguration region,
-                ControlMaterializerService control,
-                ClientPeerConnections peerConnections) {
-            return RegionsConnectionsService.defaults(
-                            peerConnections.asLookup(),
-                            peer.getView().id(),
-                            region.getRegion(), 
-                            control.materializer(),
-                            control.cacheEvents());
+                @Peer Identifier peer,
+                @Region Identifier region,
+                ControlClientService control,
+                final ClientPeerConnections connections,
+                ServiceMonitor monitor) {
+            RegionsConnectionsService instance = RegionsConnectionsService.defaults(
+                        connections.asLookup(),
+                        peer,
+                        region, 
+                        control.materializer(),
+                        control.cacheEvents(),
+                        ImmutableList.of(new Service.Listener() {
+                            @Override
+                            public void starting() {
+                                Services.startAndWait(connections);
+                            }
+                        }));
+            monitor.add(instance);
+            return instance;
         }
 
         @Override
@@ -88,13 +96,15 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
             Identifier myId,
             Identifier myRegion,
             Materializer<ControlZNode<?>,?> control,
-            WatchListeners watch) {
+            WatchListeners watch,
+            Iterable<? extends Service.Listener> listeners) {
         AsyncFunction<Identifier, Identifier> selector = 
                 SelectSelfTask.defaults(myId, myRegion, control);
         RegionsConnectionsService instance = new RegionsConnectionsService(
                 myRegion,
                 selector,
-                connector);
+                connector,
+                listeners);
         instance.addListener(instance.new RegionCreatedListener(watch, control.cache()), SameThreadExecutor.getInstance());
         newRegionDirectoryWatcher(instance, watch, control);
         return instance;
@@ -171,7 +181,9 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
     protected RegionsConnectionsService(
             Identifier region,
             AsyncFunction<Identifier, Identifier> selector,
-            AsyncFunction<Identifier, ClientPeerConnection<?>> connector) {
+            AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
+            Iterable<? extends Service.Listener> listeners) {
+        super(listeners);
         this.regions = new MapMaker().makeMap();
         this.region = region;
         this.selector = selector;
@@ -203,14 +215,6 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
     @Override
     protected Executor executor() {
         return SameThreadExecutor.getInstance();
-    }
-
-    @Override
-    protected void startUp() {
-    }
-
-    @Override
-    protected void shutDown() {
     }
 
     public static class SelectRandom<V> implements Function<List<V>, V> {
@@ -364,8 +368,8 @@ public class RegionsConnectionsService extends AbstractIdleService implements As
                     }
                 } catch (Exception e) {}
             }
-            logger.debug("Selecting from live region members: {}", living);
             Identifier selected = selector.apply(living);
+            logger.info("Selected {} from live region members: {}", selected, living);
             return (selected == null) ? null : selected;
         }
     }

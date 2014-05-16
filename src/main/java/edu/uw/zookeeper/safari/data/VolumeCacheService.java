@@ -32,12 +32,15 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.Automaton.Transition;
+import edu.uw.zookeeper.common.CachedFunction;
+import edu.uw.zookeeper.common.LockingCachedFunction;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.SharedLookup;
 import edu.uw.zookeeper.data.AbstractNameTrie;
 import edu.uw.zookeeper.data.AbstractWatchMatchListener;
 import edu.uw.zookeeper.data.DefaultsNode;
@@ -50,11 +53,8 @@ import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.LockingCachedFunction;
 import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.safari.common.SharedLookup;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 
 public final class VolumeCacheService extends AbstractIdleService {
@@ -67,10 +67,6 @@ public final class VolumeCacheService extends AbstractIdleService {
 
         public Module() {}
         
-        @Override
-        protected void configure() {
-        }
-
         @Provides @Singleton
         public VolumeDescriptorCache getVolumeDescriptorCache() {
             return VolumeDescriptorCache.create();
@@ -79,28 +75,27 @@ public final class VolumeCacheService extends AbstractIdleService {
         @Provides @Singleton
         public VolumeCacheService getVolumeCacheService(
                 VolumeDescriptorCache descriptors,
-                ControlMaterializerService control,
+                ControlClientService control,
                 ServiceMonitor monitor) {
-            return monitor.addOnStart(
-                    create(descriptors, control));
+            VolumeCacheService instance = create(descriptors, control);
+            monitor.add(instance);
+            LatestVolumesWatcher.create(instance, control);
+            return instance;
         }
 
-        @Provides @Singleton
-        public LatestVolumesWatcher getLatestVolumesWatcher(
-                VolumeCacheService service,
-                ControlMaterializerService control) {
-            return LatestVolumesWatcher.newInstance(service, control);
+        @Override
+        protected void configure() {
         }
     }
     
     public static VolumeCacheService create(
             VolumeDescriptorCache descriptors,
-            ControlMaterializerService control) {
+            ControlClientService control) {
         return new VolumeCacheService(descriptors, control);
     }
 
     private final Logger logger;
-    private final ControlMaterializerService control;
+    private final ControlClientService control;
     private final VolumeDescriptorCache descriptors;
     private final ReentrantReadWriteLock lock;
     private final List<WatchMatchListener> listeners;
@@ -110,7 +105,7 @@ public final class VolumeCacheService extends AbstractIdleService {
     
     protected VolumeCacheService(
             final VolumeDescriptorCache descriptors,
-            final ControlMaterializerService control) {
+            final ControlClientService control) {
         this.logger = LogManager.getLogger(this);
         this.control = control;
         this.descriptors = descriptors;

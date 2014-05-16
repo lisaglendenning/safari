@@ -6,30 +6,28 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.logging.log4j.LogManager;
 
-import net.engio.mbassy.common.IConcurrentSet;
-import net.engio.mbassy.common.StrongConcurrentSet;
-
 import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.ServerInetAddressView;
+import edu.uw.zookeeper.common.CachedFunction;
+import edu.uw.zookeeper.common.CachedLookup;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.SharedLookup;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.CachedLookup;
-import edu.uw.zookeeper.safari.common.SharedLookup;
-import edu.uw.zookeeper.safari.peer.IdentifierSocketAddress;
 
 public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<?>> implements ClientConnectionFactory<ClientPeerConnection<?>> {
 
@@ -40,7 +38,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             ScheduledExecutorService executor,
             CachedFunction<Identifier, ServerInetAddressView> lookup,
             ClientConnectionFactory<? extends Connection<? super MessagePacket,? extends MessagePacket,?>> connections) {
-        return new ClientPeerConnections(identifier, timeOut, executor, lookup, connections, new StrongConcurrentSet<ConnectionsListener<? super ClientPeerConnection<?>>>());
+        return new ClientPeerConnections(identifier, timeOut, executor, lookup, connections);
     }
     
     protected final MessagePacket<MessageHandshake> handshake;
@@ -53,9 +51,8 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             TimeValue timeOut,
             ScheduledExecutorService executor,
             CachedFunction<Identifier, ServerInetAddressView> lookup,
-            ClientConnectionFactory<? extends Connection<? super MessagePacket,? extends MessagePacket,?>> connections,
-            IConcurrentSet<ConnectionsListener<? super ClientPeerConnection<?>>> listeners) {
-        super(identifier, timeOut, executor, connections, listeners);
+            ClientConnectionFactory<? extends Connection<? super MessagePacket,? extends MessagePacket,?>> connections) {
+        super(identifier, timeOut, executor, connections, ImmutableList.<Service.Listener>of());
         this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
         this.addressLookup = lookup;
         this.lookups = CachedLookup.fromCache(

@@ -1,170 +1,159 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.List;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.MapMaker;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
-import com.google.inject.Injector;
+import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
-import com.google.inject.TypeLiteral;
-
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.data.Materializer;
-import edu.uw.zookeeper.common.RuntimeModule;
+import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.TimeValue;
-import edu.uw.zookeeper.net.NetServerModule;
+import edu.uw.zookeeper.net.ConnectionFactory.ConnectionsListener;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
-import edu.uw.zookeeper.protocol.server.ServerConnectionFactoryBuilder;
 import edu.uw.zookeeper.protocol.server.ServerConnectionsHandler;
 import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ServerProtocolConnection;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.DependentModule;
-import edu.uw.zookeeper.safari.common.DependentService;
-import edu.uw.zookeeper.safari.common.DependsOn;
-import edu.uw.zookeeper.safari.control.ControlMaterializerService;
+import edu.uw.zookeeper.safari.control.ControlClientService;
+import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.peer.PeerConfiguration;
+import edu.uw.zookeeper.safari.data.CreateOrEquals;
+import edu.uw.zookeeper.safari.peer.Peer;
 
-@DependsOn({FrontendServerExecutor.class})
-public class FrontendServerService<C extends ServerProtocolConnection<?,?>> extends ServerConnectionsHandler<C> {
+public class FrontendServerService extends ServiceListenersService {
 
-    public static Module module() {
-        return new Module();
+    public static com.google.inject.Module module() {
+        return Module.create();
     }
     
-    public static class Module extends DependentModule {
+    public static class Module extends AbstractModule {
 
-        public Module() {}
+        public static Module create() {
+            return new Module();
+        }
+        
+        protected Module() {}
         
         @Override
         protected void configure() {
-            super.configure();
-            bind(FrontendServerService.class).to(new TypeLiteral<FrontendServerService<?>>() {});
         }
 
-        @Provides @Singleton
-        public FrontendServerService<?> getFrontendServerService(
-                ServerExecutor<FrontendSessionExecutor> server, 
+        @Provides @Frontend @Singleton
+        public ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> newServerConnectionsHandler(
+                @Frontend TimeValue timeOut,
+                @Frontend ServerExecutor<FrontendSessionExecutor> server,
+                FrontendServerExecutor serverService,
                 ScheduledExecutorService scheduler,
-                RuntimeModule runtime,
-                FrontendConfiguration configuration, 
-                ScheduledExecutorService executor,
-                Injector injector,
-                NetServerModule serverModule) throws Exception {
-            ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections = 
-                    getServerConnectionFactory(runtime, configuration, serverModule);
-            FrontendServerService<?> instance = FrontendServerService.newInstance(
-                    connections, server, executor, configuration.getTimeOut(), injector);
-            return instance;
+                ServiceMonitor monitor) {
+            ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> handler = 
+                    ServerConnectionsHandler.create(server, scheduler, timeOut);
+            monitor.add(handler);
+            return handler;
         }
         
-        protected ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> getServerConnectionFactory(
-                RuntimeModule runtime,
-                FrontendConfiguration configuration,
-                NetServerModule serverModule) {
-            return ServerConnectionFactoryBuilder.defaults()
-                    .setAddress(configuration.getAddress())
-                    .setServerModule(serverModule)
-                    .setRuntimeModule(runtime)
-                    .build();
-        }
-
-        @Override
-        protected List<com.google.inject.Module> getDependentModules() {
-            return ImmutableList.<com.google.inject.Module>of(
-                    RegionsConnectionsService.module(),
-                    FrontendConfiguration.module(),
-                    FrontendServerExecutor.module());
+        @Provides @Singleton
+        public FrontendServerService getFrontendServerService(
+                final @Frontend ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> handler,
+                final @Frontend ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections,
+                @Peer Identifier peer,
+                @Frontend ServerInetAddressView address,
+                ControlClientService control,
+                ServiceMonitor monitor) throws Exception {
+            handler.addListener(
+                    new Service.Listener() {
+                        @SuppressWarnings("unchecked")
+                        @Override
+                        public void running() {
+                            connections.subscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
+                        }
+                        
+                        @SuppressWarnings("unchecked")
+                        @Override
+                        public void stopping(State from) {
+                            connections.unsubscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
+                        }
+                    }, SameThreadExecutor.getInstance());
+            FrontendServerService instance = FrontendServerService.create(
+                    peer,
+                    address,
+                    control.materializer(),
+                    ImmutableList.<Service.Listener>of());
+            monitor.add(instance);
+            return instance;
         }
     }
 
-    public static <C extends ServerProtocolConnection<?,?>> FrontendServerService<C> newInstance(
-            ServerConnectionFactory<C> connections,
-            ServerExecutor<?> server, 
-            ScheduledExecutorService scheduler, 
-            TimeValue timeOut,
-            Injector injector) {
-        ConcurrentMap<C, ServerConnectionsHandler<C>.ConnectionHandler<?>> handlers = new MapMaker().weakKeys().weakValues().makeMap();
-        FrontendServerService<C> instance = new FrontendServerService<C>(
-                connections,
-                server,
-                scheduler,
-                timeOut,
-                handlers,
-                injector);
-        instance.new Advertiser(SameThreadExecutor.getInstance());
+    public static FrontendServerService create(
+            Identifier peer,
+            ServerInetAddressView address,
+            Materializer<ControlZNode<?>,?> control,
+            Iterable<? extends Service.Listener> listeners) {
+        FrontendServerService instance = new FrontendServerService(
+                ImmutableList.<Service.Listener>builder()
+                .addAll(listeners)
+                .add(new Advertiser(peer, address, control))
+                .build());
         return instance;
     }
-
-    protected final Logger logger;
-    protected final Injector injector;
-    protected final ServerConnectionFactory<C> connections;
+    
+    public static ListenableFuture<Optional<ServerInetAddressView>> advertise(
+            final Identifier peer, 
+            final ServerInetAddressView value, 
+            final Materializer<ControlZNode<?>,?> materializer) {    
+        ZNodePath path = ControlSchema.Safari.Peers.Peer.ClientAddress.pathOf(peer);
+        return Futures.transform(CreateOrEquals.create(path, value, materializer), 
+                new Function<Optional<ServerInetAddressView>, Optional<ServerInetAddressView>>() {
+                    @Override
+                    public Optional<ServerInetAddressView> apply(
+                            Optional<ServerInetAddressView> input) {
+                        if (input.isPresent()) {
+                            throw new IllegalStateException(String.format("%s != %s", value, input.get()));
+                        }
+                        return input;
+                    }
+        });
+    }
     
     protected FrontendServerService(
-            ServerConnectionFactory<C> connections,
-            ServerExecutor<?> server, 
-            ScheduledExecutorService scheduler, 
-            TimeValue timeOut,
-            ConcurrentMap<C, ConnectionHandler<?>> handlers,
-            Injector injector) {
-        super(server, scheduler, timeOut, handlers);
-        this.logger = LogManager.getLogger(getClass());
-        this.injector = injector;
-        this.connections = connections;
-    }
-    
-    protected Injector injector() {
-        return injector;
+            Iterable<? extends Service.Listener> listeners) {
+        super(listeners);
     }
 
     @Override
-    protected void startUp() throws Exception {
-        DependentService.addOnStart(injector, this);
-
-        connections.subscribe(this);
-        connections.startAsync().awaitRunning();
-        injector().getInstance(ServiceMonitor.class).add(connections);
-
-        super.startUp();
+    protected Executor executor() {
+        return SameThreadExecutor.getInstance();
     }
 
-    @Override
-    protected void shutDown() throws Exception {
-        connections.unsubscribe(this);
-        super.shutDown();
-    }
-    
-    public class Advertiser extends Service.Listener {
+    protected static class Advertiser extends Service.Listener {
 
-        public Advertiser(
-                Executor executor) {
-            addListener(this, executor);
-            if (isRunning()) {
-                running();
-            }
+        protected final Identifier peer;
+        protected final ServerInetAddressView value;
+        protected final Materializer<ControlZNode<?>,?> control;
+        
+        public Advertiser(Identifier peer, ServerInetAddressView value, Materializer<ControlZNode<?>,?> control) {
+            this.peer = peer;
+            this.value = value;
+            this.control = control;
         }
         
         @Override
         public void running() {
-            Materializer<ControlZNode<?>,?> materializer = injector.getInstance(ControlMaterializerService.class).materializer();
-            Identifier peerId = injector.getInstance(PeerConfiguration.class).getView().id();
-            ServerInetAddressView address = injector.getInstance(FrontendConfiguration.class).getAddress();
             try {
-                FrontendConfiguration.advertise(peerId, address, materializer).get();
+                advertise(peer, value, control).get();
             } catch (Exception e) {
-                logger.warn("", e);
-                stopAsync();
+                throw Throwables.propagate(e);
             }
         }
     }

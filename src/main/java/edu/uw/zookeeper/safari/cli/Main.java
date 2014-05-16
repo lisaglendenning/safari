@@ -1,17 +1,11 @@
 package edu.uw.zookeeper.safari.cli;
 
 
-import java.io.IOException;
-
-import com.google.common.base.Throwables;
-
 import edu.uw.zookeeper.ZooKeeperApplication;
 import edu.uw.zookeeper.client.cli.DispatchingInvoker;
 import edu.uw.zookeeper.client.cli.Shell;
 import edu.uw.zookeeper.common.Application;
 import edu.uw.zookeeper.common.RuntimeModule;
-import edu.uw.zookeeper.common.ServiceApplication;
-import edu.uw.zookeeper.common.ServiceMonitor;
 
 public class Main extends edu.uw.zookeeper.client.cli.Main {
 
@@ -51,23 +45,18 @@ public class Main extends edu.uw.zookeeper.client.cli.Main {
         }
 
         @Override
-        protected Main doBuild() {
-            getRuntimeModule().getConfiguration().getArguments().setDescription(DESCRIPTION);
-            ServiceMonitor monitor = getRuntimeModule().getServiceMonitor();
-            Shell shell;
-            try {
-                shell = Shell.create(runtime);
-            } catch (IOException e) {
-                throw Throwables.propagate(e);
-            }
-            monitor.add(shell);
-            monitor.add(DispatchingInvoker.defaults(shell, ControlInvoker.class));
-            return new Main(ServiceApplication.newInstance(monitor));
-        }
-
-        @Override
         protected MainBuilder newInstance(RuntimeModule runtime) {
             return new MainBuilder(runtime);
+        }
+        
+        @Override
+        protected String getDescription() {
+            return DESCRIPTION;
+        }
+        
+        @Override
+        protected DispatchingInvoker newDispatchingInvoker(Shell shell) {
+            return DispatchingInvoker.defaults(shell, ControlInvoker.class);
         }
     }
 }

@@ -16,6 +16,8 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.CachedFunction;
+import edu.uw.zookeeper.common.CachedLookup;
 import edu.uw.zookeeper.common.Eventful;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
@@ -26,8 +28,6 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.CachedFunction;
-import edu.uw.zookeeper.safari.common.CachedLookup;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
@@ -37,7 +37,7 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionResponse;
 
 public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<Identifier, ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher>> {
 
-    public static ClientPeerConnectionDispatchers newInstance(
+    public static ClientPeerConnectionDispatchers create(
             AsyncFunction<Identifier, ? extends ClientPeerConnection<?>> connections) {
         return new ClientPeerConnectionDispatchers(connections);
     }

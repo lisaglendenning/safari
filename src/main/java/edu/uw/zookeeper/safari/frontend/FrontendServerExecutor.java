@@ -5,217 +5,148 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
-import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.collect.MapMaker;
 import com.google.inject.AbstractModule;
-import com.google.inject.Inject;
-import com.google.inject.Injector;
+import com.google.inject.Key;
 import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
+import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.Configuration;
-import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.TaskExecutor;
+import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.FourLetterRequest;
-import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.FourLetterResponse;
-import edu.uw.zookeeper.protocol.server.AssignZxidProcessor;
 import edu.uw.zookeeper.server.FourLetterRequestProcessor;
 import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.protocol.server.ZxidGenerator;
 import edu.uw.zookeeper.protocol.ZxidReference;
-import edu.uw.zookeeper.protocol.proto.OpCode;
-import edu.uw.zookeeper.protocol.proto.OpCodeXid;
-import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.common.DependentService;
-import edu.uw.zookeeper.safari.common.DependsOn;
 import edu.uw.zookeeper.safari.data.VolumeCacheService;
 import edu.uw.zookeeper.server.ProcessorTaskExecutor;
 import edu.uw.zookeeper.server.SessionManager;
 import edu.uw.zookeeper.server.SimpleSessionManager;
 import edu.uw.zookeeper.server.SimpleServerExecutor;
 
-@DependsOn({RegionsConnectionsService.class, VolumeCacheService.class})
-public class FrontendServerExecutor extends DependentService {
+public class FrontendServerExecutor extends AbstractModule {
 
-    public static Module module() {
-        return new Module();
+    public static FrontendServerExecutor create() {
+        return new FrontendServerExecutor();
     }
     
-    public static class Module extends AbstractModule {
-
-        public Module() {}
-        
-        @Override
-        protected void configure() {
-            bind(ZxidGenerator.class).to(ZxidEpochIncrementer.class).in(Singleton.class);
-            bind(ZxidReference.class).to(ZxidGenerator.class).in(Singleton.class);
-            bind(SessionManager.class).to(new TypeLiteral<SimpleSessionManager<FrontendSessionExecutor>>() {}).in(Singleton.class);
-            bind(ResponseProcessor.class).in(Singleton.class);
-            bind(FrontendServerExecutor.class).in(Singleton.class);
-        }
-        
-        @Provides @Singleton
-        public ConcurrentMap<Long, FrontendSessionExecutor> getSessionExecutors() {
-            return new MapMaker().makeMap();
-        }
-        
-        @Provides @Singleton
-        public TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor() {
-            return ProcessorTaskExecutor.of(
-                    FourLetterRequestProcessor.newInstance());
-        }
-        
-        @Provides @Singleton
-        public ClientPeerConnectionDispatchers getDispatchers(
-                RegionsConnectionsService connections) {
-            return ClientPeerConnectionDispatchers.newInstance(connections);
-        }
-        
-        @Provides @Singleton
-        public SimpleSessionManager<FrontendSessionExecutor> getSessionManager(
-                Configuration configuration,
-                FrontendConfiguration frontend,
-                ConcurrentMap<Long, FrontendSessionExecutor> executors,
-                Provider<ResponseProcessor> processor,
-                VolumeCacheService volumes,
-                ClientPeerConnectionDispatchers dispatchers,
-                RegionsConnectionsService regions,
-                ScheduledExecutorService scheduler,
-                Executor executor) {
-            FrontendSessionExecutor.Factory factory = FrontendSessionExecutor.factory(
-                    false,
-                    processor,
-                    volumes.idToVolume(),
-                    volumes.pathToVolume(),
-                    getRegions(regions),
-                    dispatchers.get(),
-                    scheduler, 
-                    executor);
-            return SimpleSessionManager.fromConfiguration(
-                    (short) frontend.getAddress().get().hashCode(), 
-                    executors, factory, configuration);
-        }
-        
-        @Provides @Singleton
-        public FrontendConnectExecutor getConnectExecutor(
-                ZxidReference lastZxid,
-                ConcurrentMap<Long, FrontendSessionExecutor> executors,
-                Provider<ResponseProcessor> processor,
-                VolumeCacheService volumes,
-                ClientPeerConnectionDispatchers dispatchers,
-                RegionsConnectionsService regions,
-                ScheduledExecutorService scheduler,
-                Executor executor,
-                SimpleSessionManager<FrontendSessionExecutor> sessions) {
-            FrontendSessionExecutor.Factory factory = FrontendSessionExecutor.factory(
-                    true,
-                    processor,
-                    volumes.idToVolume(),
-                    volumes.pathToVolume(),
-                    getRegions(regions),
-                    dispatchers.get(),
-                    scheduler, 
-                    executor);
-            return FrontendConnectExecutor.defaults(
-                    factory, executors, sessions, lastZxid);
-        }
-
-        @Provides @Singleton
-        public ZxidEpochIncrementer getZxids() {
-            return ZxidEpochIncrementer.fromZero();
-        }
-
-        @Provides @Singleton
-        public ServerExecutor<FrontendSessionExecutor> getServerExecutor(
-                TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor,
-                FrontendConnectExecutor connectExecutor,
-                ConcurrentMap<Long, FrontendSessionExecutor> sessionExecutors) {
-            return new SimpleServerExecutor<FrontendSessionExecutor>(sessionExecutors, connectExecutor, anonymousExecutor);
-        }
-        
-        protected Supplier<Set<Identifier>> getRegions(
-                final RegionsConnectionsService regions) {
-            return new Supplier<Set<Identifier>>() {
-                @Override
-                public Set<Identifier> get() {
-                    return regions.regions().keySet();
-                }  
-            };
-        }
-    }
-    
-    public static FrontendServerExecutor newInstance(
-            Injector injector) {
-        return new FrontendServerExecutor(injector);
-    }
-    
-    @Inject
-    protected FrontendServerExecutor(
-            Injector injector) {
-        super(injector);
-    }
+    protected FrontendServerExecutor() {}
     
     @Override
-    protected void startUp() throws Exception {
-        super.startUp();
-        injector.getInstance(ClientPeerConnectionDispatchers.class);
+    protected void configure() {
+        bind(Key.get(ZxidGenerator.class, Module.annotation())).to(Key.get(ZxidEpochIncrementer.class, Module.annotation()));
+        bind(Key.get(ZxidReference.class, Module.annotation())).to(Key.get(ZxidGenerator.class, Module.annotation()));
+        bind(Key.get(SessionManager.class, Module.annotation())).to(Key.get(new TypeLiteral<SimpleSessionManager<FrontendSessionExecutor>>() {}, Module.annotation()));
+        bind(Key.get(new TypeLiteral<TaskExecutor<ConnectMessage.Request, ConnectMessage.Response>>(){}, Module.annotation())).to(FrontendConnectExecutor.class);
+    }
+    
+    @Provides @Singleton @Frontend
+    public ZxidEpochIncrementer getZxids() {
+        return ZxidEpochIncrementer.fromZero();
     }
 
-    public static class ResponseProcessor implements Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> {
+    @Provides @Frontend @Singleton
+    public ConcurrentMap<Long, FrontendSessionExecutor> getSessionExecutors() {
+        return new MapMaker().makeMap();
+    }
+    
+    @Provides @Frontend @Singleton
+    public TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor() {
+        return ProcessorTaskExecutor.of(
+                FourLetterRequestProcessor.newInstance());
+    }
+    
+    @Provides @Singleton
+    public ClientPeerConnectionDispatchers getDispatchers(
+            RegionsConnectionsService connections) {
+        return ClientPeerConnectionDispatchers.create(connections);
+    }
 
-        public static ResponseProcessor create(
-                SessionManager sessions,
-                ZxidGenerator zxids) {
-            return new ResponseProcessor(sessions, zxids);
-        }
-        
-        protected final SessionManager sessions;
-        protected final AssignZxidProcessor zxids;
+    @Provides @Singleton
+    public ResponseProcessor newResponseProcessor(
+            @Frontend SessionManager sessions,
+            @Frontend ZxidGenerator zxids) {
+        return ResponseProcessor.create(sessions, zxids);
+    }
 
-        @Inject
-        public ResponseProcessor(
-                SessionManager sessions,
-                ZxidGenerator zxids) {
-            this(sessions, AssignZxidProcessor.newInstance(zxids));
-        }
-        
-        public ResponseProcessor(
-                SessionManager sessions,
-                AssignZxidProcessor zxids) {
-            this.sessions = sessions;
-            this.zxids = zxids;
-        }
-        
-        @Override
-        public Message.ServerResponse<?> apply(Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>> input) {
-            Optional<Operation.ProtocolRequest<?>> request = input.second().first();
-            Records.Response response = input.second().second();
-            int xid;
-            if (response instanceof Operation.RequestId) {
-                xid = ((Operation.RequestId) response).xid();
-            } else {
-                xid = request.get().xid();
-            }
-            OpCode opcode;
-            if (OpCodeXid.has(xid)) {
-                opcode = OpCodeXid.of(xid).opcode();
-            } else {
-                opcode = request.get().record().opcode();
-            }
-            long zxid = zxids.apply(opcode);
-            if (opcode == OpCode.CLOSE_SESSION) {
-                sessions.remove(input.first());
-            }
-            return ProtocolResponseMessage.of(xid, zxid, response);
-        }
+    @Provides @Singleton
+    public FrontendSessionExecutor.Factory getFrontendSessionExecutorFactory(
+            Provider<ResponseProcessor> processor,
+            VolumeCacheService volumes,
+            ClientPeerConnectionDispatchers dispatchers,
+            RegionsConnectionsService regions,
+            ScheduledExecutorService scheduler,
+            Executor executor) {
+        FrontendSessionExecutor.Factory factory = FrontendSessionExecutor.factory(
+                false,
+                processor,
+                volumes.idToVolume(),
+                volumes.pathToVolume(),
+                getRegions(regions),
+                dispatchers.get(),
+                scheduler, 
+                executor);
+        return factory;
+    }
+    
+    @Provides @Frontend @Singleton
+    public SimpleSessionManager<FrontendSessionExecutor> getSessionManager(
+            Configuration configuration,
+            @Frontend ServerInetAddressView address,
+            @Frontend ConcurrentMap<Long, FrontendSessionExecutor> executors,
+            FrontendSessionExecutor.Factory factory) {
+        return SimpleSessionManager.fromConfiguration(
+                (short) address.get().hashCode(), 
+                executors, factory, configuration);
+    }
+    
+    @Provides @Singleton
+    public FrontendConnectExecutor getConnectExecutor(
+            @Frontend ZxidReference lastZxid,
+            @Frontend ConcurrentMap<Long, FrontendSessionExecutor> executors,
+            Provider<ResponseProcessor> processor,
+            VolumeCacheService volumes,
+            ClientPeerConnectionDispatchers dispatchers,
+            RegionsConnectionsService regions,
+            ScheduledExecutorService scheduler,
+            Executor executor,
+            @Frontend SimpleSessionManager<FrontendSessionExecutor> sessions) {
+        FrontendSessionExecutor.Factory factory = FrontendSessionExecutor.factory(
+                true,
+                processor,
+                volumes.idToVolume(),
+                volumes.pathToVolume(),
+                getRegions(regions),
+                dispatchers.get(),
+                scheduler, 
+                executor);
+        return FrontendConnectExecutor.defaults(
+                factory, executors, sessions, lastZxid);
+    }
+
+    @Provides @Singleton @Frontend
+    public ServerExecutor<FrontendSessionExecutor> getServerExecutor(
+            @Frontend TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor,
+            @Frontend TaskExecutor<ConnectMessage.Request, ConnectMessage.Response> connectExecutor,
+            @Frontend ConcurrentMap<Long, FrontendSessionExecutor> sessionExecutors) {
+        return new SimpleServerExecutor<FrontendSessionExecutor>(sessionExecutors, connectExecutor, anonymousExecutor);
+    }
+    
+    protected static Supplier<Set<Identifier>> getRegions(
+            final RegionsConnectionsService regions) {
+        return new Supplier<Set<Identifier>>() {
+            @Override
+            public Set<Identifier> get() {
+                return regions.regions().keySet();
+            }  
+        };
     }
 }
