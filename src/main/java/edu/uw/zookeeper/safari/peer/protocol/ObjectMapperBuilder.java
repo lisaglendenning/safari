@@ -12,8 +12,8 @@ import com.google.common.primitives.UnsignedLong;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderDeserializer;
-import edu.uw.zookeeper.clients.trace.ProtocolResponseHeaderSerializer;
+import edu.uw.zookeeper.client.trace.ProtocolResponseHeaderDeserializer;
+import edu.uw.zookeeper.client.trace.ProtocolResponseHeaderSerializer;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;

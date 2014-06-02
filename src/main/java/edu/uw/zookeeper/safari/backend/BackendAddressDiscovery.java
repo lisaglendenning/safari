@@ -14,9 +14,9 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.base.Throwables;
 
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.clients.jmx.ServerViewJmxQuery;
-import edu.uw.zookeeper.clients.jmx.SunAttachQueryJmx;
 import edu.uw.zookeeper.common.DefaultsFactory;
+import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
+import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
 
 public class BackendAddressDiscovery implements Callable<ServerInetAddressView> {
     

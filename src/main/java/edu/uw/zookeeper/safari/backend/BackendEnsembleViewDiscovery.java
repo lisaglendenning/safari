@@ -16,9 +16,9 @@ import com.google.common.collect.Iterators;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.ServerRoleView;
-import edu.uw.zookeeper.clients.jmx.ServerViewJmxQuery;
-import edu.uw.zookeeper.clients.jmx.SunAttachQueryJmx;
 import edu.uw.zookeeper.common.DefaultsFactory;
+import edu.uw.zookeeper.jmx.ServerViewJmxQuery;
+import edu.uw.zookeeper.jmx.SunAttachQueryJmx;
 
 public class BackendEnsembleViewDiscovery implements Callable<EnsembleView<ServerInetAddressView>> {
 
