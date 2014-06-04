@@ -3,6 +3,7 @@ package edu.uw.zookeeper.safari.data;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
@@ -20,6 +21,7 @@ import org.apache.zookeeper.Watcher;
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
 import com.google.common.primitives.UnsignedLong;
@@ -32,7 +34,6 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.Automaton.Transition;
-import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.LockingCachedFunction;
 import edu.uw.zookeeper.common.LoggingPromise;
 import edu.uw.zookeeper.common.Pair;
@@ -46,6 +47,7 @@ import edu.uw.zookeeper.data.AbstractWatchMatchListener;
 import edu.uw.zookeeper.data.DefaultsNode;
 import edu.uw.zookeeper.data.NameTrie;
 import edu.uw.zookeeper.data.SimpleLabelTrie;
+import edu.uw.zookeeper.data.StampedValue;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchMatchListener;
 import edu.uw.zookeeper.data.WatchMatcher;
@@ -60,24 +62,29 @@ import edu.uw.zookeeper.safari.control.ControlSchema;
 public final class VolumeCacheService extends AbstractIdleService {
 
     public static Module module() {
-        return new Module();
+        return Module.create();
     }
     
     public static class Module extends AbstractModule {
 
-        public Module() {}
+        public static Module create() {
+            return new Module();
+        }
         
-        @Provides @Singleton
-        public VolumeDescriptorCache getVolumeDescriptorCache() {
-            return VolumeDescriptorCache.create();
+        protected Module() {}
+        
+        @Provides
+        public VolumeDescriptorCache getVolumeDescriptorCache(
+                VolumeCacheService volumes) {
+            return volumes.idToPath();
         }
         
         @Provides @Singleton
         public VolumeCacheService getVolumeCacheService(
-                VolumeDescriptorCache descriptors,
                 ControlClientService control,
                 ServiceMonitor monitor) {
-            VolumeCacheService instance = create(descriptors, control);
+            VolumeCacheService instance = VolumeCacheService.create(
+                    VolumeDescriptorCache.create(), control);
             monitor.add(instance);
             LatestVolumesWatcher.create(instance, control);
             return instance;
@@ -121,8 +128,8 @@ public final class VolumeCacheService extends AbstractIdleService {
         this.callbacks = new VolumeBranchCallbacks();
     }
     
-    public CachedFunction<Identifier, ZNodePath> idToPath() {
-        return descriptors.asLookup();
+    public VolumeDescriptorCache idToPath() {
+        return descriptors;
     }
     
     public LockingCachedFunction<Identifier, VersionedVolume> idToVolume() {
@@ -133,9 +140,25 @@ public final class VolumeCacheService extends AbstractIdleService {
         return byPath.lookup;
     }
     
+    public Set<Volume> volumes() {
+        lock.readLock().lock();
+        try {
+            ImmutableSet.Builder<Volume> volumes = ImmutableSet.builder();
+            for (VersionedVolume volume: byId.cache.values()) {
+                if (volume instanceof Volume) {
+                    volumes.add((Volume) volume);
+                }
+            }
+            return volumes.build();
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+    
     public boolean add(VersionedVolume volume) {
         lock.writeLock().lock();
         try {
+            logger.info("Adding volume {}", volume);
             descriptors.onSuccess(volume.getDescriptor());
             boolean added = byId.add(volume);
             if (added) {
@@ -150,6 +173,7 @@ public final class VolumeCacheService extends AbstractIdleService {
     public boolean remove(Identifier id) {
         lock.writeLock().lock();
         try {
+            logger.info("Removing volume {}", id);
             boolean removed = byId.remove(id);
             ZNodePath path = descriptors.remove(id);
             if (path != null) {
@@ -204,6 +228,7 @@ public final class VolumeCacheService extends AbstractIdleService {
         
         @Override
         public void handleWatchEvent(WatchEvent event) {
+            logger.info("{}", event);
             clear();
         }
         
@@ -249,6 +274,7 @@ public final class VolumeCacheService extends AbstractIdleService {
                 ZNodePath path = node.data().get();
                 assert (path != null);
                 Identifier id = node.volume().name();
+                logger.debug("Volume at {} is {}", path, id);
                 descriptors.onSuccess(VolumeDescriptor.valueOf(id, path));
             }
         }
@@ -277,6 +303,7 @@ public final class VolumeCacheService extends AbstractIdleService {
                     UnsignedLong version = node.data().get();
                     assert (version != null);
                     Identifier id = node.log().volume().name();
+                    logger.info("Latest version of volume {} is {}", id, version);
                     VersionedVolume existing = byId.cache.get(id);
                     if ((existing == null) || (existing.getVersion().compareTo(version) < 0)) {
                         ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = node.log().version(version);
@@ -343,7 +370,7 @@ public final class VolumeCacheService extends AbstractIdleService {
         private final LockingCachedFunction<ZNodePath, Volume> lookup;
         
         public VolumeByPath() {
-            this.overlay = VolumeOverlay.newInstance();
+            this.overlay = VolumeOverlay.empty();
             this.lookups = SimpleLabelTrie.forRoot(new PathLookup(AbstractNameTrie.<PathLookup>rootPointer()));
             this.lookup = LockingCachedFunction.create(
                     lock.writeLock(),
@@ -353,10 +380,9 @@ public final class VolumeCacheService extends AbstractIdleService {
                         Volume apply(ZNodePath path) {
                             lock.readLock().lock();
                             try {
-                                VolumeOverlayNode node = overlay.apply(path);
-                                if (node != null) {
-                                    Identifier id = node.getId().get();
-                                    Volume volume = (Volume) byId.cache.get(id);
+                                StampedValue<Identifier> id = overlay.apply(path);
+                                if (id != null) {
+                                    Volume volume = (Volume) byId.cache.get(id.get());
                                     if ((volume != null) && Volume.contains(volume, path)) {
                                         return volume;
                                     }
@@ -399,7 +425,7 @@ public final class VolumeCacheService extends AbstractIdleService {
         }
         
         public boolean remove(ZNodePath path, Identifier id) {
-            return (overlay.remove(path, id) != null);
+            return overlay.remove(path, id);
             // TODO lookups ??
         }
         
@@ -610,7 +636,12 @@ public final class VolumeCacheService extends AbstractIdleService {
                 return;
             }
             
-            VolumeBranchCallback callback = new VolumeBranchCallback(VolumeBranchListener.fromCache(k, state, idToPath()));
+            VolumeBranchCallback callback;
+            try {
+                callback = new VolumeBranchCallback(VolumeBranchListener.fromCache(k, state, idToPath().asLookup()));
+            } catch (Exception e) {
+                throw Throwables.propagate(e);
+            }
             callbacks.put(k, callback);
             callback.addListener(callback, SameThreadExecutor.getInstance());
         }

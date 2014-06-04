@@ -727,8 +727,8 @@ public class ControlSchema extends ControlZNode<Void> {
                         
                         @Override
                         public int compare(final ZNodeName a, final ZNodeName b) {
-                            final UnsignedLong avalue = UnsignedLong.valueOf(a.toString());
-                            final UnsignedLong bvalue = UnsignedLong.valueOf(b.toString());
+                            final UnsignedLong avalue = a.equals(Latest.LABEL) ? UnsignedLong.ZERO : UnsignedLong.valueOf(a.toString());
+                            final UnsignedLong bvalue = b.equals(Latest.LABEL) ? UnsignedLong.ZERO : UnsignedLong.valueOf(b.toString());
                             return avalue.compareTo(bvalue);
                         }
                     }

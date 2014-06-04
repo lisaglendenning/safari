@@ -3,6 +3,9 @@ package edu.uw.zookeeper.safari;
 import java.util.List;
 
 import com.google.common.collect.ImmutableList;
+import com.google.inject.name.Named;
+import com.google.inject.name.Names;
+
 import edu.uw.zookeeper.safari.control.ControlModules;
 import edu.uw.zookeeper.safari.frontend.FrontendModules;
 import edu.uw.zookeeper.safari.region.RegionModules;
@@ -24,11 +27,22 @@ public class SafariModules {
         return ImmutableList.of(control, server, member);
     }
     
-    public static Component<?> newSingletonSafariServer(
+    public static @Named("safari") Component<?> newSingletonSafariServer(
             final Component<?> server, final Iterable<? extends Component<?>> components) {
+        return newSingletonSafariServer(
+                server, 
+                components, 
+                Names.named("safari"));
+    }
+    
+    public static Component<?> newSingletonSafariServer(
+            final Component<?> server, 
+            final Iterable<? extends Component<?>> components,
+            final Named name) {
         return RegionModules.newSingletonRegionMember(
                 server, 
                 components, 
+                name,
                 ImmutableList.<SafariModule>of(
                         edu.uw.zookeeper.safari.backend.Module.create(),
                         edu.uw.zookeeper.safari.frontend.Module.create()),
@@ -45,17 +59,24 @@ public class SafariModules {
         final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
         return ImmutableList.<Component<?>>builder().add(control).addAll(newSafari(root, control)).build();
     }
-    
+
     public static List<Component<?>> newSafari(
             final Component<?> root,
             final Component<?> control) {
+        return newSafari(root, control, "safari-%d");
+    }
+    
+    public static List<Component<?>> newSafari(
+            final Component<?> root,
+            final Component<?> control,
+            String format) {
         final int size = 3;
         final List<Component<?>> storage = StorageModules.newStorageEnsemble(root, size);
         return ImmutableList.<Component<?>>builder().addAll(storage)
                 .addAll(newSafariRegion(
                         storage,
                         ImmutableList.of(root, control),
-                        "member-%d")).build();
+                        format)).build();
     }
     
     public static List<Component<?>> newSafariRegion(

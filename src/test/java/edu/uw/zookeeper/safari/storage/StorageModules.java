@@ -26,11 +26,16 @@ import edu.uw.zookeeper.server.SimpleServerBuilder;
 
 public class StorageModules {
 
-    public static Component<?> newStorageSingletonEnsemble(
+    public static @Named("storage") Component<?> newStorageSingletonEnsemble(
             Component<?> parent) {
-        return Iterables.getOnlyElement(newStorageEnsemble(parent, 1));
+        return newStorageSingletonEnsemble(parent, Names.named("storage"));
     }
 
+    public static Component<?> newStorageSingletonEnsemble(
+            Component<?> parent, Named name) {
+        return Modules.newServerComponent(parent, name);
+    }
+    
     public static List<Component<?>> newStorageEnsemble(Component<?> parent, int size) {
         return newStorageEnsemble(parent, size, "storage-%d");
     }

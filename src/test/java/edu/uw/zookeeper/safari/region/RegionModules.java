@@ -39,12 +39,26 @@ public class RegionModules {
             final Component<?> storage,
             final Iterable<? extends Component<?>> components,
             final List<SafariModule> modules,
-            Class<? extends Provider<Component<?>>> provider) {
+            final Class<? extends Provider<Component<?>>> provider) {
+        return newSingletonRegionMember(
+                storage, 
+                components, 
+                Names.named("member"),
+                modules,
+                provider);
+    }
+    
+    public static Component<?> newSingletonRegionMember(
+            final Component<?> storage,
+            final Iterable<? extends Component<?>> components,
+            final Named name,
+            final List<SafariModule> modules,
+            final Class<? extends Provider<Component<?>>> provider) {
         return newRegionMember(
                 ImmutableList.<Component<?>>of(storage), 
                 0, 
                 components, 
-                Names.named("member"),
+                name,
                 modules,
                 provider);
     }

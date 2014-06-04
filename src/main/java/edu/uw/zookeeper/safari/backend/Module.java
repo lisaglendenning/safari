@@ -17,7 +17,7 @@ public class Module extends AbstractSafariModule {
         return new Module();
     }
     
-    public Module() {}
+    protected Module() {}
 
     @Override
     public Class<? extends Annotation> getAnnotation() {

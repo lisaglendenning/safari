@@ -5,8 +5,6 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import com.google.common.collect.ImmutableList;
-import com.google.inject.name.Named;
-
 import edu.uw.zookeeper.safari.AbstractMainTest;
 import edu.uw.zookeeper.safari.Component;
 import edu.uw.zookeeper.safari.Modules;
@@ -21,7 +19,7 @@ public class BackendTest extends AbstractMainTest {
     @Test(timeout=15000)
     public void testStartAndStop() throws Exception {
         final long pause = 5000L;
-        final Component<Named> root = Modules.newRootComponent();
+        final Component<?> root = Modules.newRootComponent();
         final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
         final Component<?> server = StorageModules.newStorageSingletonEnsemble(root);
         final Component<?> client = RegionModules.newSingletonRegionMember(

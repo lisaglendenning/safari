@@ -40,14 +40,10 @@ public final class Volume extends VersionedVolume {
     
     public static boolean contains(
             final ZNodePath root, final Set<ZNodeName> branches, final ZNodePath path) {
-        if (! path.startsWith(root)) {
-            return false;
-        }
-        ZNodeName remaining = path.suffix(root.isRoot() ? 0 : root.length());
-        return contains(branches, remaining);
+        return (path.startsWith(root) && contains(branches, path.suffix(root)));
     }
     
-    public static boolean contains(final Set<ZNodeName> branches, ZNodeName remaining) {
+    public static boolean contains(final Set<ZNodeName> branches, final ZNodeName remaining) {
         if (! (remaining instanceof EmptyZNodeLabel)) {
             for (ZNodeName branch: branches) {
                 if (branch.startsWith(remaining)) {

@@ -5,7 +5,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.name.Named;
+import com.google.inject.name.Names;
+
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.control.ControlClientService;
@@ -13,10 +17,34 @@ import edu.uw.zookeeper.safari.control.ControlModules;
 import edu.uw.zookeeper.safari.control.ControlSchema;
 import edu.uw.zookeeper.safari.control.ControlZNode;
 import edu.uw.zookeeper.safari.data.VolumeDescriptor;
+import edu.uw.zookeeper.safari.storage.StorageModules;
 
 @RunWith(JUnit4.class)
 public class MultipleRegionTest extends AbstractMainTest {
 
+    @Test(timeout=30000)
+    public void testStartAndStop() throws Exception {
+        final long pause = 6000L;
+        final int num_regions = 2;
+        final Component<?> root = Modules.newRootComponent();
+        final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
+        Services.startAndWait(control.injector().getInstance(Service.class));
+        
+        ImmutableList.Builder<Component<?>> components = ImmutableList.builder();
+        components.add(root);
+        components.add(control);
+        for (int i=0; i<num_regions; ++i) {
+            Named name = Names.named(String.format("storage-%d", i+1));
+            Component<?> storage = StorageModules.newStorageSingletonEnsemble(root, name);
+            Services.startAndWait(storage.injector().getInstance(Service.class));
+            name = Names.named(String.format("region-%d", i+1));
+            Component<?> safari = SafariModules.newSingletonSafariServer(storage, ImmutableList.of(root, control), name);
+            components.add(storage);
+            components.add(safari);
+        }
+        pauseWithComponents(components.build(), pause);
+    }
+    
     @Ignore
     @Test(timeout=30000)
     public void test() throws Exception {

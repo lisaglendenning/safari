@@ -124,7 +124,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
     private final Function<Identifier, CachedFunction<Long, UnsignedLong>> idToZxid;
     private final Function<Identifier, CachedFunction<UnsignedLong, Volume>> idToVolume;
     
-    protected VersionedVolumeCacheService(
+    protected VersionedVolumeCacheService(  
             Predicate<Identifier> isResident,
             CachedFunction<Identifier, ZNodePath> idToPath,
             ControlClientService control,
@@ -686,7 +686,11 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                         Pair<Identifier, UnsignedLong> k = Pair.create(v.getDescriptor().getId(), v.getVersion());
                         BranchesListener listener = listeners.get(k);
                         if (listener == null) {
-                            listener = new BranchesListener(VolumeBranchListener.fromCache(k, v.getState(), idToPath));
+                            try {
+                                listener = new BranchesListener(VolumeBranchListener.fromCache(k, v.getState(), idToPath));
+                            } catch (Exception e) {
+                                throw Throwables.propagate(e);
+                            }
                             listeners.put(k, listener);
                             listener.get().addListener(listener, SameThreadExecutor.getInstance());
                         }

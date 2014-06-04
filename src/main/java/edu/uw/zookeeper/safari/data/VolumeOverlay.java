@@ -1,10 +1,14 @@
 package edu.uw.zookeeper.safari.data;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Map.Entry;
 
 import javax.annotation.Nullable;
 
+import com.google.common.base.Function;
 import com.sun.xml.internal.xsom.impl.scd.Iterators;
 
 import edu.uw.zookeeper.data.EmptyZNodeLabel;
@@ -21,38 +25,155 @@ import edu.uw.zookeeper.safari.Identifier;
 /**
  * Not thread-safe
  */
-public final class VolumeOverlay {
+public final class VolumeOverlay implements Function<ZNodePath, StampedValue<Identifier>> {
     
-    public static VolumeOverlay newInstance() {
-        return new VolumeOverlay(SimpleLabelTrie.forRoot(VolumeOverlayNode.root(null)));
+    public static VolumeOverlay empty() {
+        return new VolumeOverlay(SimpleLabelTrie.forRoot(OverlayNode.<Identifier>root(null)));
     }
 
-    private final NameTrie<VolumeOverlayNode> trie;
+    private final NameTrie<OverlayNode<Identifier>> trie;
     
     protected VolumeOverlay(
-            NameTrie<VolumeOverlayNode> trie) {
+            NameTrie<OverlayNode<Identifier>> trie) {
         this.trie = trie;
     }
     
-    public @Nullable VolumeOverlayNode apply(final ZNodePath path) {
-        VolumeOverlayNode enclosing = trie.root();
-        VolumeOverlayNode node = enclosing;
-        ZNodeName remaining = path.suffix(0);
+    public @Nullable StampedValue<Identifier> apply(final ZNodePath path) {
+        OverlayNode<Identifier> node = get(path);
+        return (node == null) ? null : node.getValue();
+    }
+
+    public boolean add(final long stamp, final ZNodePath path, final Identifier id) {
+        OverlayNode<Identifier> node = get(path);
+        OverlayNode<Identifier> parent = null;
+        ZNodeName remaining = null;
+        if (node != null) {
+            if (node.path().length() == path.length()) {
+                // my path
+                if (node.getValue().stamp() >= stamp) {
+                    // don't overwrite more up-to-date information
+                    checkArgument((node.getValue().stamp() > stamp) || id.equals(node.getValue().get()));
+                    return false;
+                }
+            } else {
+                // parent
+                parent = node;
+                // FIXME ??
+//                if (parent.getId().stamp() > stamp) {
+//                    return false;
+//                }
+                remaining = path.suffix(parent.path());
+                Iterator<ZNodeLabel> labels = (remaining instanceof ZNodeLabelVector) ? ((ZNodeLabelVector) remaining).iterator() : Iterators.singleton((ZNodeLabel) remaining);
+                node = OverlayNode.putIfAbsent(parent, labels);
+            }
+        } else {
+            node = OverlayNode.putIfAbsent(trie, path);
+        }
+        
+        // just added this node
+        if (node.getValue() == null) {
+            if (parent == null) {
+                for (parent = node.parent().get(); (parent != null) && (parent.getValue() == null); parent = parent.parent().get()) {
+                    ;
+                }
+                if (parent != null) {
+                    remaining = path.suffix(parent.path().length());
+                }
+            }
+            // fix overlay
+            if (parent != null) {
+                Iterator<Map.Entry<ZNodeName, OverlayNode<Identifier>>> overlays = parent.getOverlay().entrySet().iterator();
+                while (overlays.hasNext()) {
+                    Map.Entry<ZNodeName, OverlayNode<Identifier>> e = overlays.next();
+                    if (e.getKey().startsWith(remaining)) {
+                        overlays.remove();
+                        ZNodeName suffix = ((ZNodeLabelVector) e.getKey()).suffix(remaining.length());
+                        assert (! (suffix instanceof EmptyZNodeLabel));
+                        node.getOverlay().put(suffix, e.getValue());
+                    }
+                }
+                parent.getOverlay().put(remaining, node);
+            }
+        }
+        
+        node.setValue(StampedValue.valueOf(stamp, id));
+        
+        return true;
+    }
+
+    public boolean remove(final ZNodePath path, final Identifier id) {
+        OverlayNode<Identifier> node = trie.get(path);
+        if (node != null) {
+            if (node.getValue() == null) {
+                return false;
+            }
+            
+            // TODO ??
+            assert (id.equals(node.getValue().get()));
+            
+            OverlayNode<Identifier> parent;
+            for (parent = node.parent().get(); (parent != null) && (parent.getValue() == null); parent = parent.parent().get()) {
+                ;
+            }
+            if (parent != null) {
+                // fix overlay
+                ZNodeName remaining = path.suffix(parent.path());
+                assert (parent.getOverlay().containsKey(remaining));
+                parent.getOverlay().remove(remaining);
+                for (Entry<ZNodeName, OverlayNode<Identifier>> e: node.getOverlay().entrySet()) {
+                    parent.getOverlay().put(RelativeZNodePath.fromString(
+                            ZNodePath.join(remaining.toString(), e.getKey().toString())),
+                            e.getValue());
+                }
+            }
+
+            node.getOverlay().clear();
+            node.setValue(null);
+            
+            // prune empty leaves
+            OverlayNode<Identifier> finger = node;
+            while ((finger != null) && finger.isEmpty() && (finger.getValue() == null)) {
+                parent = finger.parent().get();
+                if (parent != null) {
+                    finger.remove();
+                    finger = parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        return (node != null);
+    }
+
+    public void clear() {
+        trie.clear();
+    }
+    
+    @Override
+    public String toString() {
+        return trie.toString();
+    }
+    
+    private OverlayNode<Identifier> get(final ZNodePath path) {
+        OverlayNode<Identifier> enclosing = trie.root();
+        OverlayNode<Identifier> node = enclosing;
+        ZNodeName remaining = path.suffix(node.path());
         while ((node != null) && !(remaining instanceof EmptyZNodeLabel)) {
-            VolumeOverlayNode next = null;
-            if (node.getId() != null) {
+            OverlayNode<Identifier> next = null;
+            if (node.getValue() != null) {
                 enclosing = node;
                 next = node.getOverlay().get(remaining);
                 if (next != null) {
-                    // done; path is a leaf of this volume
+                    // done
+                    enclosing = next;
                     remaining = EmptyZNodeLabel.getInstance();
                 } else if (remaining instanceof ZNodeLabelVector) {
-                    assert (remaining instanceof RelativeZNodePath);
                     // path may be a descendant of one of this volume's leaves
                     RelativeZNodePath relative = (RelativeZNodePath) remaining;
-                    for (Map.Entry<ZNodeName, VolumeOverlayNode> child: node.getOverlay().entrySet()) {
+                    for (Map.Entry<ZNodeName, OverlayNode<Identifier>> child: node.getOverlay().entrySet()) {
                         if (relative.startsWith(child.getKey())) {
                             next = child.getValue();
+                            enclosing = next;
                             remaining = relative.suffix(child.getKey().length());
                             break;
                         }
@@ -63,7 +184,6 @@ public final class VolumeOverlay {
                 // overlay failed; fall back to trie links
                 ZNodeLabel label;
                 if (remaining instanceof ZNodeLabelVector) {
-                    assert (remaining instanceof RelativeZNodePath);
                     RelativeZNodePath relative = (RelativeZNodePath) remaining;
                     label = relative.iterator().next();
                     remaining = relative.suffix(label.length());
@@ -75,108 +195,6 @@ public final class VolumeOverlay {
             }
             node = next;
         }
-        if ((enclosing == null) || (enclosing.getId() == null)) {
-            return null;
-        }
-        return enclosing;     
-    }
-
-    public VolumeOverlayNode add(final long stamp, final ZNodePath path, final Identifier id) {
-        // don't overwrite more up-to-date information
-        VolumeOverlayNode node = apply(path);
-        VolumeOverlayNode parent = null;
-        ZNodeName remaining = null;
-        if (node != null) {
-            if (node.path().length() == path.length()) {
-                // my path
-                if (node.getId().stamp() >= stamp) {
-                    assert ((node.getId().stamp() > stamp) || id.equals(node.getId().get()));
-                    return null;
-                }
-            } else {
-                // parent
-                parent = node;
-                // TODO ??
-//                if (parent.getId().stamp() > stamp) {
-//                    return null;
-//                }
-                remaining = path.suffix(parent.path().length());
-                Iterator<ZNodeLabel> labels = (remaining instanceof ZNodeLabelVector) ? ((ZNodeLabelVector) remaining).iterator() : Iterators.singleton((ZNodeLabel) remaining);
-                node = VolumeOverlayNode.putIfAbsent(parent, labels);
-            }
-        } else {
-            node = VolumeOverlayNode.putIfAbsent(trie, path);
-        }
-        
-        if (node.getId() == null) {
-            if (parent == null) {
-                for (parent = node.parent().get(); (parent != null) && (parent.getId() == null); parent = parent.parent().get()) {
-                    ;
-                }
-                if (parent != null) {
-                    remaining = path.suffix(parent.path().length());
-                }
-            }
-            // fix parent's overlay
-            if (parent != null) {
-                assert (! parent.getOverlay().containsKey(remaining));
-                Iterator<Map.Entry<ZNodeName, VolumeOverlayNode>> overlays = parent.getOverlay().entrySet().iterator();
-                while (overlays.hasNext()) {
-                    Map.Entry<ZNodeName, VolumeOverlayNode> e = overlays.next();
-                    if (e.getKey().startsWith(remaining)) {
-                        overlays.remove();
-                        ZNodeName suffix = ((ZNodeLabelVector) e.getKey()).suffix(remaining.length());
-                        node.getOverlay().put(suffix, e.getValue());
-                    }
-                }
-                parent.getOverlay().put(remaining, node);
-            }
-        }
-        
-        node.setId(StampedValue.valueOf(stamp, id));
-        
-        return node;
-    }
-
-    public VolumeOverlayNode remove(final ZNodePath path, final Identifier id) {
-        VolumeOverlayNode node = trie.get(path);
-        if (node != null) {
-            if (node.getId() == null) {
-                return null;
-            }
-            
-            // TODO ??
-            assert (id.equals(node.getId().get()));
-            
-            // fix parent's overlay
-            VolumeOverlayNode parent;
-            for (parent = node.parent().get(); (parent != null) && (parent.getId() == null); parent = parent.parent().get()) {
-                ;
-            }
-            if (parent != null) {
-                ZNodeName remaining = path.suffix(parent.path().length());
-                assert (parent.getOverlay().containsKey(remaining));
-                parent.getOverlay().remove(remaining);
-                parent.getOverlay().putAll(node.getOverlay());
-            }
-
-            node.getOverlay().clear();
-            node.setId(null);
-            
-            // prune empty leaves
-            VolumeOverlayNode finger = node;
-            while ((finger != null) && finger.isEmpty() && (finger.getId() == null)) {
-                parent = finger.parent().get();
-                if (parent != null) {
-                    finger.remove();
-                    finger = parent;
-                }
-            }
-        }
-        return node;
-    }
-
-    public void clear() {
-        trie.clear();
+        return ((enclosing == null) || (enclosing.getValue() == null)) ? null : enclosing;     
     }
 }

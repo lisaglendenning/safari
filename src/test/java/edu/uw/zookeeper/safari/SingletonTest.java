@@ -38,8 +38,7 @@ import edu.uw.zookeeper.safari.frontend.Frontend;
 
 @RunWith(JUnit4.class)
 public class SingletonTest extends AbstractMainTest {
-    
-    @Ignore
+
     @Test(timeout=12000)
     public void testStartAndStop() throws Exception {
         final long pause = 4000L;
@@ -47,7 +46,6 @@ public class SingletonTest extends AbstractMainTest {
         pauseWithComponents(components, pause);
     }
 
-    @Ignore
     @Test(timeout=16000)
     public void testClientConnect() throws Exception {
         final long pause = 4000L;
@@ -55,7 +53,6 @@ public class SingletonTest extends AbstractMainTest {
         pauseWithComponents(components, pause);
     }
 
-    @Ignore
     @Test(timeout=20000)
     public void testClientsConnect() throws Exception {
         final long pause = 8000L;
@@ -65,7 +62,8 @@ public class SingletonTest extends AbstractMainTest {
                 components, 
                 pause);
     }
-    
+
+    @Ignore
     @Test(timeout=20000)
     public void testClientPipeline() throws Exception {
         final int iterations = 32;

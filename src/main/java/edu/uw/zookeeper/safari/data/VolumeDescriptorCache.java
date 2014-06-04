@@ -41,9 +41,8 @@ public final class VolumeDescriptorCache implements FutureCallback<VolumeDescrip
                         if (lookup == null) {
                             lookup = new Lookup(id, SettableFuturePromise.<ZNodePath>create());
                             Lookup existing = lookups.putIfAbsent(id, lookup);
-                            if (existing == null) {
-                                lookup.addListener(lookup, SameThreadExecutor.getInstance());
-                            } else {
+                            if (existing != null) {
+                                lookup.cancel(false);
                                 lookup = existing;
                             }
                         }
@@ -61,7 +60,7 @@ public final class VolumeDescriptorCache implements FutureCallback<VolumeDescrip
         return cache.asCache();
     }
     
-    public CachedFunction<Identifier,ZNodePath> asLookup() {
+    public CachedFunction<Identifier, ZNodePath> asLookup() {
         return cache.asLookup();
     }
     
@@ -106,6 +105,7 @@ public final class VolumeDescriptorCache implements FutureCallback<VolumeDescrip
                 Identifier volume,
                 Promise<ZNodePath> delegate) {
             super(volume, delegate);
+            addListener(this, SameThreadExecutor.getInstance());
         }
         
         @Override
@@ -117,10 +117,9 @@ public final class VolumeDescriptorCache implements FutureCallback<VolumeDescrip
         
         @Override
         public void run() {
-            if (! isDone()) {
-                return;
+            if (isDone()) {
+                lookups.remove(task(), this);
             }
-            lookups.remove(task(), this);
         }
     }
 }
