@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.Collections;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -22,20 +21,23 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
+import com.google.common.base.Throwables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
+import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Provider;
 
+import edu.uw.zookeeper.WatchType;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Automatons;
 import edu.uw.zookeeper.common.Actors.ExecutedPeekingQueuedActor;
 import edu.uw.zookeeper.common.LockingCachedFunction;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.ParameterizedFactory;
 import edu.uw.zookeeper.common.Processors;
@@ -44,7 +46,10 @@ import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.WaitingActor;
+import edu.uw.zookeeper.data.OptionalNode;
+import edu.uw.zookeeper.data.SimpleLabelTrie;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.NotificationListener;
@@ -58,17 +63,17 @@ import edu.uw.zookeeper.protocol.proto.IPingResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.backend.OutdatedVersionException;
 import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.safari.data.NullVolume;
-import edu.uw.zookeeper.safari.data.VersionedId;
-import edu.uw.zookeeper.safari.data.VersionedVolume;
-import edu.uw.zookeeper.safari.data.Volume;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
+import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
+import edu.uw.zookeeper.safari.volume.NullVolume;
+import edu.uw.zookeeper.safari.volume.VolumeVersion;
 import edu.uw.zookeeper.server.AbstractSessionExecutor;
 
 public class FrontendSessionExecutor extends AbstractSessionExecutor implements Processors.UncheckedProcessor<Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>, Message.ServerResponse<?>> {
@@ -76,8 +81,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
     public static Factory factory(
             boolean renew,
             Provider<? extends Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>>> processor,
-            LockingCachedFunction<Identifier, VersionedVolume> idToVolume,
-            AsyncFunction<ZNodePath, Volume> pathToVolume,
+            LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
+            AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
+            AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
+            AsyncFunction<VersionedId, Long> versionToZxid,
             Supplier<Set<Identifier>> regions,
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             ScheduledExecutorService scheduler,
@@ -87,6 +94,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                         processor,
                         idToVolume,
                         pathToVolume,
+                        versionToVolume,
+                        versionToZxid,
                         regions,
                         dispatchers,
                         scheduler,
@@ -97,8 +106,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
 
         private final boolean renew;
         private final Provider<? extends Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>>> processor;
-        private final LockingCachedFunction<Identifier, VersionedVolume> idToVolume;
-        private final AsyncFunction<ZNodePath, Volume> pathToVolume;
+        private final LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume;
+        private final AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume;
+        private final AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume;
+        private final AsyncFunction<VersionedId, Long> versionToZxid;
         private final Supplier<Set<Identifier>> regions;
         private final AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers;
         private final ScheduledExecutorService scheduler;
@@ -107,8 +118,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         public Factory(
                 boolean renew,
                 Provider<? extends Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>>> processor,
-                LockingCachedFunction<Identifier, VersionedVolume> idToVolume,
-                AsyncFunction<ZNodePath, Volume> pathToVolume,
+                LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
+                AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
+                AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
+                AsyncFunction<VersionedId, Long> versionToZxid,
                 Supplier<Set<Identifier>> regions,
                 AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
                 ScheduledExecutorService scheduler,
@@ -117,6 +130,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             this.processor = processor;
             this.idToVolume = idToVolume;
             this.pathToVolume = pathToVolume;
+            this.versionToVolume = versionToVolume;
+            this.versionToZxid = versionToZxid;
             this.regions = regions;
             this.dispatchers = dispatchers;
             this.scheduler = scheduler;
@@ -130,6 +145,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     processor.get(),
                     idToVolume,
                     pathToVolume,
+                    versionToVolume,
+                    versionToZxid,
                     regions,
                     dispatchers,
                     scheduler,
@@ -141,8 +158,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             boolean renew,
             Session session,
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
-            LockingCachedFunction<Identifier, VersionedVolume> idToVolume,
-            AsyncFunction<ZNodePath, Volume> pathToVolume,
+            LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
+            AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
+            AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
+            AsyncFunction<VersionedId, Long> versionToZxid,
             Supplier<Set<Identifier>> regions,
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             ScheduledExecutorService scheduler,
@@ -155,16 +174,16 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                                         ProtocolMessageAutomaton.asAutomaton(
                                                 ProtocolState.CONNECTED))));
         IConcurrentSet<SessionListener> listeners = new StrongConcurrentSet<SessionListener>();
-        return new FrontendSessionExecutor(processor, idToVolume, pathToVolume, regions, dispatchers, executor, renew, session, state, listeners, scheduler);
+        return new FrontendSessionExecutor(processor, idToVolume, pathToVolume, versionToVolume, versionToZxid, regions, dispatchers, executor, renew, session, state, listeners, scheduler);
     }
     
-    public static <T extends Records.Request> T validate(Volume volume, T request) throws KeeperException {
+    public static <T extends Records.Request> T validate(AssignedVolumeBranches volume, T request) throws KeeperException {
         switch (request.opcode()) {
         case DELETE:
         {
             // can't delete a volume root
             ZNodePath path = ZNodePath.fromString(((Records.PathGetter) request).getPath());
-            assert (Volume.contains(volume, path));
+            assert (AssignedVolumeBranches.contains(volume, path));
             if (volume.getDescriptor().getPath().length() == path.length()) {
                 throw new KeeperException.BadArgumentsException(path.toString());
             }
@@ -175,7 +194,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             // multi only implemented when all operations are on the same volume
             for (Records.MultiOpRequest op: (IMultiRequest) request) {
                 ZNodePath path = ZNodePath.fromString(op.getPath());
-                if (! Volume.contains(volume, path)) {
+                if (! AssignedVolumeBranches.contains(volume, path)) {
                     throw new KeeperException.BadArgumentsException(path.toString());
                 }
                 validate(volume, op);
@@ -189,16 +208,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
     }
 
     protected final Logger logger;
-    protected final ClientPeerConnectionExecutors backends;
-    protected final ShardingProcessor sharding;
     protected final Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor;
     protected final FrontendSessionActor actor;
     protected final NotificationProcessor notifications;
+    protected final ClientPeerConnectionExecutors backends;
+    protected final ShardingProcessor sharding;
 
-    public FrontendSessionExecutor(
+    protected FrontendSessionExecutor(
             Processors.UncheckedProcessor<Pair<Long, Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>>, Message.ServerResponse<?>> processor,
-            LockingCachedFunction<Identifier, VersionedVolume> idToVolume,
-            AsyncFunction<ZNodePath, Volume> pathToVolume,
+            LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
+            AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
+            AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
+            AsyncFunction<VersionedId, Long> versionToZxid,
             Supplier<Set<Identifier>> regions,
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             Executor executor,
@@ -210,7 +231,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         super(session, state, listeners, scheduler);
         this.logger = LogManager.getLogger(getClass());
         this.processor = processor;
-        this.notifications = new NotificationProcessor();
+        this.notifications = new NotificationProcessor(versionToVolume, versionToZxid);
         this.backends = ClientPeerConnectionExecutors.newInstance(session, renew, notifications, regions, dispatchers);
         this.actor = new FrontendSessionActor(executor);
         this.sharding = new ShardingProcessor(idToVolume, pathToVolume, executor);
@@ -244,14 +265,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
         default: 
         {
+            Promise<Records.Response> response = SettableFuturePromise.create();
+            LoggingFutureListener.listen(logger, response);
+            Promise<Message.ServerResponse<?>> promise = SettableFuturePromise.create();
+            LoggingFutureListener.listen(logger, promise);
             task = new FrontendRequestTask(
-                    Pair.create(request,
-                            LoggingPromise.create(
-                                    logger, 
-                                    SettableFuturePromise.<Records.Response>create())), 
-                    LoggingPromise.create(
-                            logger, 
-                            SettableFuturePromise.<Message.ServerResponse<?>>create()));
+                    Pair.create(request, response), 
+                    promise);
             break;
         }
         }
@@ -332,19 +352,23 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 return false;
             }
             if (mailbox.remove(input)) {
-                if (! input.isDone()) {
-                    try {
-                        Records.Response response = input.task().second().get();
-                        Message.ServerResponse<?> result = 
-                                FrontendSessionExecutor.this.apply( 
-                                        Pair.create(
-                                                Optional.<Operation.ProtocolRequest<?>>of(input.task().first()), 
-                                                response));
-                        input.set(result);
-                    } catch (InterruptedException e) {
-                        throw new AssertionError(e);
-                    } catch (ExecutionException e) {
-                        input.setException(e.getCause());
+                if (!input.isDone()) {
+                    if (input.task().second().isCancelled()) {
+                        input.cancel(false);
+                    } else {
+                        try {
+                            Records.Response response = input.task().second().get();
+                            Message.ServerResponse<?> result = 
+                                    FrontendSessionExecutor.this.apply( 
+                                            Pair.create(
+                                                    Optional.<Operation.ProtocolRequest<?>>of(input.task().first()), 
+                                                    response));
+                            input.set(result);
+                        } catch (InterruptedException e) {
+                            throw Throwables.propagate(e);
+                        } catch (ExecutionException e) {
+                            input.setException(e.getCause());
+                        }
                     }
                 }
                 return true;
@@ -368,60 +392,209 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
      */
     protected class NotificationProcessor implements NotificationListener<ShardedServerResponseMessage<IWatcherEvent>> {
 
-        protected final Set<String> dataWatches;
-        protected final Set<String> childWatches;
+        protected final AsyncFunction<VersionedId, Long> versionToZxid;
+        protected final AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume;
+        protected final SimpleLabelTrie<OptionalNode<Watch>> watches;
+        protected final Map<Identifier, UnsignedLong> latest;
         
-        public NotificationProcessor() {
-            this.dataWatches = Collections.synchronizedSet(
-                    Collections.newSetFromMap(Maps.<String, Boolean>newHashMap()));
-            this.childWatches = Collections.synchronizedSet(
-                    Collections.newSetFromMap(Maps.<String, Boolean>newHashMap()));
+        public NotificationProcessor(
+                AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
+                AsyncFunction<VersionedId, Long> versionToZxid) {
+            this.versionToZxid = versionToZxid;
+            this.versionToVolume = versionToVolume;
+            this.watches = SimpleLabelTrie.forRoot(OptionalNode.<Watch>root());
+            this.latest = Maps.newHashMap();
         }
         
-        public void handleRequest(Records.Request request) {
+        public synchronized Optional<? extends ListenableFuture<?>> handleRequest(Records.Request request, ShardedServerResponseMessage<?> response) throws Exception {
+            final VersionedId shard = response.getShard();
+            if (!latest.containsKey(shard.getValue()) || (latest.get(shard).longValue() < shard.getVersion().longValue())) {
+                final ListenableFuture<AssignedVolumeBranches> volumeFuture = versionToVolume.apply(shard);
+                if (!volumeFuture.isDone()) {
+                    return Optional.of(volumeFuture);
+                }
+                final AssignedVolumeBranches volume = volumeFuture.get();
+                OptionalNode<Watch> node = watches.get(volume.getDescriptor().getPath());
+                Queue<OptionalNode<Watch>> nodes = Queues.newArrayDeque();
+                if (node != null) {
+                    nodes.add(node);
+                }
+                while ((node = nodes.poll()) != null) {
+                    for (OptionalNode<Watch> child: node.values()) {
+                        if (!volume.getState().getValue().getBranches().containsKey(child.path().suffix(volume.getDescriptor().getPath()))) {
+                            nodes.add(child);
+                        }
+                    }
+                    if (node.isPresent() && (node.get().getVersion().getVersion().longValue() < shard.getVersion().longValue())) {
+                        if (node.get().getType() != WatchType.CHILD) {
+                            final ListenableFuture<Long> zxidFuture = versionToZxid.apply(node.get().getVersion());
+                            if (!zxidFuture.isDone()) {
+                                return Optional.of(zxidFuture);
+                            }
+                            final long zxid = zxidFuture.get().longValue();
+                            if (node.get().getZxid() == zxid) {
+                                handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeDataChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
+                            }
+                        }
+                        if (node.isPresent() && (node.get().getType() != WatchType.DATA)) {
+                            handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeChildrenChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
+                        }
+                    }
+                }
+                latest.put(shard.getValue(), shard.getVersion());
+            }
+            
+            WatchType type = null;
             switch (request.opcode()) {
             case GET_DATA:
             case EXISTS:
                 if (((Records.WatchGetter) request).getWatch()) {
-                    dataWatches.add(((Records.PathGetter) request).getPath());
+                    type = WatchType.DATA;
                 }
                 break;
             case GET_CHILDREN:
             case GET_CHILDREN2:
                 if (((Records.WatchGetter) request).getWatch()) {
-                    childWatches.add(((Records.PathGetter) request).getPath());
+                    type = WatchType.CHILD;
                 }
                 break;
             default:
                 break;
             }
+            if (type != null) {
+                OptionalNode<Watch> node = OptionalNode.putIfAbsent(watches, ZNodePath.fromString(((Records.PathGetter) request).getPath()));
+                if (node.isPresent()) {
+                    if ((node.get().getType() != type) && (node.get().getType() != WatchType.CHILD_AND_DATA)) {
+                        // keep the older versioning
+                        node.set(new Watch(WatchType.CHILD_AND_DATA, node.get().getVersion(), node.get().getZxid()));
+                    }
+                } else {
+                    node.set(new Watch(type, shard, response.zxid()));
+                }
+            }
+            
+            return Optional.absent();
+        }
+        
+        @Override
+        public synchronized void handleNotification(
+                ShardedServerResponseMessage<IWatcherEvent> notification) {
+            handleNotification(notification.record());
         }
         
         @SuppressWarnings("unchecked")
-        @Override
-        public void handleNotification(
-                ShardedServerResponseMessage<IWatcherEvent> notification) {
-            IWatcherEvent event = notification.record();
-            Watcher.Event.EventType type = Watcher.Event.EventType.fromInt(event.getType());
-            Set<String> watches = (type == Watcher.Event.EventType.NodeChildrenChanged) ? childWatches : dataWatches;
-            if (watches.remove(event.getPath())) {
-                // FIXME should we be filtering here or just pass everything on?
+        public synchronized void handleNotification(IWatcherEvent event) {
+            final Watcher.Event.EventType eventType = Watcher.Event.EventType.fromInt(event.getType());
+            // TODO is None ever actually sent?
+            boolean deliver = (eventType == Watcher.Event.EventType.None);
+            if (!deliver) {
+                OptionalNode<Watch> node = watches.get(event.getPath());
+                if ((node != null) && node.isPresent()) {
+                    final WatchType type = node.get().getType();
+                    switch (eventType) {
+                    case NodeChildrenChanged:
+                    {
+                        switch (type) {
+                        case CHILD:
+                            node.unset();
+                            break;
+                        case CHILD_AND_DATA:
+                            node.set(new Watch(WatchType.DATA, node.get().getVersion(), node.get().getZxid()));
+                            break;
+                        default:
+                            break;
+                        }
+                        break;
+                    }
+                    case NodeCreated:
+                    case NodeDataChanged:
+                    {
+                        switch (type) {
+                        case DATA:
+                            node.unset();
+                            break;
+                        case CHILD_AND_DATA:
+                            node.set(new Watch(WatchType.CHILD, node.get().getVersion(), node.get().getZxid()));
+                            break;
+                        default:
+                            break;
+                        }
+                        break;
+                    }
+                    case NodeDeleted:
+                    {
+                        switch (type) {
+                        case DATA:
+                        case CHILD:
+                            node.unset();
+                            break;
+                        case CHILD_AND_DATA:
+                            // data watch is triggered first
+                            node.set(new Watch(WatchType.CHILD, node.get().getVersion(), node.get().getZxid()));
+                            break;
+                        default:
+                            break;
+                        }
+                        break;
+                    }
+                    default:
+                        throw new AssertionError();
+                    }
+                    if (!node.isPresent() || (node.get().getType() != type)) {
+                        deliver = true;
+                    }
+                    while ((node != watches.root()) && node.isEmpty() && !node.isPresent()) {
+                        node.remove();
+                        node = node.parent().get();
+                    }
+                }
+            }
+            if (deliver) {
+                // FIXME should we be filtering?
                 FrontendSessionExecutor.this.handleNotification((Message.ServerResponse<IWatcherEvent>) apply(
                         Pair.create( 
                                 Optional.<Operation.ProtocolRequest<?>>absent(),
-                                (Records.Response) notification.record()))); 
+                                (Records.Response) event))); 
             }
         }
     }
     
-    protected static class ShardTask extends ForwardingListenableFuture<VersionedVolume> {
+    protected static final class Watch {
+        
+        private final WatchType type;
+        private final VersionedId version;
+        private final long zxid;
+        
+        public Watch(WatchType type, VersionedId version, long zxid) {
+            super();
+            this.type = type;
+            this.version = version;
+            this.zxid = zxid;
+        }
 
-        private final ListenableFuture<? extends VersionedVolume> future;
+        public WatchType getType() {
+            return type;
+        }
+
+        public VersionedId getVersion() {
+            return version;
+        }
+
+        public long getZxid() {
+            return zxid;
+        }
+        
+        // TODO equals()
+    }
+    
+    protected static class ShardTask extends ForwardingListenableFuture<VolumeVersion<?>> {
+
+        private final ListenableFuture<? extends VolumeVersion<?>> future;
         private final ListenableFuture<?> task;
         
         public ShardTask(
                 ListenableFuture<?> task,
-                ListenableFuture<? extends VersionedVolume> future) {
+                ListenableFuture<? extends VolumeVersion<?>> future) {
             this.task = task;
             this.future = future;
         }
@@ -432,22 +605,22 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
 
         @SuppressWarnings("unchecked")
         @Override
-        protected ListenableFuture<VersionedVolume> delegate() {
-            return (ListenableFuture<VersionedVolume>) future;
+        protected ListenableFuture<VolumeVersion<?>> delegate() {
+            return (ListenableFuture<VolumeVersion<?>>) future;
         }
     }
     
-    protected static class RequestToVolume implements AsyncFunction<Records.Request, VersionedVolume> {
+    protected static class RequestToVolume implements AsyncFunction<Records.Request, VolumeVersion<?>> {
 
-        protected final AsyncFunction<ZNodePath, Volume> pathToVolume;
+        protected final AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume;
         
-        public RequestToVolume(AsyncFunction<ZNodePath, Volume> pathToVolume) {
+        public RequestToVolume(AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume) {
             this.pathToVolume = pathToVolume;
         }
         
-        @SuppressWarnings("unchecked")
+        @SuppressWarnings({ "unchecked" })
         @Override
-        public ListenableFuture<VersionedVolume> apply(Records.Request input) {
+        public ListenableFuture<VolumeVersion<?>> apply(Records.Request input) {
             ZNodePath path = null;
             switch (input.opcode()) {
             case CREATE:
@@ -484,11 +657,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 throw new UnsupportedOperationException(String.valueOf(input));
             }
             if (path == null) {
-                return Futures.<VersionedVolume>immediateFuture(NullVolume.getInstance());
+                return Futures.<VolumeVersion<?>>immediateFuture(NullVolume.getInstance());
             } else {
                 try {
                     // lame
-                    return (ListenableFuture<VersionedVolume>) (ListenableFuture<?>) pathToVolume.apply(path);
+                    return (ListenableFuture<VolumeVersion<?>>) (ListenableFuture<?>) pathToVolume.apply(path);
                 } catch (Exception e) {
                     return Futures.immediateFailedFuture(e);
                 }
@@ -496,14 +669,14 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
     }
     
-    protected class ShardingProcessor extends WaitingActor<ListenableFuture<?>, ShardTask> implements TaskExecutor<ListenableFuture<?>, VersionedVolume> {
+    protected class ShardingProcessor extends WaitingActor<ListenableFuture<?>, ShardTask> implements TaskExecutor<ListenableFuture<?>, VolumeVersion<?>> {
 
-        protected final LockingCachedFunction<Identifier, VersionedVolume> idToVolume;
+        protected final LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume;
         protected final RequestToVolume requestToVolume;
         
         public ShardingProcessor(
-                LockingCachedFunction<Identifier, VersionedVolume> idToVolume,
-                AsyncFunction<ZNodePath, Volume> pathToVolume,
+                LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
+                AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
                 Executor executor) {
             super(executor, Queues.<ShardTask>newConcurrentLinkedQueue(), FrontendSessionExecutor.this.logger);
             this.idToVolume = idToVolume;
@@ -511,19 +684,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
         
         @Override
-        public ListenableFuture<VersionedVolume> submit(ListenableFuture<?> request) {
-            ListenableFuture<? extends VersionedVolume> shard;
+        public ListenableFuture<VolumeVersion<?>> submit(ListenableFuture<?> request) {
+            ListenableFuture<? extends VolumeVersion<?>> shard;
             if (request instanceof FrontendRequestTask) {
                 shard = requestToVolume.apply(((FrontendRequestTask) request).task().first().record());
             } else {
-                assert (request instanceof OperationResponseTask);
                 VersionedId outdated = Futures.getUnchecked((OperationResponseTask) request).getShard();
                 idToVolume.lock().lock();
                 try {
-                    VersionedVolume current = idToVolume.cached().apply(outdated.getIdentifier());
-                    if ((current == null) || (current.getVersion().longValue() <= outdated.getVersion().longValue())) {
+                    VolumeVersion<?> current = idToVolume.cached().apply(outdated.getValue());
+                    if ((current == null) || (current.getState().getVersion().longValue() <= outdated.getVersion().longValue())) {
                         try {
-                            shard = idToVolume.async().apply(outdated.getIdentifier());
+                            shard = idToVolume.async().apply(outdated.getValue());
                         } catch (Exception e) {
                             shard = Futures.immediateFailedFuture(e);
                         }
@@ -554,7 +726,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             }
             
             if (input.task() instanceof FrontendRequestTask) {
-                VersionedVolume shard;
+                VolumeVersion<?> shard;
                 try {
                     shard = input.get();
                 } catch (InterruptedException e) {
@@ -563,9 +735,9 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     // TODO 
                     throw new UnsupportedOperationException(e.getCause());
                 }
-                if (shard instanceof Volume) {
-                    Volume volume = (Volume) shard;
-                    Identifier region = volume.getRegion();
+                if (shard instanceof AssignedVolumeBranches) {
+                    AssignedVolumeBranches volume = (AssignedVolumeBranches) shard;
+                    Identifier region = volume.getState().getValue().getRegion();
                     ListenableFuture<ClientPeerConnectionExecutor> backend = backends.asLookup().apply(region);
                     if (! backend.isDone()) {
                         wait(backend);
@@ -589,14 +761,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                         }
                         if (! frontend.task().second().isDone()) {
                             ShardedClientRequestMessage<?> message = ShardedClientRequestMessage.valueOf(
-                                    VersionedId.valueOf(volume.getDescriptor().getId(), volume.getVersion()), 
+                                    VersionedId.valueOf(volume.getState().getVersion(), volume.getDescriptor().getId()), 
                                     frontend.task().first());
-                            // we shouldn't see a notification until we see the request
-                            // for setting a notification
-                            // note that storing the notification now is optimistic
-                            notifications.handleRequest(message.record());
-                            ListenableFuture<ShardedResponseMessage<?>> response;
-                                response = executor.submit(message);
+                            ListenableFuture<ShardedResponseMessage<?>> response = 
+                                    executor.submit(message);
                             new OperationResponseTask(frontend, response);
                         }
                         return true;
@@ -689,16 +857,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             }
         }
         
-        protected class OperationResponseTask extends ForwardingListenableFuture<ShardedResponseMessage<?>> implements Runnable {
+        protected class OperationResponseTask extends ToStringListenableFuture<ShardedResponseMessage<?>> implements Runnable, Callable<Optional<Records.Response>> {
 
             protected final FrontendRequestTask task;
-            protected final ListenableFuture<ShardedResponseMessage<?>> future;
+            protected final CallablePromiseTask<OperationResponseTask,Records.Response> delegate;
 
             public OperationResponseTask(
                     FrontendRequestTask task,
                     ListenableFuture<ShardedResponseMessage<?>> future) {
+                super(future);
                 this.task = task;
-                this.future = future;
+                this.delegate = CallablePromiseTask.create(this, task.task().second());
+                delegate.addListener(this, SameThreadExecutor.getInstance());
                 addListener(this, SameThreadExecutor.getInstance());
             }
             
@@ -706,35 +876,56 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 return task;
             }
             
-            // Must not be called more than once
             @Override
             public void run() {
-                if (isDone()) {
-                    if (isCancelled()) {
-                        task.task().second().cancel(true);
-                    } else {
-                        ShardedResponseMessage<?> response;
-                        try { 
-                            response = get();
-                        } catch (InterruptedException e) {
-                            throw new AssertionError(e);
-                        } catch (ExecutionException e) {
-                            // TODO
-                            throw new UnsupportedOperationException(e.getCause());
-                        }
-                        if (response instanceof ShardedServerResponseMessage<?>) {
-                            task.task().second().set(((ShardedServerResponseMessage<?>) response).record());
-                        } else {
-                            assert (((ShardedErrorResponseMessage) response).getException() instanceof OutdatedVersionException);
-                            sharding.submit(this);
-                        }
+                if (delegate.isDone()) {
+                    if (delegate.isCancelled()) {
+                        cancel(false);
                     }
+                } else {
+                    delegate.run();
                 }
             }
 
             @Override
-            protected ListenableFuture<ShardedResponseMessage<?>> delegate() {
-                return future;
+            public Optional<Records.Response> call() throws Exception {
+                if (isDone()) {
+                    ShardedResponseMessage<?> result = get();
+                    if (result instanceof ShardedServerResponseMessage<?>) {
+                        ShardedServerResponseMessage<?> response = (ShardedServerResponseMessage<?>) result;
+                        Optional<? extends ListenableFuture<?>> future = notifications.handleRequest(task.task().first().record(), response);
+                        if (future.isPresent()) {
+                            new Callback(future.get());
+                        } else {
+                            return Optional.of((Records.Response) response.record());
+                        }
+                    } else {
+                        assert (((ShardedErrorResponseMessage) result).getException() instanceof OutdatedVersionException);
+                        sharding.submit(this);
+                    }
+                }
+                return Optional.absent();
+            }
+            
+            protected class Callback implements Runnable {
+                private final ListenableFuture<?> future;
+                
+                public Callback(ListenableFuture<?> future) {
+                    this.future = future;
+                    future.addListener(this, SameThreadExecutor.getInstance());
+                }
+                
+                @Override
+                public void run() {
+                    if (future.isDone()) {
+                        try {
+                            future.get();
+                        } catch (Exception e) {
+                            delegate.setException(e);
+                        }
+                        OperationResponseTask.this.run();
+                    }
+                }
             }
         }
     }

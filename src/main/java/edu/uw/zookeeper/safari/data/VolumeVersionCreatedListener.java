@@ -1,26 +1,22 @@
 package edu.uw.zookeeper.safari.data;
 
-import java.util.List;
-
 import org.apache.zookeeper.Watcher;
 
-import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
 
+import edu.uw.zookeeper.client.AbstractWatchListener;
 import edu.uw.zookeeper.client.ClientExecutor;
+import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.NodeWatchEvent;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.WatchMatcher;
-import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
 
 /**
@@ -28,22 +24,21 @@ import edu.uw.zookeeper.safari.control.ControlZNode;
  */
 public class VolumeVersionCreatedListener<O extends Operation.ProtocolResponse<?>> extends AbstractWatchListener {
     
-    public static <O extends Operation.ProtocolResponse<?>> VolumeVersionCreatedListener<O> newInstance(
+    public static <O extends Operation.ProtocolResponse<?>> VolumeVersionCreatedListener<O> listen(
             ClientExecutor<? super Records.Request,O,?> client,
             LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
             Service service,
             WatchListeners watch) {
-        VolumeVersionCreatedListener<O> instance = new VolumeVersionCreatedListener<O>(client, cache, service, watch);
-        service.addListener(instance, SameThreadExecutor.getInstance());
-        if (service.isRunning()) {
-            instance.starting();
-        }
-        return instance;
+        VolumeVersionCreatedListener<O> listener = 
+                new VolumeVersionCreatedListener<O>(client, cache, service, watch);
+        listener.listen();
+        return listener;
     }
     
     protected final LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache;
-    protected final PathToQuery<VolumeStateQuery,?> query;
+    protected final PathToQuery<?,?> query;
     
+    @SuppressWarnings("unchecked")
     public VolumeVersionCreatedListener(
             ClientExecutor<? super Records.Request,O,?> client,
             LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
@@ -54,15 +49,18 @@ public class VolumeVersionCreatedListener<O extends Operation.ProtocolResponse<?
                 Watcher.Event.EventType.NodeCreated,
                 Watcher.Event.EventType.NodeChildrenChanged));
         this.cache = cache;
-        this.query = PathToQuery.forFunction(
+        this.query = PathToQuery.forRequests(
                 client,
-                new VolumeStateQuery());
+                Operations.Requests.sync(),
+                Operations.Requests.getChildren(),
+                Operations.Requests.sync(),
+                Operations.Requests.getData());
     }
     
     @Override
     public void handleWatchEvent(WatchEvent event) {
-        if (service.isRunning()) {
-            query.apply(event.getPath()).call();
+        if (isRunning()) {
+            query.apply(event.getPath().join(ControlSchema.Safari.Volumes.Volume.Log.Version.State.LABEL)).call();
         }
     }
     
@@ -70,7 +68,7 @@ public class VolumeVersionCreatedListener<O extends Operation.ProtocolResponse<?
     public void running() {
         cache.lock().readLock().lock();
         try {
-            final ControlSchema.Safari.Volumes volumes = ControlSchema.Safari.Volumes.get(
+            final ControlSchema.Safari.Volumes volumes = ControlSchema.Safari.Volumes.fromTrie(
                     cache.cache());
             if (volumes != null) {
                 for (ControlZNode<?> v : volumes.values()) {
@@ -84,29 +82,6 @@ public class VolumeVersionCreatedListener<O extends Operation.ProtocolResponse<?
             }
         } finally {
             cache.lock().readLock().unlock();
-        }
-    }
-    
-    protected static final class VolumeStateQuery implements Function<ZNodePath, List<? extends Records.Request>> {
-
-        private final Operations.Requests.Sync sync;
-        private final Operations.Requests.GetChildren getChildren;
-        private final Operations.Requests.GetData getData;
-        
-        public VolumeStateQuery() {
-            this.sync = Operations.Requests.sync();
-            this.getChildren = Operations.Requests.getChildren();
-            this.getData = Operations.Requests.getData();
-        }
-        
-        @Override
-        public List<? extends Records.Request> apply(final ZNodePath input) {
-            final ZNodePath path = input.join(ControlSchema.Safari.Volumes.Volume.Log.Version.State.LABEL);
-            return ImmutableList.of(
-                    sync.setPath(input).build(),
-                    getChildren.setPath(input).build(),
-                    sync.setPath(path).build(),
-                    getData.setPath(path).build());
         }
     }
 }

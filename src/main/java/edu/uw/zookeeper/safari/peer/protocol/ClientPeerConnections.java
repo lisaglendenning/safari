@@ -17,7 +17,7 @@ import com.google.common.util.concurrent.Service;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.CachedLookup;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.CallablePromiseTask;
@@ -63,7 +63,8 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
                             public ListenableFuture<ClientPeerConnection<?>> apply(
                                     Identifier peer) throws Exception {
                                 ListenableFuture<ServerInetAddressView> lookupFuture = addressLookup.apply(peer);
-                                Connect connection = new Connect(lookupFuture, LoggingPromise.create(logger, SettableFuturePromise.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create()));
+                                Connect connection = new Connect(lookupFuture, SettableFuturePromise.<Connection<? super MessagePacket, ? extends MessagePacket, ?>>create());
+                                LoggingFutureListener.listen(logger, connection);
                                 try {
                                     return new ConnectTask(peer, connection);
                                 } catch (Exception e) {

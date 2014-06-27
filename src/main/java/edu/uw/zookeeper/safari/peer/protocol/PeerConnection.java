@@ -15,7 +15,7 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
@@ -129,14 +129,16 @@ public abstract class PeerConnection<T extends Connection<? super MessagePacket,
                 PeerConnection<?,?> connection,
                 TimeOutParameters parameters,
                 ScheduledExecutorService executor) {
-            Logger logger = LogManager.getLogger(TimeOutActor.class);
-            return new SendHeartbeat(
+            Logger logger = LogManager.getLogger(SendHeartbeat.class);
+            SendHeartbeat task = new SendHeartbeat(
                     connection,
                     parameters, 
                     executor,
                     Sets.<Pair<Runnable,Executor>>newHashSet(),
-                    LoggingPromise.create(logger, SettableFuturePromise.<Void>create()),
+                    SettableFuturePromise.<Void>create(),
                     logger);
+            LoggingFutureListener.listen(logger, task);
+            return task;
         }
         
         protected SendHeartbeat(

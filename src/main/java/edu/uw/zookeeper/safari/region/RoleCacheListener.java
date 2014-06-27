@@ -6,15 +6,15 @@ import org.apache.zookeeper.Watcher.Event.EventType;
 
 import com.google.common.util.concurrent.Service;
 
+import edu.uw.zookeeper.client.AbstractWatchListener;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.AbstractWatchListener;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
 public class RoleCacheListener extends AbstractWatchListener {
 

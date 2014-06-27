@@ -6,28 +6,30 @@ import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 
-public final class PrefixTranslator extends AbstractPair<ZNodePath, ZNodePath> implements Function<ZNodePath,ZNodePath> {
+public class PrefixTranslator extends AbstractPair<ZNodePath, ZNodePath> implements Function<ZNodePath,ZNodePath> {
 
     public static PrefixTranslator forPrefix(ZNodePath fromPrefix, ZNodePath toPrefix) {
         return new PrefixTranslator(fromPrefix, toPrefix);
     }
     
-    public PrefixTranslator(ZNodePath fromPrefix, ZNodePath toPrefix) {
+    protected PrefixTranslator(ZNodePath fromPrefix, ZNodePath toPrefix) {
         super(fromPrefix, toPrefix);
     }
     
-    public ZNodePath getFromPrefix() {
+    public final ZNodePath from() {
         return first;
     }
     
-    public ZNodePath getToPrefix() {
+    public final ZNodePath to() {
         return second;
     }
 
     @Override
     public ZNodePath apply(ZNodePath input) {
-        assert (input.startsWith(getFromPrefix()));
-        ZNodeName remaining = input.suffix(first.isRoot() ? 0 : first.length());
-        return second.join(remaining);
+        return join(input.suffix(from()));
+    }
+    
+    protected ZNodePath join(ZNodeName remaining) {
+        return to().join(remaining);
     }
 }

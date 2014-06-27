@@ -13,8 +13,8 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.CreateEntity;
 import edu.uw.zookeeper.safari.storage.Storage;
 
 public class RegionConfiguration extends AbstractModule {
@@ -36,9 +36,9 @@ public class RegionConfiguration extends AbstractModule {
         if (!control.isRunning()) {
             control.startAsync().awaitRunning();
         }
-        Identifier id = ControlZNode.CreateEntity.call(
-                ControlSchema.Safari.Regions.PATH,
+        Identifier id = CreateEntity.sync(
                 ensemble, 
+                ControlSchema.Safari.Regions.class,
                 control.materializer()).get();
         LogManager.getLogger(Region.class).info("Region with ensemble {} is {}", ensemble, id);
         return id;

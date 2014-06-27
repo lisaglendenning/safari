@@ -23,7 +23,7 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 
 public class PresenceWatcher extends PromiseTask<AbsoluteZNodePath, Identifier> implements WatchMatchListener, Runnable, Callable<Optional<Identifier>> {
 

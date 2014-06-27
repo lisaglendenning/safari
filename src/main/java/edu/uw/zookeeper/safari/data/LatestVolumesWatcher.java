@@ -11,6 +11,11 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.ClientExecutor;
+import edu.uw.zookeeper.client.FixedQuery;
+import edu.uw.zookeeper.client.PathToQuery;
+import edu.uw.zookeeper.client.PathToRequests;
+import edu.uw.zookeeper.client.Watchers;
+import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.NodeWatchEvent;
 import edu.uw.zookeeper.data.Operations;
@@ -20,56 +25,50 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.Call;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
 /**
  * Watches and queries the path and latest state for all volumes;
  */
-public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
+public final class LatestVolumesWatcher extends Watchers.CacheNodeCreatedListener<ControlZNode<?>> {
 
-    public static LatestVolumesWatcher create(
+    public static LatestVolumesWatcher listen(
             Service service,
             ControlClientService control) {
         newVolumeLatestListener(control.materializer(), control.materializer().cache(), service, control.cacheEvents());
         newVolumeDeletedWatcher(service, control.notifications(), control.materializer());
-        LatestVolumesWatcher instance = new LatestVolumesWatcher(
+        LatestVolumesWatcher listener = new LatestVolumesWatcher(
                 newVolumeLatestWatcher(service, control.notifications(), control.materializer()),
-                control.materializer(),
+                control.materializer(), 
+                control.materializer().cache(),
                 service,
-                control.cacheEvents(), 
-                control.materializer().cache());
-        service.addListener(instance, SameThreadExecutor.getInstance());
-        if (service.isRunning()) {
-            instance.starting();
-            instance.running();
-        }
+                control.cacheEvents());
+        listener.listen();
         newVolumeDirectoryWatcher(service, control.notifications(), control.materializer());
-        return instance;
+        return listener;
     }
     
-    public static RunnableWatcher<?> newVolumeDirectoryWatcher(
+    public static Watchers.RunnableWatcher<?> newVolumeDirectoryWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
+        final AbsoluteZNodePath path = ControlSchema.Safari.Volumes.PATH;
         final WatchMatcher matcher = WatchMatcher.exact(
-                ControlSchema.Safari.Volumes.PATH,
+                path,
                 Watcher.Event.EventType.NodeCreated,
                 Watcher.Event.EventType.NodeChildrenChanged);
-        final FixedQuery<?> query = FixedQuery.forRequests(client, 
-                Operations.Requests.sync().setPath(matcher.getPath()).build(),
-                Operations.Requests.getChildren().setPath(matcher.getPath()).setWatch(true).build());
-        return RunnableWatcher.newInstance(service, watch, matcher, new Runnable() {
-            @Override
-            public void run() {
-                query.call();
-            }
-        });
+        @SuppressWarnings("unchecked")
+        final FixedQuery<?> query = FixedQuery.forIterable(client, 
+                PathToRequests.forRequests(
+                        Operations.Requests.sync(),
+                        Operations.Requests.getChildren().setWatch(true)).apply(path));
+        return Watchers.RunnableWatcher.listen(Call.create(query), service, watch, matcher);
     }
     
-    public static PathToQueryWatcher<?,?> newVolumeDeletedWatcher(
+    public static Watchers.PathToQueryWatcher<?,?> newVolumeDeletedWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -81,10 +80,10 @@ public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
                 client, 
                 Operations.Requests.sync(),
                 Operations.Requests.exists());
-        return PathToQueryWatcher.newInstance(service, watch, matcher, query);
+        return Watchers.PathToQueryWatcher.listen(service, watch, matcher, query);
     }
     
-    public static PathToQueryWatcher<?,?> newVolumeLatestWatcher(
+    public static Watchers.PathToQueryWatcher<?,?> newVolumeLatestWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -97,7 +96,7 @@ public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
                 client, 
                 Operations.Requests.sync(),
                 Operations.Requests.getData().setWatch(true));
-        return PathToQueryWatcher.newInstance(service, watch, matcher, query);
+        return Watchers.PathToQueryWatcher.listen(service, watch, matcher, query);
     }
     
     public static <O extends Operation.ProtocolResponse<?>> VolumeLatestListener<O> newVolumeLatestListener(
@@ -105,20 +104,20 @@ public final class LatestVolumesWatcher extends CacheNodeCreatedListener {
             LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
             Service service,
             WatchListeners watch) {
-        return VolumeLatestListener.newInstance(client, cache, service, watch);
+        return VolumeLatestListener.listen(client, cache, service, watch);
     }
     
     private final Logger logger;
     private final PathToQuery<VolumePathQuery,?> query;
-    private final PathToQueryWatcher<?,?> latestWatcher;
+    private final Watchers.PathToQueryWatcher<?,?> latestWatcher;
 
     protected LatestVolumesWatcher(
-            PathToQueryWatcher<?,?> latestWatcher,
+            Watchers.PathToQueryWatcher<?,?> latestWatcher,
             ClientExecutor<? super Records.Request,?,?> client,
+            LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
             Service service,
-            WatchListeners watch,
-            LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache) {
-        super(ControlSchema.Safari.Volumes.Volume.PATH, service, watch, cache);
+            WatchListeners watch) {
+        super(ControlSchema.Safari.Volumes.Volume.PATH, cache, service, watch);
         this.logger = LogManager.getLogger(this);
         this.query = PathToQuery.forFunction(client, new VolumePathQuery());
         this.latestWatcher = latestWatcher;

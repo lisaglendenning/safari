@@ -60,4 +60,6 @@ public abstract class MessageTypes {
             MessageTypes.register(cls);
         }
     }
+    
+    protected MessageTypes() {}
 }

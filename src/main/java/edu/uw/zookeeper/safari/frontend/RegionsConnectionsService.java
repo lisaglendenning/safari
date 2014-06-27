@@ -25,6 +25,8 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ClientExecutor;
+import edu.uw.zookeeper.client.FixedQuery;
+import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
@@ -38,16 +40,14 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.common.CachedFunction;
+import edu.uw.zookeeper.common.Call;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.CacheNodeCreatedListener;
-import edu.uw.zookeeper.safari.data.FixedQuery;
-import edu.uw.zookeeper.safari.data.RunnableWatcher;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.Peer;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
@@ -105,7 +105,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
                 selector,
                 connector,
                 listeners);
-        instance.addListener(instance.new RegionCreatedListener(watch, control.cache()), SameThreadExecutor.getInstance());
+        instance.new RegionCreatedListener(control.cache(), watch).listen();
         newRegionDirectoryWatcher(instance, watch, control);
         return instance;
     }
@@ -154,7 +154,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         return CachedFunction.create(cached, lookup, LogManager.getLogger(RegionsConnectionsService.class));
     }
 
-    public static RunnableWatcher<?> newRegionDirectoryWatcher(
+    public static Watchers.RunnableWatcher<?> newRegionDirectoryWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -165,12 +165,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         final FixedQuery<?> query = FixedQuery.forRequests(client, 
                 Operations.Requests.sync().setPath(matcher.getPath()).build(),
                 Operations.Requests.getChildren().setPath(matcher.getPath()).setWatch(true).build());
-        return RunnableWatcher.newInstance(service, watch, matcher, new Runnable() {
-            @Override
-            public void run() {
-                query.call();
-            }
-        });
+        return Watchers.RunnableWatcher.listen(Call.create(query), service, watch, matcher);
     }
     
     private final Identifier region;
@@ -374,12 +369,12 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         }
     }
     
-    protected class RegionCreatedListener extends CacheNodeCreatedListener {
+    protected class RegionCreatedListener extends Watchers.CacheNodeCreatedListener<ControlZNode<?>> {
 
         public RegionCreatedListener(
-                WatchListeners watch,
-                LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache) {
-            super(ControlSchema.Safari.Regions.Region.PATH, RegionsConnectionsService.this, watch, cache);
+                LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
+                WatchListeners watch) {
+            super(ControlSchema.Safari.Regions.Region.PATH, cache, RegionsConnectionsService.this, watch);
         }
 
         @Override

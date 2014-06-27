@@ -20,6 +20,7 @@ import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.volume.VolumeDescriptor;
 
 public final class VolumeDescriptorCache implements FutureCallback<VolumeDescriptor> {
 

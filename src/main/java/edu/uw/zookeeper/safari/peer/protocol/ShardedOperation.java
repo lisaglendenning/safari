@@ -1,7 +1,7 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 public interface ShardedOperation extends Operation {
     VersionedId getShard();

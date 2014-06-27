@@ -4,7 +4,6 @@ import java.util.concurrent.ExecutionException;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
@@ -14,7 +13,6 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.ConnectionClientExecutorService;
-import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Serializers;
@@ -22,11 +20,11 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
-import edu.uw.zookeeper.safari.data.PrefixCreator;
-import edu.uw.zookeeper.safari.storage.StorageSchema;
-import edu.uw.zookeeper.safari.storage.StorageZNode;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
+import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public class StorageClientService extends ServiceListenersService {
+public class StorageClientService extends SchemaClientService<StorageZNode<?>> {
 
     public static Module module() {
         return new Module();
@@ -99,42 +97,12 @@ public class StorageClientService extends ServiceListenersService {
     public static StorageClientService create(
             Materializer<StorageZNode<?>, Message.ServerResponse<?>> materializer,
             Iterable<? extends Service.Listener> listeners) {
-        StorageClientService instance = new StorageClientService(
-                materializer,
-                ImmutableList.<Service.Listener>builder()
-                    .addAll(listeners)
-                    .add(new CreatePrefix(materializer)).build());
-        return instance;
+        return new StorageClientService(materializer, listeners);
     }
-
-    protected final Materializer<StorageZNode<?>, Message.ServerResponse<?>> materializer;
 
     protected StorageClientService(
             Materializer<StorageZNode<?>, Message.ServerResponse<?>> materializer,
             Iterable<? extends Service.Listener> listeners) {
-        super(listeners);
-        this.materializer = materializer;
-    }
-    
-    public Materializer<StorageZNode<?>, Message.ServerResponse<?>> materializer() {
-        return materializer;
-    }
-    
-    public static class CreatePrefix extends Service.Listener {
-        
-        protected final Materializer<StorageZNode<?>,?> materializer;
-        
-        public CreatePrefix(Materializer<StorageZNode<?>,?> materializer) {
-            this.materializer = materializer;
-        }
-        
-        @Override
-        public void running() {
-            try {
-                Futures.successfulAsList(PrefixCreator.forMaterializer(materializer).call()).get();
-            } catch (Exception e) {
-                throw Throwables.propagate(e);
-            }
-        }
+        super(materializer, listeners);
     }
 }

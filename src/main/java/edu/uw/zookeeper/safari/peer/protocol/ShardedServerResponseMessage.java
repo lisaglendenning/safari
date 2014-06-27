@@ -6,7 +6,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 public class ShardedServerResponseMessage<V extends Records.Response> extends ShardedResponseMessage<Message.ServerResponse<V>> implements Operation.ProtocolResponse<V>, ShardedOperation.Response<Message.ServerResponse<V>> {
 

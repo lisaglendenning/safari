@@ -17,7 +17,7 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.Services;
@@ -35,7 +35,7 @@ import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.storage.Storage;
-import edu.uw.zookeeper.safari.storage.StorageZNode;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 public class BackendConnections extends AbstractModule {
 
@@ -107,15 +107,18 @@ public class BackendConnections extends AbstractModule {
                                     @Override
                                     public ListenableFuture<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?> connection) {
                                         final ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> connect = ConnectTask.connect(request.getMessage(), connection);
-                                        return Futures.transform(
+                                        ListenableFuture<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> task = Futures.transform(
                                                 RegisterSessionTask.create( 
                                                     materializer, 
-                                                    Pair.create(request.getIdentifier(), connect),
-                                                    LoggingPromise.create(
-                                                            LogManager.getLogger(BackendConnections.class), 
-                                                            SettableFuturePromise.<Void>create())),
+                                                    Pair.create(
+                                                            request.getIdentifier(), connect),
+                                                        SettableFuturePromise.<Void>create()),
                                                 Functions.<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>constant(connect), 
                                                 SameThreadExecutor.getInstance());
+                                        LoggingFutureListener.listen(
+                                                        LogManager.getLogger(BackendConnections.class), 
+                                                        task);
+                                        return task;
                                     }
                                 }, SameThreadExecutor.getInstance());
                     }
@@ -141,7 +144,7 @@ public class BackendConnections extends AbstractModule {
     }
     
     @Provides @Singleton
-    public AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> newShardedClientExecutorFactory(
+    public AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<?>> newShardedClientExecutorFactory(
             final AsyncFunction<MessageSessionOpenRequest, MessageSessionOpenRequest> openToRequest,
             final AsyncFunction<MessageSessionOpenRequest, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> openToConnect,
             final Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> connectToClient) {

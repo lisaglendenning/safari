@@ -26,7 +26,7 @@ import edu.uw.zookeeper.client.SubmitGenerator;
 import edu.uw.zookeeper.common.CountingGenerator;
 import edu.uw.zookeeper.common.Generator;
 import edu.uw.zookeeper.common.Generators;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Operations;
@@ -110,7 +110,9 @@ public class SingletonTest extends AbstractMainTest {
                                         SubmitGenerator.create(requests, 
                                                 client.injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor()), logger);
                         Executor executor = client.injector().getInstance(Executor.class);
-                        IteratingClient iterating = IteratingClient.create(executor, operations, LoggingPromise.create(logger, SettableFuturePromise.<Void>create()));
+                        IteratingClient iterating = IteratingClient.create(
+                                executor, operations, SettableFuturePromise.<Void>create());
+                        LoggingFutureListener.listen(logger, iterating);
                         clients.add(iterating);
                         executor.execute(iterating);
                     }

@@ -19,8 +19,8 @@ import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.CreateEntity;
 
 public class PeerConfiguration extends AbstractModule {
 
@@ -54,11 +54,11 @@ public class PeerConfiguration extends AbstractModule {
         if(!control.isRunning()) {
             control.startAsync().awaitRunning();
         }
-        Identifier id = ControlZNode.CreateEntity.call(
-                ControlSchema.Safari.Peers.PATH,
+        Identifier id = CreateEntity.sync(
                 address, 
+                ControlSchema.Safari.Peers.class,
                 control.materializer()).get();
-        LogManager.getLogger(getClass()).info("Peer at {} is {}", address, id);
+        LogManager.getLogger(Peer.class).info("Peer at {} is {}", address, id);
         return id;
     }
     
@@ -84,7 +84,11 @@ public class PeerConfiguration extends AbstractModule {
         
         public static Configuration set(Configuration configuration, ServerInetAddressView value) {
             Configurable configurable = getConfigurable();
-            return configuration.withConfig(ConfigFactory.parseMap(ImmutableMap.<String,Object>builder().put(ConfigUtil.joinPath(configurable.path(), configurable.key()), value.toString()).build()));
+            return configuration.withConfig(
+                    ConfigFactory.parseMap(
+                            ImmutableMap.<String,Object>builder()
+                            .put(ConfigUtil.joinPath(configurable.path(), configurable.key()), value.toString())
+                            .build()));
         }
         
         protected PeerAddressConfiguration() {}

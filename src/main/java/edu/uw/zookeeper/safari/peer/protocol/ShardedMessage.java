@@ -2,7 +2,7 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import com.google.common.base.Objects;
 
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 public abstract class ShardedMessage<V> extends ValueMessage<VersionedId,V> {
 

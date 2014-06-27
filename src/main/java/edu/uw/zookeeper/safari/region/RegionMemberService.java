@@ -20,8 +20,11 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ClientExecutor;
+import edu.uw.zookeeper.client.FixedQuery;
+import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
+import edu.uw.zookeeper.common.Call;
 import edu.uw.zookeeper.common.ForwardingServiceListener;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.SameThreadExecutor;
@@ -37,10 +40,8 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.FixedQuery;
-import edu.uw.zookeeper.safari.data.RunnableWatcher;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.Peer;
 import edu.uw.zookeeper.safari.peer.PeerConnectionsService;
 
@@ -104,7 +105,7 @@ public class RegionMemberService extends ServiceListenersService {
         return instance;
     }
 
-    public static <O extends Operation.ProtocolResponse<?>> RunnableWatcher<?> newLeaderWatcher(
+    public static <O extends Operation.ProtocolResponse<?>> Watchers.RunnableWatcher<?> newLeaderWatcher(
             Identifier region,
             Service service,
             WatchListeners watch,
@@ -114,16 +115,13 @@ public class RegionMemberService extends ServiceListenersService {
                 client,
                 Operations.Requests.sync().setPath(path).build(),
                 Operations.Requests.getData().setPath(path).setWatch(true).build());
-        return RunnableWatcher.newInstance(
-                        service, 
-                        watch, 
-                        WatchMatcher.exact(ControlSchema.Safari.Regions.Region.Leader.pathOf(region), EnumSet.of(EventType.NodeDeleted, EventType.NodeCreated, EventType.NodeDataChanged)),
-                        new Runnable() {
-                            @Override
-                            public void run() {
-                                query.call();
-                            }
-                        });
+        return Watchers.RunnableWatcher.listen(
+                Call.create(query),
+                service, 
+                watch, 
+                WatchMatcher.exact(
+                        ControlSchema.Safari.Regions.Region.Leader.pathOf(region), 
+                        EnumSet.of(EventType.NodeDeleted, EventType.NodeCreated, EventType.NodeDataChanged)));
     }
     
     public static Service newLeaderProposer(

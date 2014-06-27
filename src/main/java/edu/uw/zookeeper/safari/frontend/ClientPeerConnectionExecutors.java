@@ -25,7 +25,7 @@ import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.CachedLookup;
 import edu.uw.zookeeper.common.ForwardingPromise;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
@@ -167,8 +167,9 @@ public class ClientPeerConnectionExecutors {
         protected final Promise<Set<ClientPeerConnectionExecutor>> promise;
         
         public Connect() {
-            this.promise = LoggingPromise.create(logger, SettableFuturePromise.<Set<ClientPeerConnectionExecutor>>create());
+            this.promise = SettableFuturePromise.<Set<ClientPeerConnectionExecutor>>create();
             this.futures = Maps.newHashMap();
+            LoggingFutureListener.listen(logger, this);
         }
         
         @Override

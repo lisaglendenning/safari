@@ -14,10 +14,10 @@ import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.ControlModules;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.VolumeDescriptor;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.CreateEntity;
 import edu.uw.zookeeper.safari.storage.StorageModules;
+import edu.uw.zookeeper.safari.volume.VolumeDescriptor;
 
 @RunWith(JUnit4.class)
 public class MultipleRegionTest extends AbstractMainTest {
@@ -56,9 +56,9 @@ public class MultipleRegionTest extends AbstractMainTest {
         
         // Create root volume
         VolumeDescriptor rootVd = VolumeDescriptor.valueOf(
-                ControlZNode.CreateEntity.call(
-                        ControlSchema.Safari.Volumes.PATH, 
-                        ZNodePath.root(), 
+                CreateEntity.sync(
+                        (ZNodePath) ZNodePath.root(), 
+                        ControlSchema.Safari.Volumes.class, 
                         control.injector().getInstance(ControlClientService.class).materializer()).get(),
                 ZNodePath.root());
         // TODO reserve
@@ -182,7 +182,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                             SubmitGenerator.create(
                                     PathRequestGenerator.create(paths, Generators.constant(Operations.Requests.exists())), 
                                     service[i].getClient().getConnectionClientExecutor().get().get()), logger);
-            IteratingClient client = IteratingClient.create(executor, operations, LoggingPromise.create(logger, SettableFuturePromise.<Void>create()));
+            IteratingClient client = IteratingClient.create(executor, operations, LoggingFutureListener.listen(logger, SettableFuturePromise.<Void>create()));
             clients.add(client);
             executor.execute(client);
         }

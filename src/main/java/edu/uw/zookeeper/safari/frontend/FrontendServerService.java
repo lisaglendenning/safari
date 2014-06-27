@@ -13,12 +13,15 @@ import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.client.CreateOrEquals;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ConnectionFactory.ConnectionsListener;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -27,9 +30,8 @@ import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ServerProtocolConnection;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.CreateOrEquals;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.Peer;
 
 public class FrontendServerService extends ServiceListenersService {
@@ -113,7 +115,8 @@ public class FrontendServerService extends ServiceListenersService {
             final ServerInetAddressView value, 
             final Materializer<ControlZNode<?>,?> materializer) {    
         ZNodePath path = ControlSchema.Safari.Peers.Peer.ClientAddress.pathOf(peer);
-        return Futures.transform(CreateOrEquals.create(path, value, materializer), 
+        ListenableFuture<Optional<ServerInetAddressView>> future = CreateOrEquals.create(path, value, materializer, SettableFuturePromise.<Optional<ServerInetAddressView>>create());
+        return Futures.transform(future, 
                 new Function<Optional<ServerInetAddressView>, Optional<ServerInetAddressView>>() {
                     @Override
                     public Optional<ServerInetAddressView> apply(

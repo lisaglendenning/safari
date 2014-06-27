@@ -2,7 +2,7 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 public class ShardedResponse<V extends Operation.Response> extends AbstractPair<VersionedId, V> implements ShardedOperation.Response<V> {
 

@@ -5,8 +5,8 @@ import org.apache.zookeeper.Watcher;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.Service;
 
+import edu.uw.zookeeper.client.AbstractWatchListener;
 import edu.uw.zookeeper.client.ClientExecutor;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.NodeWatchEvent;
 import edu.uw.zookeeper.data.WatchEvent;
@@ -15,22 +15,19 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
 public final class VolumeLatestListener<O extends Operation.ProtocolResponse<?>> extends AbstractWatchListener {
 
-    public static <O extends Operation.ProtocolResponse<?>> VolumeLatestListener<O> newInstance(
+    public static <O extends Operation.ProtocolResponse<?>> VolumeLatestListener<O> listen(
             ClientExecutor<? super Records.Request,O,?> client,
             LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
             Service service,
             WatchListeners watch) {
-        VolumeLatestListener<O> instance = new VolumeLatestListener<O>(client, cache, service, watch);
-        service.addListener(instance, SameThreadExecutor.getInstance());
-        if (service.isRunning()) {
-            instance.starting();
-        }
-        return instance;
+        VolumeLatestListener<O> listener = new VolumeLatestListener<O>(client, cache, service, watch);
+        listener.listen();
+        return listener;
     }
     
     private final LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache;
@@ -77,7 +74,7 @@ public final class VolumeLatestListener<O extends Operation.ProtocolResponse<?>>
     public void running() {
         cache.lock().readLock().lock();
         try {
-            final ControlSchema.Safari.Volumes volumes = ControlSchema.Safari.Volumes.get(
+            final ControlSchema.Safari.Volumes volumes = ControlSchema.Safari.Volumes.fromTrie(
                     cache.cache());
             if (volumes != null) {
                 for (ControlZNode<?> v : volumes.values()) {

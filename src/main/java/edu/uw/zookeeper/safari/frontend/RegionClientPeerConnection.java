@@ -12,7 +12,7 @@ import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -59,7 +59,7 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
             Identifier current = (connection == null) ? Identifier.zero() : connection.remoteAddress().getIdentifier();
             connection = null;
             Promise<Identifier> promise = SettableFuturePromise.create();
-            promise = LoggingPromise.create(logger, promise);
+            LoggingFutureListener.listen(logger, promise);
             NotEquals task = new NotEquals(current, promise);
             task.run();
             future = Futures.transform(task, connector, SameThreadExecutor.getInstance());

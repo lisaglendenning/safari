@@ -14,12 +14,14 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.BoundType;
@@ -40,6 +42,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.ForwardingPromise;
 import edu.uw.zookeeper.common.Pair;
@@ -48,28 +51,34 @@ import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.Automaton.Transition;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.AbstractWatchMatchListener;
+import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchMatchListener;
 import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.Lease;
+import edu.uw.zookeeper.safari.VersionTransition;
+import edu.uw.zookeeper.safari.VersionedId;
+import edu.uw.zookeeper.safari.VersionedValue;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.Lease;
-import edu.uw.zookeeper.safari.data.VersionTransition;
-import edu.uw.zookeeper.safari.data.VersionedVolume;
-import edu.uw.zookeeper.safari.data.VersionedVolumeState;
-import edu.uw.zookeeper.safari.data.Volume;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.data.VolumeBranchListener;
 import edu.uw.zookeeper.safari.data.VolumeDescriptorCache;
-import edu.uw.zookeeper.safari.data.VolumeState;
 import edu.uw.zookeeper.safari.region.Region;
+import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
+import edu.uw.zookeeper.safari.volume.AssignedVolumeLeaves;
+import edu.uw.zookeeper.safari.volume.RegionAndLeaves;
+import edu.uw.zookeeper.safari.volume.VolumeDescriptor;
+import edu.uw.zookeeper.safari.volume.VolumeVersion;
 
 public final class VersionedVolumeCacheService extends AbstractIdleService {
 
@@ -93,12 +102,8 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 ScheduledExecutorService scheduler,
                 ServiceMonitor monitor) {
             VersionedVolumeCacheService instance = create(
-                    new Predicate<Identifier>() {
-                        @Override
-                        public boolean apply(Identifier input) {
-                            return region.equals(input);
-                        }
-                    }, volumes.asLookup(), control, scheduler);
+                    Predicates.equalTo(region), 
+                    volumes.asLookup(), control, scheduler);
             VersionVolumesWatcher.newInstance(instance, control);
             monitor.add(instance);
             return instance;
@@ -122,7 +127,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
     private final ConcurrentMap<Identifier, CachedVolume> volumes;
     private final Function<Identifier, CachedVolume.LeasedVersion> idToVersion;
     private final Function<Identifier, CachedFunction<Long, UnsignedLong>> idToZxid;
-    private final Function<Identifier, CachedFunction<UnsignedLong, Volume>> idToVolume;
+    private final Function<Identifier, CachedFunction<UnsignedLong, AssignedVolumeBranches>> idToVolume;
     
     protected VersionedVolumeCacheService(  
             Predicate<Identifier> isResident,
@@ -154,9 +159,9 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 return getCachedVolume(id).zxid().lookup();
             }
         };
-        this.idToVolume = new Function<Identifier, CachedFunction<UnsignedLong, Volume>>() {
+        this.idToVolume = new Function<Identifier, CachedFunction<UnsignedLong, AssignedVolumeBranches>>() {
             @Override
-            public CachedFunction<UnsignedLong, Volume> apply(final Identifier id) {
+            public CachedFunction<UnsignedLong, AssignedVolumeBranches> apply(final Identifier id) {
                 return getCachedVolume(id).volume().lookup();
             }
         };
@@ -174,39 +179,51 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
         return idToZxid;
     }
     
-    public Function<Identifier, CachedFunction<UnsignedLong, Volume>> idToVolume() {
+    public Function<Identifier, CachedFunction<UnsignedLong, AssignedVolumeBranches>> idToVolume() {
         return idToVolume;
     }
     
+    @SuppressWarnings("unchecked")
     public void update(final ZNodePath versionPath) {
         control.materializer().cache().lock().readLock().lock();
         try {
             ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = 
                     (ControlSchema.Safari.Volumes.Volume.Log.Version) control.materializer().cache().cache().get(versionPath);
-            ControlSchema.Safari.Volumes.Volume.Log.Version.Lease leaseNode = versionNode.lease();
-            // ignore unleased versions
-            if (leaseNode == null) {
-                return;
-            }
+
             ControlSchema.Safari.Volumes.Volume.Log.Version.State stateNode = versionNode.state();
             // ignore unknown states
-            if ((stateNode == null) || (stateNode.data().stamp() == 0L)) {
+            if ((stateNode == null) || (stateNode.data().stamp() < 0L)) {
                 return;
             }
+            
             final UnsignedLong version = versionNode.name();
-            final VolumeState state = stateNode.data().get();
+            final Optional<RegionAndLeaves> state = Optional.fromNullable(stateNode.data().get());
             final Identifier id = versionNode.log().volume().name();
-            final boolean resident = (state != null) ? isResident.apply(state.getRegion()) : false;
-            if (resident) {
+            if (state.isPresent() && isResident.apply(state.get().getRegion())) {
                 CachedVolume v = getCachedVolume(id);
+                ControlSchema.Safari.Volumes.Volume.Log.Version.Lease leaseNode = versionNode.lease();
+                // ignore unleased versions
+                if (leaseNode == null) {
+                    return;
+                }
                 
                 if ((leaseNode.data().stamp() > 0L) && (leaseNode.data().get() != null)) {
-                    Lease lease = Lease.valueOf(leaseNode.stat().get().getMtime(), leaseNode.data().get().longValue());
-                    v.version().onSuccess(Pair.create(version, lease));
+                    if (leaseNode.stat().stamp() >= leaseNode.data().stamp()) {
+                        Lease lease = Lease.valueOf(leaseNode.stat().get().getMtime(), leaseNode.data().get().longValue());
+                        v.version().onSuccess(Pair.create(version, lease));
+                    } else {
+                        new RequestCallback(
+                                versionPath, 
+                                SubmittedRequests.submitRequests(
+                                        control.materializer(),
+                                        Operations.Requests.sync().setPath(leaseNode.path()).build(),
+                                        Operations.Requests.getData().setPath(leaseNode.path()).build()));
+                        return;
+                    }
                 }
                 
                 ControlSchema.Safari.Volumes.Volume.Path pathNode = versionNode.log().volume().getPath();
-                CachedVolume.VersionToVolume.PathListener forPath = v.volume().listen(version, state);
+                CachedVolume.VersionToVolume.PathListener forPath = v.volume().listen(VersionedValue.valueOf(version, state.get()));
                 if ((pathNode != null) && (pathNode.data().stamp() > 0L)) {
                     ZNodePath path = pathNode.data().get();
                     forPath.onSuccess(path);
@@ -338,6 +355,47 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
         @Override
         public void handleAutomatonTransition(Transition<ProtocolState> transition) {
             // TODO Auto-generated method stub
+        }
+    }
+    
+    protected class RequestCallback implements Runnable {
+
+        protected final ZNodePath path;
+        protected final SubmittedRequests<?,?> requests;
+        
+        public RequestCallback(
+                ZNodePath path,
+                SubmittedRequests<?,?> requests) {
+            this.path = path;
+            this.requests = requests;
+            requests.addListener(this, SameThreadExecutor.getInstance());
+        }
+        
+        @Override
+        public void run() {
+            if (requests.isDone()) {
+                List<? extends Operation.ProtocolResponse<?>> responses;
+                try {
+                    responses = requests.get();
+                } catch (Exception e) {
+                    // TODO
+                    throw Throwables.propagate(e);
+                }
+                for (Operation.ProtocolResponse<?> response: responses) {
+                    try {
+                        Operations.unlessError(response.record());
+                    } catch (KeeperException e) {
+                        // TODO
+                        throw Throwables.propagate(e);
+                    }
+                }
+                control.materializer().cache().lock().readLock().lock();
+                try {
+                    update(path);
+                } finally {
+                    control.materializer().cache().lock().readLock().unlock();
+                }
+            }
         }
     }
     
@@ -546,7 +604,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 for (prev = log.lowerEntry(key); prev != null; key = prev.getKey()) {
                     ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = (ControlSchema.Safari.Volumes.Volume.Log.Version) prev.getValue();
                     ControlSchema.Safari.Volumes.Volume.Log.Version.State stateNode = versionNode.state();
-                    if ((stateNode == null) || (stateNode.data().stamp() == 0L)) {
+                    if ((stateNode == null) || (stateNode.data().stamp() < 0L)) {
                         throw new UnsupportedOperationException();
                     }
                     boolean resident = isResident.apply(stateNode.data().get().getRegion());
@@ -601,25 +659,25 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
             }
         }
         
-        protected final class VersionToVolume implements FutureCallback<VersionedVolume> {
+        protected final class VersionToVolume implements FutureCallback<VolumeVersion<?>> {
             
             private final Map<UnsignedLong, Object> values;
-            private final Map<Pair<Identifier, UnsignedLong>, BranchesListener> listeners;
+            private final Map<VersionedId, BranchesListener> listeners;
             private final Map<UnsignedLong, Lookup> lookups;
-            private final CachedFunction<UnsignedLong, Volume> lookup;
+            private final CachedFunction<UnsignedLong, AssignedVolumeBranches> lookup;
             
             public VersionToVolume() {
                 this.values = Maps.newHashMap();
                 this.listeners = Maps.newHashMap();
                 this.lookups = Maps.newHashMap();
-                final Function<UnsignedLong, Volume> cached = new Function<UnsignedLong, Volume>() {
+                final Function<UnsignedLong, AssignedVolumeBranches> cached = new Function<UnsignedLong, AssignedVolumeBranches>() {
                     @Override
-                    public Volume apply(final UnsignedLong version) {
+                    public AssignedVolumeBranches apply(final UnsignedLong version) {
                         lock.readLock().lock();
                         try {
                             Object value = values.get(version);
-                            if (value instanceof Volume) {
-                                return (Volume) value;
+                            if (value instanceof AssignedVolumeBranches) {
+                                return (AssignedVolumeBranches) value;
                             } else {
                                 return null;
                             }
@@ -628,15 +686,15 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                         }
                     }
                 };
-                final AsyncFunction<UnsignedLong, Volume> async = new AsyncFunction<UnsignedLong, Volume>() {
+                final AsyncFunction<UnsignedLong, AssignedVolumeBranches> async = new AsyncFunction<UnsignedLong, AssignedVolumeBranches>() {
                     @Override
-                    public ListenableFuture<Volume> apply(final UnsignedLong version) {
+                    public ListenableFuture<AssignedVolumeBranches> apply(final UnsignedLong version) {
                         lock.writeLock().lock();
                         try {
                             Object value = values.get(version);
                             if (value != null) {
-                                if (value instanceof Volume) {
-                                    return Futures.immediateFuture((Volume) value);
+                                if (value instanceof AssignedVolumeBranches) {
+                                    return Futures.immediateFuture((AssignedVolumeBranches) value);
                                 } else {
                                     return Futures.immediateFailedFuture((Throwable) value);
                                 }
@@ -645,7 +703,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                             if (lookup != null) {
                                 return lookup;
                             }
-                            lookup = new Lookup(version, SettableFuturePromise.<Volume>create());
+                            lookup = new Lookup(version, SettableFuturePromise.<AssignedVolumeBranches>create());
                             lookups.put(version, lookup);
                             lookup.addListener(lookup, SameThreadExecutor.getInstance());
                             return lookup;
@@ -660,39 +718,36 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                         logger);
             }
 
-            public CachedFunction<UnsignedLong, Volume> lookup() {
+            public CachedFunction<UnsignedLong, AssignedVolumeBranches> lookup() {
                 return lookup;
             }
 
             @Override
-            public void onSuccess(VersionedVolume result) {
+            public void onSuccess(VolumeVersion<?> result) {
                 lock.writeLock().lock();
                 try {
-                    if (result instanceof Volume) {
-                        Object value = values.get(result.getVersion());
+                    if (result instanceof AssignedVolumeBranches) {
+                        Object value = values.get(result.getState().getVersion());
                         if (value == null) {
-                            Volume v = (Volume) result;
-                            values.put(v.getVersion(), v);
-                            Lookup lookup = lookups.remove(v.getVersion());
+                            AssignedVolumeBranches v = (AssignedVolumeBranches) result;
+                            values.put(v.getState().getVersion(), v);
+                            Lookup lookup = lookups.remove(v.getState().getVersion());
                             if (lookup != null) {
                                 lookup.set(v);
                             }
                         } else {
                             assert (value.equals(result));
                         }
-                        assert (! listeners.containsKey(Pair.create(result.getDescriptor().getId(), result.getVersion())));
+                        assert (! listeners.containsKey(VersionedId.valueOf(result.getState().getVersion(), result.getDescriptor().getId())));
                     } else {
-                        VersionedVolumeState v = (VersionedVolumeState) result;
-                        Pair<Identifier, UnsignedLong> k = Pair.create(v.getDescriptor().getId(), v.getVersion());
-                        BranchesListener listener = listeners.get(k);
-                        if (listener == null) {
+                        AssignedVolumeLeaves v = (AssignedVolumeLeaves) result;
+                        VersionedId k = VersionedId.valueOf(v.getState().getVersion(), v.getDescriptor().getId());
+                        if (!listeners.containsKey(k)) {
                             try {
-                                listener = new BranchesListener(VolumeBranchListener.fromCache(k, v.getState(), idToPath));
+                                new BranchesListener(k, VolumeBranchListener.volumeFromCache(k, v.getState().getValue(), idToPath));
                             } catch (Exception e) {
                                 throw Throwables.propagate(e);
                             }
-                            listeners.put(k, listener);
-                            listener.get().addListener(listener, SameThreadExecutor.getInstance());
                         }
                     }
                 } finally {
@@ -716,16 +771,16 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 }
             }
             
-            public PathListener listen(UnsignedLong version, VolumeState state) {
-                return new PathListener(Pair.create(version, state));
+            public PathListener listen(VersionedValue<RegionAndLeaves> state) {
+                return new PathListener(state);
             }
             
-            protected final class Lookup extends ForwardingPromise<Volume> implements Runnable {
+            protected final class Lookup extends ForwardingPromise<AssignedVolumeBranches> implements Runnable {
 
                 private final UnsignedLong key;
-                private final Promise<Volume> delegate;
+                private final Promise<AssignedVolumeBranches> delegate;
                 
-                public Lookup(UnsignedLong key, Promise<Volume> delegate) {
+                public Lookup(UnsignedLong key, Promise<AssignedVolumeBranches> delegate) {
                     this.delegate = delegate;
                     this.key = key;
                 }
@@ -753,22 +808,23 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 }
 
                 @Override
-                protected Promise<Volume> delegate() {
+                protected Promise<AssignedVolumeBranches> delegate() {
                     return delegate;
                 }
             }
             
             protected final class PathListener implements FutureCallback<ZNodePath> {
 
-                private final Pair<UnsignedLong,VolumeState> task;
+                private final VersionedValue<RegionAndLeaves> task;
                 
-                public PathListener(Pair<UnsignedLong,VolumeState> task) {
+                public PathListener(VersionedValue<RegionAndLeaves> task) {
                     this.task = task;
                 }
                 
                 @Override
                 public void onSuccess(ZNodePath path) {
-                    VersionedVolumeState v = VersionedVolumeState.valueOf(id, path, task.first(), task.second());
+                    AssignedVolumeLeaves v = AssignedVolumeLeaves.valueOf(
+                            VolumeDescriptor.valueOf(id, path), task);
                     VersionToVolume.this.onSuccess(v);
                 }
 
@@ -778,38 +834,37 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 }
             }
             
-            protected final class BranchesListener implements Runnable {
+            protected final class BranchesListener extends ToStringListenableFuture<AssignedVolumeBranches> implements Runnable {
 
-                private final VolumeBranchListener future;
+                private final VersionedId version;
                 
-                public BranchesListener(VolumeBranchListener future) {
-                    this.future = future;
-                }
-                
-                public VolumeBranchListener get() {
-                    return future;
+                public BranchesListener(VersionedId version, 
+                        ListenableFuture<AssignedVolumeBranches> future) {
+                    super(future);
+                    this.version = version;
+                    listeners.put(version, this);
+                    addListener(this, SameThreadExecutor.getInstance());
                 }
                 
                 @Override
                 public void run() {
-                    if (! future.isDone()) {
-                        return;
-                    }
-                    lock.writeLock().lock();
-                    try {
-                        listeners.remove(future.task());
-                        Volume volume;
+                    if (isDone()) {
+                        lock.writeLock().lock();
                         try {
-                            volume = (Volume) future.get();
-                        } catch (CancellationException e) {
-                            return;
-                        } catch (Exception e) {
-                            // TODO
-                            throw Throwables.propagate(e);
+                            listeners.remove(version);
+                            AssignedVolumeBranches volume;
+                            try {
+                                volume = get();
+                            } catch (CancellationException e) {
+                                return;
+                            } catch (Exception e) {
+                                // TODO
+                                throw Throwables.propagate(e);
+                            }
+                            onSuccess(volume);
+                        } finally {
+                            lock.writeLock().unlock();
                         }
-                        onSuccess(volume);
-                    } finally {
-                        lock.writeLock().unlock();
                     }
                 }
             }

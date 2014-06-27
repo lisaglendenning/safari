@@ -27,7 +27,13 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.Version;
-import edu.uw.zookeeper.safari.storage.StorageZNode;
+import edu.uw.zookeeper.safari.control.schema.VolumeLogEntry;
+import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryDeserializer;
+import edu.uw.zookeeper.safari.control.schema.VolumeLogEntrySerializer;
+import edu.uw.zookeeper.safari.control.schema.BoundVolumeOperatorDeserializer;
+import edu.uw.zookeeper.safari.control.schema.BoundVolumeOperatorSerializer;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
+import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
 
 public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.ObjectMapperBuilder {
 
@@ -74,7 +80,9 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 .add(RequestRecordSerializer.create())
                 .add(ResponseRecordSerializer.create())
                 .add(ProtocolRequestSerializer.create())
-                .add(ProtocolResponseHeaderSerializer.create());
+                .add(ProtocolResponseHeaderSerializer.create())
+                .add(BoundVolumeOperatorSerializer.create())
+                .add(VolumeLogEntrySerializer.create());
             return serializers.build();
         }
 
@@ -90,7 +98,9 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 .put(Records.Request.class, RequestRecordDeserializer.create())
                 .put(Records.Response.class, ResponseRecordDeserializer.create())
                 .put(Message.ClientRequest.class, ProtocolRequestDeserializer.create())
-                .put(Message.ServerResponse.class, ProtocolResponseHeaderDeserializer.create());
+                .put(Message.ServerResponse.class, ProtocolResponseHeaderDeserializer.create())
+                .put(BoundVolumeOperator.class, BoundVolumeOperatorDeserializer.create())
+                .put(VolumeLogEntry.class, VolumeLogEntryDeserializer.create());
             return deserializers.build();
         }
         

@@ -3,8 +3,9 @@ package edu.uw.zookeeper.safari.backend;
 import java.nio.channels.ClosedChannelException;
 import java.util.Collections;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
@@ -14,7 +15,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -26,21 +26,18 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.client.CreateOrEquals;
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.CallablePromiseTask;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.protocol.ConnectMessage;
-import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Message.ClientSession;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.ProtocolConnection;
 import edu.uw.zookeeper.protocol.ProtocolResponseMessage;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.SessionListener;
@@ -48,11 +45,9 @@ import edu.uw.zookeeper.protocol.ZxidReference;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.control.Control;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.CreateOrEquals;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.Peer;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
@@ -85,11 +80,11 @@ public class BackendRequestService extends ServiceListenersService {
                 @Backend ServerInetAddressView address,
                 @Backend ZxidReference zxids,
                 @Control Materializer<ControlZNode<?>,?> control,
-                AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> clientFactory,
+                BackendSessionExecutors sessions,
                 ServerPeerConnections peers,
                 ServiceMonitor monitor) throws Exception {
             BackendRequestService instance = BackendRequestService.newInstance(
-                    peer, address, zxids, control, clientFactory, peers, ImmutableList.<Service.Listener>of());
+                    peer, address, zxids, control, sessions, peers, ImmutableList.<Service.Listener>of());
             monitor.add(instance);
             return instance;
         }
@@ -100,7 +95,8 @@ public class BackendRequestService extends ServiceListenersService {
             final ServerInetAddressView value, 
             final Materializer<ControlZNode<?>,?> materializer) {
         ZNodePath path = ControlSchema.Safari.Peers.Peer.StorageAddress.pathOf(peer);
-        return Futures.transform(CreateOrEquals.create(path, value, materializer), 
+        ListenableFuture<Optional<ServerInetAddressView>> task = CreateOrEquals.create(path, value, materializer, SettableFuturePromise.<Optional<ServerInetAddressView>>create());
+        return Futures.transform(task, 
                 new Function<Optional<ServerInetAddressView>, Optional<ServerInetAddressView>>() {
                     @Override
                     public Optional<ServerInetAddressView> apply(
@@ -118,11 +114,11 @@ public class BackendRequestService extends ServiceListenersService {
             ServerInetAddressView address,
             ZxidReference zxids,
             Materializer<ControlZNode<?>,?> control,
-            AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> clientFactory,
+            BackendSessionExecutors sessions,
             ServerPeerConnections peers,
             Iterable<? extends Service.Listener> listeners) {
         BackendRequestService instance = new BackendRequestService(
-                clientFactory, 
+                sessions, 
                 peers,
                 zxids,
                 ImmutableList.<Service.Listener>builder()
@@ -131,20 +127,20 @@ public class BackendRequestService extends ServiceListenersService {
         return instance;
     }
 
-    protected final AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> clientFactory;
-    protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendSessionListener> sessions;
+    protected final BackendSessionExecutors sessions;
+    protected final ConcurrentMap<Long, ServerPeerConnectionDispatcher.BackendSessionListener> listeners;
     protected final ZxidReference zxids;
     protected final ServerPeerConnectionsListener<ServerPeerConnectionDispatcher> listener;
     
     protected BackendRequestService(
-            AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> clientFactory,
+            BackendSessionExecutors sessions,
             ServerPeerConnections peers,
             ZxidReference zxids,
             Iterable<? extends Service.Listener> listeners) {
         super(listeners);
-        this.clientFactory = clientFactory;
+        this.sessions = sessions;
         this.zxids = zxids;
-        this.sessions = new MapMaker().makeMap();
+        this.listeners = new MapMaker().makeMap();
         this.listener = new ServerPeerConnectionsListener<ServerPeerConnectionDispatcher>(new Function<ServerPeerConnection<?>, ServerPeerConnectionDispatcher>(){
             @Override
             public ServerPeerConnectionDispatcher apply(ServerPeerConnection<?> connection) {
@@ -263,7 +259,7 @@ public class BackendRequestService extends ServiceListenersService {
             connection.unsubscribe(this);
             synchronized (mine) {
                 for (Long session: Iterables.consumingIterable(mine)) {
-                    BackendSessionListener listener = sessions.get(session);
+                    BackendSessionListener listener = listeners.get(session);
                     if ((listener != null) && (listener.dispatcher() == this)) {
                         listener.stop();
                     }
@@ -272,37 +268,17 @@ public class BackendRequestService extends ServiceListenersService {
         }
         
         protected void handleMessageSessionOpen(final MessageSessionOpenRequest message) {
-            BackendSessionListener listener = sessions.get(message.getIdentifier());
-            if (listener != null) {
-                if (listener.dispatcher() == this) {
-                    onSuccess(MessagePacket.of(MessageSessionOpenResponse.of(message.getIdentifier(), Futures.getUnchecked(listener.session().client().session()))));
-                    return;
-                } else {
-                    if (sessions.remove(message.getIdentifier(), listener)) {
-                        listener.session().client().stop();
-                    } else {
-                        handleMessageSessionOpen(message);
-                        return;
-                    }
-                }
-            }
-            ListenableFuture<ShardedClientExecutor<? extends ProtocolConnection<? super ClientSession, ? extends edu.uw.zookeeper.protocol.Operation.Response, ?, ?, ?>>> client;
-            try {
-                client = clientFactory.apply(message);
-            } catch (Exception e) {
-                client = Futures.immediateFailedFuture(e);
-            }
-            Futures.addCallback(new SessionOpenTask(Pair.create(message, client)), this, SameThreadExecutor.getInstance());
+            new SessionOpenListener(message, sessions.submit(message));
 
         }
         
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
-            ShardedClientRequestMessage<?> request = (ShardedClientRequestMessage<?>) message.getMessage();
+            final ShardedClientRequestMessage<?> request = (ShardedClientRequestMessage<?>) message.getMessage();
             try {
-                BackendSessionListener listener = sessions.get(message.getIdentifier());
+                BackendSessionListener listener = listeners.get(message.getIdentifier());
                 if (listener != null) { 
                     if (listener.dispatcher() == this) {
-                        Futures.addCallback(listener.submit(request), this, SameThreadExecutor.getInstance());
+                        listener.submit(request);
                     } else {
                         throw new KeeperException.SessionMovedException();
                     }
@@ -340,55 +316,63 @@ public class BackendRequestService extends ServiceListenersService {
             
         }
         
-        protected class SessionOpenTask extends PromiseTask<Pair<MessageSessionOpenRequest, ? extends ListenableFuture<? extends ShardedClientExecutor<?>>>, MessagePacket<MessageSessionOpenResponse>> implements Runnable, Callable<Optional<MessagePacket<MessageSessionOpenResponse>>> {
+        protected class SessionOpenListener extends ToStringListenableFuture<MessageSessionOpenResponse> implements Runnable {
             
-            private final CallablePromiseTask delegate;
+            private final MessageSessionOpenRequest request;
             
-            public SessionOpenTask(Pair<MessageSessionOpenRequest, ? extends ListenableFuture<? extends ShardedClientExecutor<?>>> task) {
-                super(task, SettableFuturePromise.<MessagePacket<MessageSessionOpenResponse>>create());
-                this.delegate = CallablePromiseTask.create(this, this);
-                task.second().addListener(this, SameThreadExecutor.getInstance());
+            public SessionOpenListener(
+                    MessageSessionOpenRequest request,
+                    ListenableFuture<MessageSessionOpenResponse> future) {
+                super(future);
+                this.request = request;
+                addListener(this, SameThreadExecutor.getInstance());
             }
 
             @Override
             public void run() {
-                delegate.run();
-            }
-            
-            @Override
-            public synchronized Optional<MessagePacket<MessageSessionOpenResponse>> call() throws Exception {
-                if (task().second().isDone()) {
-                    BackendSessionExecutor session = BackendSessionExecutor.create(task().first().getIdentifier(), task().second().get());
-                    assert (session.client().session().isDone());
-                    ConnectMessage.Response response = session.client().session().get();
-                    // FIXME check if this connection is still valid
-                    BackendSessionListener listener = new BackendSessionListener(session);
-                    BackendSessionListener existing = sessions.putIfAbsent(task().first().getIdentifier(), listener);
-                    if (existing != null) {
-                        listener.stop();
-                        throw new UnsupportedOperationException();
+                if (isDone()) {
+                    final Long session = request.getIdentifier();
+                    MessageSessionOpenResponse response;
+                    try {
+                        response = get();
+                    } catch (InterruptedException e) {
+                        throw Throwables.propagate(e);
+                    } catch (ExecutionException e) {
+                        response = MessageSessionOpenResponse.of(
+                                request.getIdentifier(), 
+                                ConnectMessage.Response.Invalid.newInstance());
                     }
-                    mine.add(listener.session().session());
-                    return Optional.of(MessagePacket.of(
-                            MessageSessionOpenResponse.of(
-                                    session.session(), response)));
+                    if (response.getMessage() instanceof ConnectMessage.Response.Valid) {
+                        BackendSessionListener listener = listeners.get(session);
+                        if ((listener == null) || (listener.dispatcher() != ServerPeerConnectionDispatcher.this)) {
+                            BackendSessionExecutors.BackendSessionExecutor executor = sessions.get(request.getIdentifier());
+                            if (executor != null) {
+                                listener = new BackendSessionListener(executor);
+                                BackendSessionListener existing = listeners.put(session, listener);
+                                if (existing != null) {
+                                    existing.stop();
+                                }
+                            }
+                        }
+                        mine.add(session);
+                    }
+                    onSuccess(MessagePacket.of(response));
                 }
-                return Optional.absent();
             }
         }
 
-        protected class BackendSessionListener implements Function<ShardedResponseMessage<?>, MessagePacket<MessageSessionResponse>>, FutureCallback<MessagePacket>, SessionListener, TaskExecutor<ShardedClientRequestMessage<?>, MessagePacket<MessageSessionResponse>> {
+        protected class BackendSessionListener implements FutureCallback<ShardedResponseMessage<?>>, SessionListener, TaskExecutor<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>> {
 
-            protected final BackendSessionExecutor session;
+            protected final BackendSessionExecutors.BackendSessionExecutor executor;
             
             public BackendSessionListener(
-                    BackendSessionExecutor client) {
-                this.session = client;
-                session().client().subscribe(this);
+                    BackendSessionExecutors.BackendSessionExecutor executor) {
+                this.executor = executor;
+                executor.client().subscribe(this);
             }
             
-            public BackendSessionExecutor session() {
-                return session;
+            public BackendSessionExecutors.BackendSessionExecutor executor() {
+                return executor;
             }
             
             public ServerPeerConnectionDispatcher dispatcher() {
@@ -396,33 +380,33 @@ public class BackendRequestService extends ServiceListenersService {
             }
             
             public void stop() {
-                session().client().unsubscribe(this);
-                session().client().stop();
-                sessions.remove(session(), this);
+                executor().client().unsubscribe(this);
+                if (listeners.remove(executor().session(), this)) {
+                    mine.remove(executor().session());
+                }
             }
 
             @Override
-            public MessagePacket<MessageSessionResponse> apply(ShardedResponseMessage<?> response) {
-                return MessagePacket.of(MessageSessionResponse.of(
-                        session().session(), response));
-            }
-
-            @Override
-            public ListenableFuture<MessagePacket<MessageSessionResponse>> submit(ShardedClientRequestMessage<?> request) {
-                ListenableFuture<MessagePacket<MessageSessionResponse>> future = Futures.transform(session.submit(request), this, SameThreadExecutor.getInstance());
+            public ListenableFuture<ShardedResponseMessage<?>> submit(ShardedClientRequestMessage<?> request) {
+                ListenableFuture<ShardedResponseMessage<?>> future =
+                        ToErrorMessage.submit(
+                                executor().client(), 
+                                request);
                 Futures.addCallback(future, this, SameThreadExecutor.getInstance());
                 return future;
             }
 
             @Override
-            public void onSuccess(MessagePacket result) {
-                dispatcher().onSuccess(result);
+            public void onSuccess(ShardedResponseMessage<?> response) {
+                dispatcher().onSuccess(MessagePacket.of(MessageSessionResponse.of(
+                        executor().session(), response)));
             }
 
             @Override
             public void onFailure(Throwable t) {
                 logger.debug("{}", this, t);
                 stop();
+                executor().client().stop();
             }
 
             @Override
@@ -430,7 +414,7 @@ public class BackendRequestService extends ServiceListenersService {
                     Automaton.Transition<ProtocolState> transition) {
                 switch (transition.to()) {
                 case DISCONNECTED:
-                    session().client().unsubscribe(this);
+                    executor().client().unsubscribe(this);
                     break;
                 case ERROR:
                     onFailure(new KeeperException.ConnectionLossException());
@@ -443,7 +427,7 @@ public class BackendRequestService extends ServiceListenersService {
             @Override
             public void handleNotification(
                     Operation.ProtocolResponse<IWatcherEvent> notification) {
-                onSuccess(apply((ShardedResponseMessage<?>) notification));
+                onSuccess((ShardedResponseMessage<?>) notification);
             }
         }
     }

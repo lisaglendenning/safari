@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.safari.SafariException;
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 public final class ShardedErrorResponseMessage extends ShardedResponseMessage<Pair<Integer,SafariException>> {
 

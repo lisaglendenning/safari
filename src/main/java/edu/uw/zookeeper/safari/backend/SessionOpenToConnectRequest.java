@@ -8,7 +8,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
@@ -17,8 +17,9 @@ import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.ZxidReference;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
-import edu.uw.zookeeper.safari.storage.StorageSchema;
-import edu.uw.zookeeper.safari.storage.StorageZNode;
+import edu.uw.zookeeper.safari.storage.SessionLookup;
+import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 public class SessionOpenToConnectRequest implements AsyncFunction<MessageSessionOpenRequest, ConnectMessage.Request> {
 
@@ -46,12 +47,16 @@ public class SessionOpenToConnectRequest implements AsyncFunction<MessageSession
         final ConnectMessage.Request value;
         if (message instanceof ConnectMessage.Request.NewRequest) {
             if ((message.getPasswd() != null) && (message.getPasswd().length > 0)) {
-                SessionLookup lookup = SessionLookup.create(
-                        request.getIdentifier(), 
-                        materializer,
-                        LoggingPromise.create(logger,
-                                SettableFuturePromise.<StorageSchema.Safari.Sessions.Session.Data>create()));
-                return Futures.transform(lookup, new SessionLookupCallback(message), SameThreadExecutor.getInstance());
+                ListenableFuture<StorageSchema.Safari.Sessions.Session.Data> lookup = 
+                        LoggingFutureListener.listen(logger, 
+                                SessionLookup.create(
+                                    request.getIdentifier(), 
+                                    materializer,
+                                    SettableFuturePromise.<StorageSchema.Safari.Sessions.Session.Data>create()));
+                return Futures.transform(
+                        lookup, 
+                        new SessionLookupCallback(message), 
+                        SameThreadExecutor.getInstance());
             } else {
                 value = ConnectMessage.Request.NewRequest.newInstance(
                         TimeValue.milliseconds(message.getTimeOut()), 

@@ -5,6 +5,8 @@ import org.apache.zookeeper.Watcher;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.ClientExecutor;
+import edu.uw.zookeeper.client.PathToQuery;
+import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.NodeWatchEvent;
 import edu.uw.zookeeper.data.Operations;
@@ -15,36 +17,29 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
-import edu.uw.zookeeper.safari.control.ControlZNode;
-import edu.uw.zookeeper.safari.data.CacheNodeCreatedListener;
-import edu.uw.zookeeper.safari.data.PathToQuery;
-import edu.uw.zookeeper.safari.data.PathToQueryWatcher;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.data.VolumeVersionCreatedListener;
 
 /**
  * Assumes functionality of LatestVolumesWatcher is already covered.
  */
-public class VersionVolumesWatcher extends CacheNodeCreatedListener {
+public class VersionVolumesWatcher extends Watchers.CacheNodeCreatedListener<ControlZNode<?>> {
 
     public static VersionVolumesWatcher newInstance(
             Service service,
             ControlClientService control) {
         newLeaseXomegaListener(control.materializer(), control.materializer().cache(), service, control.cacheEvents());
-        VersionVolumesWatcher instance = new VersionVolumesWatcher(
-                newVolumeLogWatcher(service, control.notifications(), control.materializer()),
+        VersionVolumesWatcher listener = new VersionVolumesWatcher(
+                newVolumeLogWatcher(service, control.notifications(), control.materializer()), 
+                control.materializer().cache(),
                 service,
-                control.cacheEvents(), 
-                control.materializer().cache());
-        service.addListener(instance, SameThreadExecutor.getInstance());
-        if (service.isRunning()) {
-            instance.starting();
-            instance.running();
-        }
-        return instance;
+                control.cacheEvents());
+        listener.listen();
+        return listener;
     }
 
-    public static PathToQueryWatcher<?,?> newVolumeLogWatcher(
+    public static Watchers.PathToQueryWatcher<?,?> newVolumeLogWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -57,10 +52,10 @@ public class VersionVolumesWatcher extends CacheNodeCreatedListener {
                 client, 
                 Operations.Requests.sync(),
                 Operations.Requests.getChildren().setWatch(true));
-        return PathToQueryWatcher.newInstance(service, watch, matcher, query);
+        return Watchers.PathToQueryWatcher.listen(service, watch, matcher, query);
     }
 
-    public static PathToQueryWatcher<?,?> newVolumeLeaseWatcher(
+    public static Watchers.PathToQueryWatcher<?,?> newVolumeLeaseWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -73,10 +68,10 @@ public class VersionVolumesWatcher extends CacheNodeCreatedListener {
                 client, 
                 Operations.Requests.sync(),
                 Operations.Requests.getData().setWatch(true));
-        return PathToQueryWatcher.newInstance(service, watch, matcher, query);
+        return Watchers.PathToQueryWatcher.listen(service, watch, matcher, query);
     }
 
-    public static PathToQueryWatcher<?,?> newVolumeXomegaWatcher(
+    public static Watchers.PathToQueryWatcher<?,?> newVolumeXomegaWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -89,7 +84,7 @@ public class VersionVolumesWatcher extends CacheNodeCreatedListener {
                 client, 
                 Operations.Requests.sync(),
                 Operations.Requests.getData().setWatch(true));
-        return PathToQueryWatcher.newInstance(service, watch, matcher, query);
+        return Watchers.PathToQueryWatcher.listen(service, watch, matcher, query);
     }
     
     public static <O extends Operation.ProtocolResponse<?>> LeaseXomegaListener<O> newLeaseXomegaListener(
@@ -119,12 +114,12 @@ public class VersionVolumesWatcher extends CacheNodeCreatedListener {
             return instance;
         }
         
-        protected final PathToQueryWatcher<?,?> leaseWatcher;
-        protected final PathToQueryWatcher<?,?> xomegaWatcher;
+        protected final Watchers.PathToQueryWatcher<?,?> leaseWatcher;
+        protected final Watchers.PathToQueryWatcher<?,?> xomegaWatcher;
         
         protected LeaseXomegaListener(
-                PathToQueryWatcher<?,?> leaseWatcher,
-                PathToQueryWatcher<?,?> xomegaWatcher,
+                Watchers.PathToQueryWatcher<?,?> leaseWatcher,
+                Watchers.PathToQueryWatcher<?,?> xomegaWatcher,
                 ClientExecutor<? super Records.Request, O, ?> client,
                 LockableZNodeCache<ControlZNode<?>, Records.Request, ?> cache,
                 Service service, WatchListeners watch) {
@@ -149,14 +144,14 @@ public class VersionVolumesWatcher extends CacheNodeCreatedListener {
         }
     }
 
-    private final PathToQueryWatcher<?,?> logWatcher;
+    private final Watchers.PathToQueryWatcher<?,?> logWatcher;
 
     protected VersionVolumesWatcher(
-            PathToQueryWatcher<?,?> logWatcher,
+            Watchers.PathToQueryWatcher<?,?> logWatcher,
+            LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
             Service service,
-            WatchListeners watch,
-            LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache) {
-        super(ControlSchema.Safari.Volumes.Volume.PATH, service, watch, cache);
+            WatchListeners watch) {
+        super(ControlSchema.Safari.Volumes.Volume.PATH, cache, service, watch);
         this.logWatcher = logWatcher;
     }
 

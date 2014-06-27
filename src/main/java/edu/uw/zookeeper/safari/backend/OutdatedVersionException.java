@@ -1,7 +1,7 @@
 package edu.uw.zookeeper.safari.backend;
 
 import edu.uw.zookeeper.safari.SafariException;
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 public final class OutdatedVersionException extends SafariException {
 

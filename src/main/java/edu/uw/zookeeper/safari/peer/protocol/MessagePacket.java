@@ -22,7 +22,7 @@ public class MessagePacket<T extends MessageBody> extends AbstractPair<MessageHe
         return first;
     }
     
-    public MessageBody getBody() {
+    public T getBody() {
         return second;
     }
 }

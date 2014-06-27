@@ -29,6 +29,7 @@ public class Module extends AbstractSafariModule {
         return ImmutableList.<com.google.inject.Module>of(
                 VersionedVolumeCacheService.module(),
                 BackendConnections.create(),
+                BackendSessionExecutors.module(),
                 BackendRequestService.module());
     }
 

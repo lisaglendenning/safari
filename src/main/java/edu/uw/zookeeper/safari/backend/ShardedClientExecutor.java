@@ -25,7 +25,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
@@ -43,25 +43,27 @@ import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.client.PendingQueueClientExecutor;
 import edu.uw.zookeeper.protocol.client.PendingQueueClientExecutor.PendingTask;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
+import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.SafariException;
-import edu.uw.zookeeper.safari.data.EmptyVolume;
-import edu.uw.zookeeper.safari.data.VersionTransition;
-import edu.uw.zookeeper.safari.data.VersionedId;
-import edu.uw.zookeeper.safari.data.VersionedVolume;
-import edu.uw.zookeeper.safari.data.Volume;
+import edu.uw.zookeeper.safari.VersionTransition;
+import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
-import edu.uw.zookeeper.safari.storage.StorageSchema;
+import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
+import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
+import edu.uw.zookeeper.safari.volume.EmptyVolume;
+import edu.uw.zookeeper.safari.volume.RegionAndBranches;
+import edu.uw.zookeeper.safari.volume.VolumeVersion;
 
 public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedClientRequestMessage<?>, ShardedServerResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C, ShardedClientExecutor.PendingShardedTask> {
 
     public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> fromConnect(
             Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
             Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
-            Function<Identifier, ? extends AsyncFunction<UnsignedLong,Volume>> idToVolume,
+            Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume,
             AsyncFunction<Identifier, ZNodePath> idToPath,
             ConnectTask<C> connect,
             ScheduledExecutorService scheduler) {
@@ -79,7 +81,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
     public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> create(
             Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
             Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
-            Function<Identifier, ? extends AsyncFunction<UnsignedLong,Volume>> idToVolume,
+            Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume,
             AsyncFunction<Identifier, ZNodePath> idToPath,
             ListenableFuture<ConnectMessage.Response> session,
             C connection,
@@ -99,14 +101,14 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
 
     protected final Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion;
     protected final Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid;
-    protected final Function<Identifier, ? extends AsyncFunction<UnsignedLong,Volume>> idToVolume;
+    protected final Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume;
     protected final AsyncFunction<Identifier, ZNodePath> idToPath;
     protected final Tasks actor;
     
     protected ShardedClientExecutor(
             Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
             Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
-            Function<Identifier, ? extends AsyncFunction<UnsignedLong,Volume>> idToVolume,
+            Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume,
             AsyncFunction<Identifier, ZNodePath> idToPath,
             Logger logger,
             ListenableFuture<ConnectMessage.Response> session,
@@ -125,8 +127,8 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
     public ListenableFuture<ShardedServerResponseMessage<?>> submit(
             ShardedClientRequestMessage<?> request, Promise<ShardedServerResponseMessage<?>> promise) {
         ShardedRequestTask task = new ShardedRequestTask(
-                request, 
-                LoggingPromise.create(logger(), promise));
+                request, promise);
+        LoggingFutureListener.listen(logger(), task);
         if (! send(task)) {
             task.cancel(true);
         }
@@ -228,7 +230,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         
         @Override
         public void onSuccess(PendingShardedTask result) {
-            Identifier id = result.getSharded().task().getShard().getIdentifier();
+            Identifier id = result.getSharded().task().getShard().getValue();
             if (!id.equals(Identifier.zero())) {
                 ShardProcessor processor = processors.get(id);
                 if (processor != null) {
@@ -263,32 +265,37 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         
         @Override
         protected boolean apply(ShardedRequestTask input) throws Exception {
-            Identifier id = input.task().getShard().getIdentifier();
+            Identifier id = input.task().getShard().getValue();
             if (id.equals(Identifier.zero())) {
-                ImmutableList.Builder<Promise<Identifier>> builder = ImmutableList.builder();
-                for (Map.Entry<Identifier, ShardProcessor> e: processors.entrySet()) {
-                    if (e.getKey().equals(id) || e.getValue().requests.isEmpty()) {
-                        continue;
-                    }
-                    Promise<Identifier> promise = SettableFuturePromise.create();
-                    builder.add(promise);
-                    e.getValue().requests.send(promise);
-                }
-                ImmutableList<Promise<Identifier>> futures = builder.build();
-                if (!futures.isEmpty()) {
-                    wait(Futures.allAsList(futures));
-                    return false;
-                } else {
-                    if (mailbox.remove(input)) {
-                        PendingShardedTask task = PendingShardedTask.create(input, new SoftReference<Message.ClientRequest<?>>(input.task().getRequest()), LoggingPromise.create(logger, SettableFuturePromise.<Message.ServerResponse<?>>create()));
-                        if (! pending.send(task)) {
-                            input.cancel(true);
-                            return false;
+                if (input.task().getRequest().record().opcode() == OpCode.CLOSE_SESSION) {
+                    ImmutableList.Builder<Promise<Identifier>> builder = ImmutableList.builder();
+                    for (Map.Entry<Identifier, ShardProcessor> e: processors.entrySet()) {
+                        if (e.getKey().equals(id) || e.getValue().requests.isEmpty()) {
+                            continue;
                         }
-                        return true;
+                        Promise<Identifier> promise = SettableFuturePromise.create();
+                        builder.add(promise);
+                        e.getValue().requests.send(promise);
                     }
-                    return false;
+                    ImmutableList<Promise<Identifier>> futures = builder.build();
+                    if (!futures.isEmpty()) {
+                        wait(Futures.allAsList(futures));
+                        return false;
+                    }
                 }
+                if (mailbox.remove(input)) {
+                    PendingShardedTask task = PendingShardedTask.create(
+                            input, 
+                            new SoftReference<Message.ClientRequest<?>>(input.task().getRequest()), 
+                            SettableFuturePromise.<Message.ServerResponse<?>>create());
+                    LoggingFutureListener.listen(logger, task);
+                    if (! pending.send(task)) {
+                        input.cancel(true);
+                        return false;
+                    }
+                    return true;
+                }
+                return false;
             } else {
                 ShardProcessor processor = processors.get(id);
                 if (processor == null) {
@@ -300,7 +307,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                     ZNodePath path = future.get();
                     Supplier<VersionTransition> version = idToVersion.apply(id);
                     AsyncFunction<Long,UnsignedLong> zxid = idToZxid.apply(id);
-                    AsyncFunction<UnsignedLong,Volume> volume = idToVolume.apply(id);
+                    AsyncFunction<UnsignedLong,AssignedVolumeBranches> volume = idToVolume.apply(id);
                     processor = new ShardProcessor(id, path, version, zxid, volume);
                     ShardProcessor existing = processors.putIfAbsent(id, processor);
                     if (existing != null) {
@@ -327,7 +334,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             private final Identifier identifier;
             private final Supplier<VersionTransition> version;
             private final AsyncFunction<Long,UnsignedLong> zxid;
-            private final AsyncFunction<UnsignedLong,? extends VersionedVolume> volume;
+            private final AsyncFunction<UnsignedLong,? extends VolumeVersion<?>> volume;
             private final RequestProcessor requests;
             private final ResponseProcessor responses;
             
@@ -336,12 +343,12 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                     ZNodePath fromPrefix,
                     Supplier<VersionTransition> version,
                     AsyncFunction<Long,UnsignedLong> zxid,
-                    AsyncFunction<UnsignedLong,? extends VersionedVolume> volume) {
+                    AsyncFunction<UnsignedLong,? extends VolumeVersion<?>> volume) {
                 this.identifier = identifier;
                 this.version = version;
                 this.zxid = zxid;
                 this.volume = volume;
-                ZNodePath toPrefix = identifier.equals(Identifier.zero()) ? ZNodePath.root() : StorageSchema.Safari.Volumes.Volume.Root.pathOf(identifier);
+                final ZNodePath toPrefix = identifier.equals(Identifier.zero()) ? ZNodePath.root() : StorageSchema.Safari.Volumes.Volume.Root.pathOf(identifier);
                 this.requests = new RequestProcessor(MessageRequestPrefixTranslator.forPrefix(fromPrefix, toPrefix));
                 this.responses = new ResponseProcessor(MessageResponsePrefixTranslator.forPrefix(toPrefix, fromPrefix));
             }
@@ -397,7 +404,11 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                                     input.setException(new OutdatedVersionException(request.task().getShard()));
                                 }
                             }
-                            PendingShardedTask task = PendingShardedTask.create(request, new SoftReference<Message.ClientRequest<?>>(translated), LoggingPromise.create(logger, SettableFuturePromise.<Message.ServerResponse<?>>create()));
+                            PendingShardedTask task = PendingShardedTask.create(
+                                    request, 
+                                    new SoftReference<Message.ClientRequest<?>>(translated), 
+                                    SettableFuturePromise.<Message.ServerResponse<?>>create());
+                            LoggingFutureListener.listen(logger, task);
                             if (! pending.send(task)) {
                                 input.cancel(true);
                                 return false;
@@ -518,7 +529,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                         if (!version.isPresent()) {
                             return false;
                         }
-                        listeners.handleNotification(ShardedServerResponseMessage.valueOf(VersionedId.valueOf(identifier, version.get()), (Message.ServerResponse<IWatcherEvent>) translator.apply(response)));
+                        listeners.handleNotification(ShardedServerResponseMessage.valueOf(VersionedId.valueOf(version.get(), identifier), (Message.ServerResponse<IWatcherEvent>) translator.apply(response)));
                     }
                     return mailbox.remove(input);
                 }
@@ -530,21 +541,21 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                         return Optional.absent();
                     }
                     UnsignedLong version = versionFuture.get();
-                    ListenableFuture<? extends VersionedVolume> volumeFuture = ShardProcessor.this.volume.apply(version);
+                    ListenableFuture<? extends VolumeVersion<?>> volumeFuture = ShardProcessor.this.volume.apply(version);
                     if (!volumeFuture.isDone()) {
                         wait(volumeFuture);
                         return Optional.absent();
                     }
-                    VersionedVolume volume = volumeFuture.get();
+                    VolumeVersion<?> volume = volumeFuture.get();
                     if (volume instanceof EmptyVolume) {
-                        throw new OutdatedVersionException(VersionedId.valueOf(volume.getDescriptor().getId(), volume.getVersion()));
+                        throw new OutdatedVersionException(VersionedId.valueOf(volume.getState().getVersion(), volume.getDescriptor().getId()));
                     }
                     
                     ZNodePath prefix = volume.getDescriptor().getPath();
                     ZNodeName remaining = path.suffix((prefix.isRoot()) ? 0: prefix.length());
-                    for (ZNodeName branch: ((Volume) volume).getBranches().keySet()) {
+                    for (ZNodeName branch: ((RegionAndBranches) volume.getState().getValue()).getBranches().keySet()) {
                         if (remaining.startsWith(branch)) {
-                            throw new OutdatedVersionException(VersionedId.valueOf(volume.getDescriptor().getId(), volume.getVersion()));
+                            throw new OutdatedVersionException(VersionedId.valueOf(volume.getState().getVersion(), volume.getDescriptor().getId()));
                         }
                     }
                     return Optional.of(version);

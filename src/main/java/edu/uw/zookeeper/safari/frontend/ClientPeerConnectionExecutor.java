@@ -24,7 +24,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Eventful;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -160,9 +160,9 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
     @Override
     public ListenableFuture<ShardedResponseMessage<?>> submit(
             ShardedClientRequestMessage<?> request) {
-        Promise<ShardedResponseMessage<?>> promise = LoggingPromise.create(logger, 
+        RequestTask task = new RequestTask(request,
                 SettableFuturePromise.<ShardedResponseMessage<?>>create());
-        RequestTask task = new RequestTask(request, promise);
+        LoggingFutureListener.listen(logger, task);
         if (! send(task)) {
             task.cancel(true);
             throw new RejectedExecutionException();
@@ -196,7 +196,7 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
                 listener.handleNotification((ShardedServerResponseMessage<IWatcherEvent>) message);
             }
         } else {
-            Writer writer = writers.get(message.getShard().getIdentifier());
+            Writer writer = writers.get(message.getShard().getValue());
             if (writer != null) {
                 writer.send(message);
             } else {
@@ -212,7 +212,7 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
     
     @Override
     protected boolean doSend(RequestTask message) {
-        final Identifier id = message.task().getShard().getIdentifier();
+        final Identifier id = message.task().getShard().getValue();
         Writer writer = writers.get(id);
         if (writer == null) {
             writer = new Writer();

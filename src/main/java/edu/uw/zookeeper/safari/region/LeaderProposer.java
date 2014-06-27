@@ -11,12 +11,12 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.control.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
 public class LeaderProposer implements Callable<ListenableFuture<Optional<Automaton.Transition<RegionRole>>>> {
 
@@ -68,7 +68,8 @@ public class LeaderProposer implements Callable<ListenableFuture<Optional<Automa
         Optional<Integer> epoch = (current == null) ? Optional.<Integer>absent() : Optional.of(current.getEpoch());
         LeaderProposal proposal = LeaderProposal.create(
                 region, leader.call(), epoch, materializer, 
-                LoggingPromise.create(logger, SettableFuturePromise.<LeaderEpoch>create()));
+                SettableFuturePromise.<LeaderEpoch>create());
+        LoggingFutureListener.listen(logger, proposal);
         // update role before listeners see it
         return Futures.transform(proposal, role, SameThreadExecutor.getInstance());
     }

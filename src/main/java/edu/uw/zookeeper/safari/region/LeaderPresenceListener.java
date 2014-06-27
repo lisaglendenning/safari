@@ -7,7 +7,10 @@ import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.ControlClientService;
 
 public class LeaderPresenceListener extends AbstractRoleListener {
@@ -42,24 +45,40 @@ public class LeaderPresenceListener extends AbstractRoleListener {
         switch (transition.to().getRole()) {
         case FOLLOWING:
         {
-            RunWhenNotPresent.create(
-                    new Runnable() {
-                        @Override
-                            public void run() {
-                            if (service.isRunning()) {
-                                runnable.run();
-                            }
-                        }
-                    },
-                    transition.to().getLeader().getLeader(),
-                    control,
-                    logger);
+            final PresenceWatcher presence = PresenceWatcher.create(
+                    transition.to().getLeader().getLeader(), 
+                    control, 
+                    SettableFuturePromise.<Identifier>create());
+            LoggingFutureListener.listen(logger, presence);
+            new RunWhenNotPresent(presence);
             break;
         }
         default:
         {
             break;
         }
+        }
+    }
+    
+    public class RunWhenNotPresent implements Runnable {
+        
+        protected final PresenceWatcher presence;
+        
+        public RunWhenNotPresent(
+                PresenceWatcher presence) {
+            this.presence = presence;
+            presence.addListener(this, SameThreadExecutor.getInstance());
+        }
+
+        @Override
+        public void run() {
+            if (presence.isDone()) {
+                try {
+                    Identifier peer = presence.get();
+                    logger.info("EXPIRED {}", peer);
+                    runnable.run();
+                } catch (Exception e) {}
+            }
         }
     }
 }

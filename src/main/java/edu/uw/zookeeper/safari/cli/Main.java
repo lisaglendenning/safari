@@ -6,6 +6,7 @@ import edu.uw.zookeeper.client.cli.DispatchingInvoker;
 import edu.uw.zookeeper.client.cli.Shell;
 import edu.uw.zookeeper.common.Application;
 import edu.uw.zookeeper.common.RuntimeModule;
+import edu.uw.zookeeper.common.ServiceApplication;
 
 public class Main extends edu.uw.zookeeper.client.cli.Main {
 
@@ -57,6 +58,11 @@ public class Main extends edu.uw.zookeeper.client.cli.Main {
         @Override
         protected DispatchingInvoker newDispatchingInvoker(Shell shell) {
             return DispatchingInvoker.defaults(shell, ControlInvoker.class);
+        }
+        
+        @Override
+        public Main newMain(Shell shell) {
+            return new Main(ServiceApplication.forService(getRuntimeModule().getServiceMonitor()));
         }
     }
 }

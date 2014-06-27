@@ -19,7 +19,7 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.CachedLookup;
 import edu.uw.zookeeper.common.Eventful;
-import edu.uw.zookeeper.common.LoggingPromise;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
@@ -55,11 +55,11 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
                     @Override
                     public ListenableFuture<ClientPeerConnectionDispatcher> apply(
                             final Identifier input) throws Exception {
-                        final Promise<ClientPeerConnectionDispatcher> promise = 
-                                LoggingPromise.create(logger, 
-                                        SettableFuturePromise.<ClientPeerConnectionDispatcher>create());
                         final ListenableFuture<? extends ClientPeerConnection<?>> connection = connections.apply(input);
-                        return new CreateDispatcherTask(Pair.create(input, connection), promise);
+                        final CreateDispatcherTask task = new CreateDispatcherTask(Pair.create(input, connection),
+                                SettableFuturePromise.<ClientPeerConnectionDispatcher>create());
+                        LoggingFutureListener.listen(logger, task);
+                        return task;
                     }
                 }, logger);
     }
@@ -195,10 +195,9 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
             @Override
             public ListenableFuture<MessageSessionOpenResponse> submit(
                     final MessageSessionOpenRequest request) {
-                final Promise<MessageSessionOpenResponse> promise = 
-                        LoggingPromise.create(logger, 
-                                SettableFuturePromise.<MessageSessionOpenResponse>create());
-                final OpenSessionTask task = new OpenSessionTask(request, promise);
+                final OpenSessionTask task = new OpenSessionTask(request,
+                        SettableFuturePromise.<MessageSessionOpenResponse>create());
+                LoggingFutureListener.listen(logger, task);
                 task.run();
                 return task;
             }

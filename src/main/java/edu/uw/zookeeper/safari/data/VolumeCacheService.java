@@ -19,6 +19,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -27,7 +28,6 @@ import com.google.common.collect.Maps;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -35,8 +35,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.Automaton.Transition;
 import edu.uw.zookeeper.common.LockingCachedFunction;
-import edu.uw.zookeeper.common.LoggingPromise;
-import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.ServiceMonitor;
@@ -55,9 +54,15 @@ import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.control.ControlClientService;
-import edu.uw.zookeeper.safari.control.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
+import edu.uw.zookeeper.safari.volume.RegionAndBranches;
+import edu.uw.zookeeper.safari.volume.RegionAndLeaves;
+import edu.uw.zookeeper.safari.volume.VolumeDescriptor;
+import edu.uw.zookeeper.safari.volume.VolumeVersion;
 
 public final class VolumeCacheService extends AbstractIdleService {
 
@@ -86,7 +91,7 @@ public final class VolumeCacheService extends AbstractIdleService {
             VolumeCacheService instance = VolumeCacheService.create(
                     VolumeDescriptorCache.create(), control);
             monitor.add(instance);
-            LatestVolumesWatcher.create(instance, control);
+            LatestVolumesWatcher.listen(instance, control);
             return instance;
         }
 
@@ -132,30 +137,24 @@ public final class VolumeCacheService extends AbstractIdleService {
         return descriptors;
     }
     
-    public LockingCachedFunction<Identifier, VersionedVolume> idToVolume() {
+    public LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume() {
         return byId.lookup;
     }
 
-    public AsyncFunction<ZNodePath, Volume> pathToVolume() {
+    public AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume() {
         return byPath.lookup;
     }
     
-    public Set<Volume> volumes() {
+    public Set<VolumeVersion<?>> volumes() {
         lock.readLock().lock();
         try {
-            ImmutableSet.Builder<Volume> volumes = ImmutableSet.builder();
-            for (VersionedVolume volume: byId.cache.values()) {
-                if (volume instanceof Volume) {
-                    volumes.add((Volume) volume);
-                }
-            }
-            return volumes.build();
+            return ImmutableSet.copyOf(byId.cache.values());
         } finally {
             lock.readLock().unlock();
         }
     }
     
-    public boolean add(VersionedVolume volume) {
+    public boolean add(VolumeVersion<?> volume) {
         lock.writeLock().lock();
         try {
             logger.info("Adding volume {}", volume);
@@ -304,13 +303,13 @@ public final class VolumeCacheService extends AbstractIdleService {
                     assert (version != null);
                     Identifier id = node.log().volume().name();
                     logger.info("Latest version of volume {} is {}", id, version);
-                    VersionedVolume existing = byId.cache.get(id);
-                    if ((existing == null) || (existing.getVersion().compareTo(version) < 0)) {
+                    VolumeVersion<?> existing = byId.cache.get(id);
+                    if ((existing == null) || (existing.getState().getVersion().compareTo(version) < 0)) {
                         ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = node.log().version(version);
                         if (versionNode != null) {
                             ControlSchema.Safari.Volumes.Volume.Log.Version.State stateNode = versionNode.state();
                             if ((stateNode != null) && (stateNode.stamp() > 0L)) {
-                                callbacks.add(id, version, stateNode.data().get());
+                                callbacks.add(id, version, Optional.fromNullable(stateNode.data().get()));
                             }
                         }
                     }
@@ -346,9 +345,9 @@ public final class VolumeCacheService extends AbstractIdleService {
                     ControlSchema.Safari.Volumes.Volume.Log.Latest latestNode = 
                             stateNode.version().log().latest();
                     if ((latestNode != null) && (latestNode.data().stamp() > 0L) && latestNode.data().get().equals(version)) {
-                        VersionedVolume existing = byId.cache.get(id);
-                        if ((existing == null) || (existing.getVersion().compareTo(version) < 0)) {
-                            callbacks.add(id, version, stateNode.data().get());
+                        VolumeVersion<?> existing = byId.cache.get(id);
+                        if ((existing == null) || (existing.getState().getVersion().compareTo(version) < 0)) {
+                            callbacks.add(id, version, Optional.fromNullable(stateNode.data().get()));
                         }
                     }
                 } finally {
@@ -367,23 +366,23 @@ public final class VolumeCacheService extends AbstractIdleService {
 
         private final VolumeOverlay overlay;
         private final NameTrie<PathLookup> lookups;
-        private final LockingCachedFunction<ZNodePath, Volume> lookup;
+        private final LockingCachedFunction<ZNodePath, AssignedVolumeBranches> lookup;
         
         public VolumeByPath() {
             this.overlay = VolumeOverlay.empty();
             this.lookups = SimpleLabelTrie.forRoot(new PathLookup(AbstractNameTrie.<PathLookup>rootPointer()));
             this.lookup = LockingCachedFunction.create(
                     lock.writeLock(),
-                    new Function<ZNodePath, Volume>() {
+                    new Function<ZNodePath, AssignedVolumeBranches>() {
                         @Override
                         public @Nullable
-                        Volume apply(ZNodePath path) {
+                        AssignedVolumeBranches apply(ZNodePath path) {
                             lock.readLock().lock();
                             try {
                                 StampedValue<Identifier> id = overlay.apply(path);
                                 if (id != null) {
-                                    Volume volume = (Volume) byId.cache.get(id.get());
-                                    if ((volume != null) && Volume.contains(volume, path)) {
+                                    AssignedVolumeBranches volume = (AssignedVolumeBranches) byId.cache.get(id.get());
+                                    if ((volume != null) && AssignedVolumeBranches.contains(volume, path)) {
                                         return volume;
                                     }
                                 }
@@ -393,7 +392,7 @@ public final class VolumeCacheService extends AbstractIdleService {
                             }
                         }
                     }, 
-                    new AsyncFunction<ZNodePath, Volume>() {
+                    new AsyncFunction<ZNodePath, AssignedVolumeBranches>() {
                         @Override
                         public PathLookup apply(ZNodePath path) {
                             lock.writeLock().lock();
@@ -409,15 +408,15 @@ public final class VolumeCacheService extends AbstractIdleService {
                     logger);
         }
         
-        public boolean add(VersionedVolume volume) {
-            if (volume instanceof Volume) {
-                overlay.add(volume.getVersion().longValue(), volume.getDescriptor().getPath(), volume.getDescriptor().getId());
-                for (Map.Entry<ZNodeName, Identifier> leaf: ((Volume) volume).getBranches().entrySet()) {
+        public boolean add(VolumeVersion<?> volume) {
+            if (volume instanceof AssignedVolumeBranches) {
+                overlay.add(volume.getState().getVersion().longValue(), volume.getDescriptor().getPath(), volume.getDescriptor().getId());
+                for (Map.Entry<ZNodeName, Identifier> leaf: ((RegionAndBranches) volume.getState().getValue()).getBranches().entrySet()) {
                     ZNodePath path = volume.getDescriptor().getPath().join(leaf.getKey());
-                    overlay.add(volume.getVersion().longValue(), path, leaf.getValue());
+                    overlay.add(volume.getState().getVersion().longValue(), path, leaf.getValue());
                 }
                 PathLookup node = lookups.get(volume.getDescriptor().getPath());
-                new PathUpdater(((Volume) volume)).apply(node);
+                new PathUpdater(((AssignedVolumeBranches) volume)).apply(node);
             } else {
                 remove(volume.getDescriptor().getPath(), volume.getDescriptor().getId());
             }
@@ -440,16 +439,16 @@ public final class VolumeCacheService extends AbstractIdleService {
     
     protected static final class PathUpdater implements Function<PathLookup, Void> {
         
-        private final Volume volume;
+        private final AssignedVolumeBranches volume;
         
-        public PathUpdater(Volume volume) {
+        public PathUpdater(AssignedVolumeBranches volume) {
             this.volume = volume;
         }
         
         @Override
         public Void apply(PathLookup input) {
             if (input != null) {
-                if (Volume.contains(volume, input.path())) {
+                if (AssignedVolumeBranches.contains(volume, input.path())) {
                     for (PathLookup child: input.values()) {
                         apply(child);
                     }
@@ -465,9 +464,9 @@ public final class VolumeCacheService extends AbstractIdleService {
     
     protected final class PathLookup extends
             DefaultsNode.AbstractDefaultsNode<PathLookup> implements
-            Promise<Volume> {
+            Promise<AssignedVolumeBranches> {
 
-        private Promise<Volume> promise;
+        private Promise<AssignedVolumeBranches> promise;
 
         public PathLookup(
                 NameTrie.Pointer<? extends PathLookup> parent) {
@@ -478,8 +477,8 @@ public final class VolumeCacheService extends AbstractIdleService {
 
         public synchronized void reset() {
             if ((promise == null) || promise.isDone()) {
-                promise = LoggingPromise.create(logger,
-                        SettableFuturePromise.<Volume> create());
+                promise = SettableFuturePromise.<AssignedVolumeBranches> create();
+                LoggingFutureListener.listen(logger, promise);
             }
         }
 
@@ -495,13 +494,13 @@ public final class VolumeCacheService extends AbstractIdleService {
         }
 
         @Override
-        public Volume get() throws InterruptedException,
+        public AssignedVolumeBranches get() throws InterruptedException,
         ExecutionException {
             return promise().get();
         }
 
         @Override
-        public Volume get(long timeout, TimeUnit unit)
+        public AssignedVolumeBranches get(long timeout, TimeUnit unit)
                 throws InterruptedException, ExecutionException,
                 TimeoutException {
             return promise().get(timeout, unit);
@@ -518,7 +517,7 @@ public final class VolumeCacheService extends AbstractIdleService {
         }
 
         @Override
-        public boolean set(Volume value) {
+        public boolean set(AssignedVolumeBranches value) {
             return promise().set(value);
         }
 
@@ -527,7 +526,7 @@ public final class VolumeCacheService extends AbstractIdleService {
             return promise().setException(throwable);
         }
 
-        protected synchronized Promise<Volume> promise() {
+        protected synchronized Promise<AssignedVolumeBranches> promise() {
             return promise;
         }
 
@@ -539,17 +538,17 @@ public final class VolumeCacheService extends AbstractIdleService {
 
     protected final class VolumeById {
 
-        private final Map<Identifier, VersionedVolume> cache;
-        private final LockingCachedFunction<Identifier, VersionedVolume> lookup;
+        private final Map<Identifier, VolumeVersion<?>> cache;
+        private final LockingCachedFunction<Identifier, VolumeVersion<?>> lookup;
         
         public VolumeById() {
             this.cache = Maps.newHashMap();
             this.lookup = LockingCachedFunction.create(
                     lock.writeLock(),
-                    new Function<Identifier, VersionedVolume>() {
+                    new Function<Identifier, VolumeVersion<?>>() {
                         @Override
                         public @Nullable
-                        VersionedVolume apply(Identifier id) {
+                        VolumeVersion<?> apply(Identifier id) {
                             lock.readLock().lock();
                             try {
                                 return cache.get(id);
@@ -559,20 +558,20 @@ public final class VolumeCacheService extends AbstractIdleService {
                         }
                     }, 
                     SharedLookup.create(
-                            new AsyncFunction<Identifier, VersionedVolume>() {
+                            new AsyncFunction<Identifier, VolumeVersion<?>>() {
                                 @Override
                                 public VolumeUpdater apply(Identifier id) {
-                                    return new VolumeUpdater(id, SettableFuturePromise.<VersionedVolume>create());
+                                    return new VolumeUpdater(id, SettableFuturePromise.<VolumeVersion<?>>create());
                                 }
                             }),
                     logger);
         }
         
-        public boolean add(VersionedVolume volume) {
-            VersionedVolume prev = cache.get(volume.getDescriptor().getId());
+        public boolean add(VolumeVersion<?> volume) {
+            VolumeVersion<?> prev = cache.get(volume.getDescriptor().getId());
             if (prev != null) {
                 assert (prev.getDescriptor().equals(volume.getDescriptor()));
-                if (prev.getVersion().compareTo(volume.getVersion()) >= 0) {
+                if (prev.getState().getVersion().compareTo(volume.getState().getVersion()) >= 0) {
                     return false;
                 }
             }
@@ -596,16 +595,16 @@ public final class VolumeCacheService extends AbstractIdleService {
         }
     }
     
-    protected final class VolumeUpdater extends PromiseTask<Identifier, VersionedVolume> {
+    protected final class VolumeUpdater extends PromiseTask<Identifier, VolumeVersion<?>> {
 
         public VolumeUpdater(
                 Identifier volume,
-                Promise<VersionedVolume> delegate) {
+                Promise<VolumeVersion<?>> delegate) {
             super(volume, delegate);
         }
         
         @Override
-        public boolean set(VersionedVolume volume) {
+        public boolean set(VolumeVersion<?> volume) {
             lock.writeLock().lock();
             try {
                 if (! add(volume)) {
@@ -621,7 +620,7 @@ public final class VolumeCacheService extends AbstractIdleService {
     
     protected final class VolumeBranchCallbacks {
 
-        private final ConcurrentMap<Pair<Identifier, UnsignedLong>, VolumeBranchCallback> callbacks;
+        private final ConcurrentMap<VersionedId, VolumeBranchCallback> callbacks;
         
         public VolumeBranchCallbacks() {
             this.callbacks = new MapMaker().makeMap();
@@ -630,30 +629,25 @@ public final class VolumeCacheService extends AbstractIdleService {
         public void add(
                 final Identifier id, 
                 final UnsignedLong version, 
-                final @Nullable VolumeState state) {
-            Pair<Identifier, UnsignedLong> k = Pair.create(id, version);
-            if (callbacks.containsKey(k)) {
-                return;
+                final Optional<RegionAndLeaves> state) {
+            VersionedId k = VersionedId.valueOf(version, id);
+            if (!callbacks.containsKey(k)) {
+                try {
+                    new VolumeBranchCallback(k, VolumeBranchListener.fromCache(k, state, idToPath().asLookup()));
+                } catch (Exception e) {
+                    throw Throwables.propagate(e);
+                }
             }
-            
-            VolumeBranchCallback callback;
-            try {
-                callback = new VolumeBranchCallback(VolumeBranchListener.fromCache(k, state, idToPath().asLookup()));
-            } catch (Exception e) {
-                throw Throwables.propagate(e);
-            }
-            callbacks.put(k, callback);
-            callback.addListener(callback, SameThreadExecutor.getInstance());
         }
 
         public void remove(final Identifier id) {
-            Iterator<Pair<Identifier, UnsignedLong>> keys = callbacks.keySet().iterator();
+            Iterator<VersionedId> keys = callbacks.keySet().iterator();
             while (keys.hasNext()) {
-                Pair<Identifier, UnsignedLong> next = keys.next();
-                if (next.first().equals(id)) {
+                VersionedId next = keys.next();
+                if (next.getValue().equals(id)) {
                     VolumeBranchCallback callback = callbacks.get(next);
                     if (callback != null) {
-                        callback.cancel(true);
+                        callback.get().cancel(true);
                     }
                 }
             }
@@ -661,38 +655,42 @@ public final class VolumeCacheService extends AbstractIdleService {
         
         public void clear() {
             for (VolumeBranchCallback callback: callbacks.values()) {
-                callback.cancel(true);
+                callback.get().cancel(true);
             }
         }
         
-        protected class VolumeBranchCallback extends ForwardingListenableFuture<VersionedVolume> implements Runnable {
+        protected class VolumeBranchCallback implements Runnable {
             
-            private final VolumeBranchListener delegate;
+            private final VersionedId version;
+            private final ListenableFuture<? extends VolumeVersion<?>> future;
             
-            public VolumeBranchCallback(VolumeBranchListener delegate) {
-                this.delegate = delegate;
+            public VolumeBranchCallback(
+                    VersionedId version,
+                    ListenableFuture<? extends VolumeVersion<?>> future) {
+                this.version = version;
+                this.future = future;
+                callbacks.put(version, this);
+                future.addListener(this, SameThreadExecutor.getInstance());
+            }
+            
+            public ListenableFuture<? extends VolumeVersion<?>> get() {
+                return future;
             }
             
             @Override
             public void run() {
-                if (! isDone()) {
-                    return;
+                if (future.isDone()) {
+                    callbacks.remove(version, this);
+                    try {
+                        VolumeVersion<?> volume = future.get();
+                        ((VolumeUpdater) byId.lookup.async().apply(version.getValue())).set(volume);
+                    } catch (CancellationException e) {
+                        return;
+                    } catch (Exception e) {
+                        // TODO
+                        throw Throwables.propagate(e);
+                    }
                 }
-                callbacks.remove(delegate.task(), this);
-                try {
-                    VersionedVolume volume = get();
-                    ((VolumeUpdater) byId.lookup.async().apply(delegate.task().first())).set(volume);
-                } catch (CancellationException e) {
-                    return;
-                } catch (Exception e) {
-                    // TODO
-                    throw Throwables.propagate(e);
-                }
-            }
-
-            @Override
-            protected VolumeBranchListener delegate() {
-                return delegate;
             }
         }
     }

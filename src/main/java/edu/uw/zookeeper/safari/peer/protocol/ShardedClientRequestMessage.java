@@ -6,7 +6,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.safari.data.VersionedId;
+import edu.uw.zookeeper.safari.VersionedId;
 
 // TODO: For now, this doesn't implement Message.ClientRequest
 // because then the wrong serializer/deserializer is chosen by Jackson
