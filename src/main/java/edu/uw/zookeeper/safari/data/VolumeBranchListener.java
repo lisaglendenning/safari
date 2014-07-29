@@ -15,7 +15,7 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
@@ -28,7 +28,7 @@ import edu.uw.zookeeper.safari.volume.RegionAndLeaves;
 import edu.uw.zookeeper.safari.volume.VolumeDescriptor;
 import edu.uw.zookeeper.safari.volume.VolumeVersion;
 
-public abstract class VolumeBranchListener<T,V extends VolumeVersion<?>> extends ToStringListenableFuture<T> implements Runnable, Callable<Optional<V>> {
+public abstract class VolumeBranchListener<T,V extends VolumeVersion<?>> extends SimpleToStringListenableFuture<T> implements Runnable, Callable<Optional<V>> {
     
     public static ListenableFuture<? extends VolumeVersion<?>> fromCache(
             final VersionedId version, 

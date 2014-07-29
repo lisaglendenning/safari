@@ -8,7 +8,6 @@ import edu.uw.zookeeper.client.AbstractWatchListener;
 import edu.uw.zookeeper.client.FixedQuery;
 import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.client.PathToRequests;
-import edu.uw.zookeeper.client.Query;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Operations;
@@ -49,7 +48,7 @@ public class SessionsWatcher extends AbstractWatchListener {
 
     @Override
     public void handleWatchEvent(WatchEvent event) {
-        Query.call(query.apply(event.getPath()), this);
+        Watchers.Query.call(query.apply(event.getPath()), this);
     }
     
     @Override
@@ -87,7 +86,7 @@ public class SessionsWatcher extends AbstractWatchListener {
                                         .apply(parent));
                         @Override
                         public void run() {
-                            Query.call(query, SessionsWatcher.this);
+                            Watchers.Query.call(query, SessionsWatcher.this);
                         }
                     },
                     service, 

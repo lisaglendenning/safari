@@ -13,8 +13,10 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
@@ -25,7 +27,6 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.PeekingIterator;
-import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
@@ -35,13 +36,12 @@ import edu.uw.zookeeper.WatchType;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.FourLetterCommand;
 import edu.uw.zookeeper.client.SubmittedRequest;
-import edu.uw.zookeeper.common.Actors;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.SubmitActor;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Serializers.ByteCodec;
@@ -50,6 +50,7 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.FourLetterWord;
 import edu.uw.zookeeper.protocol.FourLetterWords;
+import edu.uw.zookeeper.protocol.FourLetterWords.Wchc;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
@@ -65,76 +66,19 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
             ByteCodec<Object> codec,
             ClientExecutor<? super Records.Request, ?, ?> client,
             ImmutableList<QueryServerWatches> servers) {
-        return forEnsemble(prefix, labelOf, codec, client, QueryEnsembleWatches.forServers(servers));
+        return create(prefix, labelOf, codec, client, QueryEnsembleWatches.forServers(servers));
     }
     
-    public static SnapshotEnsembleWatches forEnsemble(
+    public static SnapshotEnsembleWatches create(
             ZNodePath prefix,
             Function<ZNodePath,ZNodeLabel> labelOf,
             ByteCodec<Object> codec,
             ClientExecutor<? super Records.Request, ?, ?> client,
-            QueryEnsembleWatches ensemble) {
-        return new SnapshotEnsembleWatches(prefix, labelOf, codec, client, ensemble);
-    }
-
-    public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<FourLetterWords.Wchc> snapshotWatches(
-            final FourLetterWords.Wchc wchc,
-            final ZNodePath prefix,
-            final Function<ZNodePath,ZNodeLabel> labelOf,
-            final ByteCodec<Object> codec,
-            final ClientExecutor<? super Records.Request, O, ?> client,
-            final Logger logger) {
-        final Promise<FourLetterWords.Wchc> promise = SettableFuturePromise.create();
-        final Operations.Requests.Create createSession = Operations.Requests.create();
-        // the only watches reported by wchc/wchp are data watches
-        Operations.Requests.Create createWatch;
-        try {
-            createWatch = Operations.Requests.create().setData(codec.toBytes(
-                     WatchType.DATA));
-        } catch (IOException e) {
-            promise.setException(e);
-            return promise;
-        }
-        final SubmitActor<Records.Request,O> submitter = Actors.stopWhenDone(
-                SubmitActor.create(client, Queues.<SubmittedRequest<Records.Request,O>>newConcurrentLinkedQueue(), logger), promise);
-        SubmittedRequest<? extends Records.Request, O> request = null;
-        for (Map.Entry<Long, Collection<ZNodePath>> entry: wchc) {
-            ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Snapshot.Watches.Session.labelOf(entry.getKey().longValue()));
-            request = submitter.submit(createSession.setPath(path).build());
-            for (ZNodePath watch: entry.getValue()) {
-                request = submitter.submit(createWatch.setPath(path.join(labelOf.apply(watch))).build());
-            }
-        }
-        final SubmittedRequest<? extends Records.Request, O> lastRequest = request;
-        if (lastRequest == null) {
-            promise.set(wchc);
-        } else {
-            lastRequest.addListener(new Runnable() {
-                @Override
-                public void run() {
-                    if (lastRequest.isDone()) {
-                        if (lastRequest.isCancelled()) {
-                            promise.cancel(false);
-                        } else {
-                            try {
-                                lastRequest.get();
-                            } catch (ExecutionException e) {
-                                promise.setException(e);
-                            } catch (InterruptedException e) {
-                                promise.cancel(false);
-                            }
-                            if (!promise.isDone()) {
-                                promise.set(wchc);
-                            }
-                        }
-                    }
-                }
-            }, SameThreadExecutor.getInstance());
-        }
-        return promise;
+            Supplier<ListenableFuture<PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>>>> query) {
+        return new SnapshotEnsembleWatches(prefix, labelOf, codec, client, query);
     }
     
-    private final QueryEnsembleWatches query;
+    private final Supplier<ListenableFuture<PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>>>> query;
     private final ZNodePath prefix;
     private final Function<ZNodePath,ZNodeLabel> labelOf;
     private final ByteCodec<Object> codec;
@@ -145,7 +89,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
             Function<ZNodePath,ZNodeLabel> labelOf,
             ByteCodec<Object> codec,
             ClientExecutor<? super Records.Request, ?, ?> client,
-            QueryEnsembleWatches query) {
+            Supplier<ListenableFuture<PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>>>> query) {
         this.prefix = prefix;
         this.labelOf = labelOf;
         this.codec = codec;
@@ -197,14 +141,89 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                         @Override
                         public ListenableFuture<FourLetterWords.Wchc> apply(FourLetterWords.Wchc input)
                                 throws Exception {
-                            return snapshotWatches(input, prefix, labelOf, codec, client, LogManager.getLogger(SnapshotEnsembleWatches.class));
+                            return CreateWatches.call(input, prefix, labelOf, codec, client, LogManager.getLogger(SnapshotEnsembleWatches.class));
                         }
                     }, SameThreadExecutor.getInstance());
         }
         return Optional.of(future);
     }
     
-    public static class IteratorToWchc extends PromiseTask<PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>>, FourLetterWords.Wchc> implements Runnable {
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).toString();
+    }
+    
+    protected static final class CreateWatches<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Runnable, Callable<Optional<FourLetterWords.Wchc>> {
+
+        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<FourLetterWords.Wchc> call(
+                final FourLetterWords.Wchc wchc,
+                final ZNodePath prefix,
+                final Function<ZNodePath,ZNodeLabel> labelOf,
+                final ByteCodec<Object> codec,
+                final ClientExecutor<? super Records.Request, O, ?> client,
+                final Logger logger) {
+            final Promise<FourLetterWords.Wchc> promise = SettableFuturePromise.create();
+            final Operations.Requests.Create createSession = Operations.Requests.create();
+            // the only watches reported by wchc/wchp are data watches
+            Operations.Requests.Create createWatch;
+            try {
+                createWatch = Operations.Requests.create().setData(codec.toBytes(
+                         WatchType.DATA));
+            } catch (IOException e) {
+                promise.setException(e);
+                return promise;
+            }
+            ImmutableList.Builder<SubmittedRequest<? extends Records.Request, O>> builder = ImmutableList.builder();
+            for (Map.Entry<Long, Collection<ZNodePath>> entry: wchc) {
+                ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Snapshot.Watches.Session.labelOf(entry.getKey().longValue()));
+                builder.add(SubmittedRequest.submit(client, (createSession.setPath(path).build())));
+                for (ZNodePath watch: entry.getValue()) {
+                    builder.add(SubmittedRequest.submit(client, createWatch.setPath(path.join(labelOf.apply(watch))).build()));
+                }
+            }
+            new CreateWatches<O>(wchc, builder.build(), promise);
+            return promise;
+        }
+        
+        private final FourLetterWords.Wchc wchc;
+        private final List<? extends SubmittedRequest<? extends Records.Request, O>> requests;
+        private final CallablePromiseTask<?,FourLetterWords.Wchc> delegate;
+        
+        protected CreateWatches(
+                FourLetterWords.Wchc wchc,
+                List<? extends SubmittedRequest<? extends Records.Request, O>> requests,
+                Promise<FourLetterWords.Wchc> promise) {
+            super(Futures.allAsList(requests));
+            this.wchc = wchc;
+            this.requests = requests;
+            this.delegate = CallablePromiseTask.create(this, promise);
+            addListener(this, SameThreadExecutor.getInstance());
+        }
+
+        @Override
+        public void run() {
+            delegate.run();
+        }
+
+        @Override
+        public Optional<Wchc> call() throws Exception {
+            if (isDone()) {
+                get();
+                for (SubmittedRequest<? extends Records.Request, O> request: requests) {
+                    Operations.maybeError(request.get().record(), KeeperException.Code.NODEEXISTS);
+                }
+                return Optional.of(wchc);
+            }
+            return Optional.absent();
+        }
+        
+        @Override
+        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+            return super.toStringHelper(helper.addValue(wchc).addValue(toString(delegate)));
+        }
+    }
+    
+    public static final class IteratorToWchc extends PromiseTask<PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>>, FourLetterWords.Wchc> implements Runnable {
 
         private final ImmutableSetMultimap.Builder<Long, ZNodePath> builder;
         

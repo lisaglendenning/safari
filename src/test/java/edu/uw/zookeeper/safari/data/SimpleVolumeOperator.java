@@ -176,7 +176,7 @@ public class SimpleVolumeOperator {
         public ListenableFuture<AssignedVolumeBranches> apply(
                 final AssignedVolumeBranches parent) throws Exception {
             final ImmutableList.Builder<Records.MultiOpRequest> requests = ImmutableList.builder();
-            final VolumesSchemaRequests builder = VolumesSchemaRequests.create(control.materializer());
+            final VolumesSchemaRequests<?> builder = VolumesSchemaRequests.create(control.materializer());
             final VolumeDescriptor volume = VolumeDescriptor.valueOf(
                     ControlZNode.hash(path, ControlSchema.Safari.Volumes.PATH, control.materializer()).asIdentifier(), path);
             requests.addAll(builder.volume(volume.getId()).create(volume.getPath()));
@@ -229,7 +229,7 @@ public class SimpleVolumeOperator {
         public ListenableFuture<EmptyVolume> apply(
                 final AssignedVolumeBranches parent)
                 throws Exception {
-            final VolumesSchemaRequests builder = VolumesSchemaRequests.create(control.materializer());
+            final VolumesSchemaRequests<?> builder = VolumesSchemaRequests.create(control.materializer());
             final ImmutableList.Builder<Records.MultiOpRequest> requests = ImmutableList.builder();
             final RegionAndBranches union = AssignedVolumeOperator.create(
                     parent.getState().getValue().getRegion(),

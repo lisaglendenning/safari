@@ -33,7 +33,7 @@ import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ConnectionFactory;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -56,7 +56,7 @@ import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionResponse;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 
@@ -273,7 +273,7 @@ public class BackendRequestService extends ServiceListenersService {
         }
         
         protected void handleMessageSessionRequest(MessageSessionRequest message) {
-            final ShardedClientRequestMessage<?> request = (ShardedClientRequestMessage<?>) message.getMessage();
+            final ShardedRequestMessage<?> request = (ShardedRequestMessage<?>) message.getMessage();
             try {
                 BackendSessionListener listener = listeners.get(message.getIdentifier());
                 if (listener != null) { 
@@ -316,7 +316,7 @@ public class BackendRequestService extends ServiceListenersService {
             
         }
         
-        protected class SessionOpenListener extends ToStringListenableFuture<MessageSessionOpenResponse> implements Runnable {
+        protected class SessionOpenListener extends SimpleToStringListenableFuture<MessageSessionOpenResponse> implements Runnable {
             
             private final MessageSessionOpenRequest request;
             
@@ -361,7 +361,7 @@ public class BackendRequestService extends ServiceListenersService {
             }
         }
 
-        protected class BackendSessionListener implements FutureCallback<ShardedResponseMessage<?>>, SessionListener, TaskExecutor<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>> {
+        protected class BackendSessionListener implements FutureCallback<ShardedResponseMessage<?>>, SessionListener, TaskExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>> {
 
             protected final BackendSessionExecutors.BackendSessionExecutor executor;
             
@@ -387,7 +387,7 @@ public class BackendRequestService extends ServiceListenersService {
             }
 
             @Override
-            public ListenableFuture<ShardedResponseMessage<?>> submit(ShardedClientRequestMessage<?> request) {
+            public ListenableFuture<ShardedResponseMessage<?>> submit(ShardedRequestMessage<?> request) {
                 ListenableFuture<ShardedResponseMessage<?>> future =
                         ToErrorMessage.submit(
                                 executor().client(), 

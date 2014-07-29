@@ -16,8 +16,8 @@ import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.AbstractWatchListener;
 import edu.uw.zookeeper.common.CallablePromiseTask;
-import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Sequential;
 import edu.uw.zookeeper.data.WatchEvent;
@@ -28,29 +28,39 @@ import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
-public class VolumeEntryCommitListener extends AbstractWatchListener implements ListenableFuture<Optional<Sequential<String,?>>>, Runnable {
+public final class VolumeEntryCommitListener extends AbstractWatchListener implements ListenableFuture<Optional<Sequential<String,?>>>, Runnable {
 
     public static VolumeEntryCommitListener listen(
             Service service,
             WatchListeners watch,
             VersionedId volume,
-            LockableZNodeCache<ControlZNode<?>, Records.Request, ?> cache,
-            Promise<Optional<Sequential<String, ?>>> promise) {
-        VolumeEntryCommitListener listener = create(service, watch, volume, cache, promise);
+            LockableZNodeCache<ControlZNode<?>, Records.Request, ?> cache) {
+        return listen(service, watch, committed(volume, cache));
+    }
+    
+    public static VolumeEntryCommitListener listen(
+            Service service,
+            WatchListeners watch,
+            VotedEntriesCommitted callable) {
+        VolumeEntryCommitListener listener = create(service, watch, callable);
         listener.listen();
         return listener;
+    }
+    
+    public static VotedEntriesCommitted committed(
+            VersionedId volume,
+            LockableZNodeCache<ControlZNode<?>, Records.Request, ?> cache) {
+        return new VotedEntriesCommitted(volume, cache);
     }
 
     public static VolumeEntryCommitListener create(
             Service service,
             WatchListeners watch,
-            VersionedId volume,
-            LockableZNodeCache<ControlZNode<?>, Records.Request, ?> cache,
-            Promise<Optional<Sequential<String, ?>>> promise) {
+            VotedEntriesCommitted callable) {
         return new VolumeEntryCommitListener(
                 CallablePromiseTask.create(
-                        new VotedEntriesCommitted(volume, cache), 
-                        promise), 
+                        callable, 
+                        SettableFuturePromise.<Optional<Sequential<String, ?>>>create()), 
                 service, watch);
     }
     
@@ -71,13 +81,13 @@ public class VolumeEntryCommitListener extends AbstractWatchListener implements 
     @Override
     public void run() {
         if (!isDone()) {
-            if (service.isRunning()) {
+            if (isRunning()) {
                 delegate.run();
             } else {
                 cancel(false);
             }
         } else {
-            stopping(service.state());
+            stopping(state());
         }
     }
 
@@ -131,7 +141,7 @@ public class VolumeEntryCommitListener extends AbstractWatchListener implements 
         delegate.addListener(listener, executor);
     }
 
-    public static class VotedEntriesCommitted implements Callable<Optional<Optional<Sequential<String,?>>>> {
+    public static final class VotedEntriesCommitted implements Callable<Optional<Optional<Sequential<String,?>>>> {
         
         protected final Logger logger;
         protected final VersionedId volume;
@@ -154,10 +164,11 @@ public class VolumeEntryCommitListener extends AbstractWatchListener implements 
             Optional<Sequential<String,?>> committed = Optional.absent();
             cache.lock().readLock().lock();
             try {
-                ControlSchema.Safari.Volumes.Volume.Log.Version node = ControlSchema.Safari.Volumes.Volume.Log.Version.fromTrie(cache.cache(), volume.getValue(), volume.getVersion());
+                ControlSchema.Safari.Volumes.Volume.Log.Version node = ControlSchema.Safari.Volumes.Volume.Log.Version.fromTrie(
+                        cache.cache(), volume.getValue(), volume.getVersion());
                 if (node != null) {
                     for (ControlSchema.Safari.Volumes.Volume.Log.Version.Entry entry: node.entries().values()) {
-                        if ((entry.vote() != null) && ((entry.commit() == null) || (entry.commit().data().stamp() < 0L))) {
+                        if ((entry.vote() != null) && ((entry.commit() == null) || (entry.commit().data().get() == null))) {
                             return Optional.absent();
                         }
                         if (entry.commit().data().get().booleanValue()) {

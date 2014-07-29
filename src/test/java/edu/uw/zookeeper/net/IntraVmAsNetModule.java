@@ -1,13 +1,20 @@
 package edu.uw.zookeeper.net;
 
-import com.google.inject.AbstractModule;
-import com.google.inject.Singleton;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 
+import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.google.inject.Singleton;
+import edu.uw.zookeeper.DefaultRuntimeModule;
+import edu.uw.zookeeper.common.Factories;
+import edu.uw.zookeeper.common.Factory;
 import edu.uw.zookeeper.net.NetClientModule;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.intravm.IntraVmNetModule;
 
-public class IntraVmAsNetModule extends AbstractModule {
+public class IntraVmAsNetModule extends IntraVmModule {
 
     public static IntraVmAsNetModule create() {
         return new IntraVmAsNetModule();
@@ -15,8 +22,18 @@ public class IntraVmAsNetModule extends AbstractModule {
     
     @Override
     protected void configure() {
-        install(IntraVmModule.create());
         bind(NetClientModule.class).to(IntraVmNetModule.class).in(Singleton.class);
         bind(NetServerModule.class).to(IntraVmNetModule.class).in(Singleton.class);
+    }
+
+    @Override
+    protected Factory<? extends Executor> newExecutor() {
+        return Factories.singletonOf(
+                MoreExecutors.getExitingExecutorService(
+                        (ThreadPoolExecutor) Executors.newFixedThreadPool(
+                                1,
+                                new ThreadFactoryBuilder()
+                                .setThreadFactory(DefaultRuntimeModule.PlatformThreadFactory.getInstance().get())
+                                .setNameFormat("intravm-%d").build())));
     }
 }

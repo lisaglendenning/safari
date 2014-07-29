@@ -347,6 +347,13 @@ public class VolumesSchemaRequests<O extends Operation.ProtocolResponse<?>> {
                     return new VolumeLogEntryCommitSchemaRequests();
                 }
                 
+                public ImmutableList<Records.Request> get() {
+                    AbsoluteZNodePath path = getPath();
+                    return ImmutableList.<Records.Request>of(
+                            Operations.Requests.sync().setPath(path).build(),
+                            Operations.Requests.getData().setPath(path).build());
+                }
+
                 public class VolumeLogEntryVoteSchemaRequests {
                     
                     public AbsoluteZNodePath getPath() {

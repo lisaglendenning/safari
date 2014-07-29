@@ -9,6 +9,7 @@ import com.google.common.util.concurrent.Service;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
+
 import edu.uw.zookeeper.common.ServiceMonitor;
 
 public abstract class AbstractMainTest {
@@ -43,8 +44,7 @@ public abstract class AbstractMainTest {
                  new Callable<Void>() {
                      @Override
                      public Void call() throws InterruptedException {
-                         logger.info("Sleeping for {} ms", pause);
-                         Thread.sleep(pause);
+                         pause(pause);
                         return null;
                      }
                  });
@@ -57,5 +57,10 @@ public abstract class AbstractMainTest {
                 injector.getInstance(Service.class),
                 callable,
                 logger).call();
+    }
+    
+    protected void pause(long ms) throws InterruptedException {
+        logger.info("Sleeping for {} ms", ms);
+        Thread.sleep(ms);
     }
 }

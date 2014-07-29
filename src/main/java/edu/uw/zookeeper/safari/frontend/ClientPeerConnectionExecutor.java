@@ -42,11 +42,11 @@ import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionRequest;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 
-public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnectionExecutor.RequestTask> implements TaskExecutor<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>>, SessionPeerListener, Eventful<NotificationListener<ShardedServerResponseMessage<IWatcherEvent>>> {
+public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnectionExecutor.RequestTask> implements TaskExecutor<ShardedRequestMessage<?>, ShardedResponseMessage<?>>, SessionPeerListener, Eventful<NotificationListener<ShardedServerResponseMessage<IWatcherEvent>>> {
 
     public static ListenableFuture<ClientPeerConnectionExecutor> connect(
             final Session frontend,
@@ -159,7 +159,7 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
 
     @Override
     public ListenableFuture<ShardedResponseMessage<?>> submit(
-            ShardedClientRequestMessage<?> request) {
+            ShardedRequestMessage<?> request) {
         RequestTask task = new RequestTask(request,
                 SettableFuturePromise.<ShardedResponseMessage<?>>create());
         LoggingFutureListener.listen(logger, task);
@@ -246,11 +246,11 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
     }
 
     protected static class RequestTask 
-            extends PromiseTask<ShardedClientRequestMessage<?>, ShardedResponseMessage<?>>
+            extends PromiseTask<ShardedRequestMessage<?>, ShardedResponseMessage<?>>
             implements Operation.RequestId, FutureCallback<Object> {
 
         public RequestTask(
-                ShardedClientRequestMessage<?> task,
+                ShardedRequestMessage<?> task,
                 Promise<ShardedResponseMessage<?>> promise) {
             super(task, promise);
         }

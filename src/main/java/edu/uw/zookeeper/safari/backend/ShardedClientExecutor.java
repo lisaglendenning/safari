@@ -50,7 +50,7 @@ import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.SafariException;
 import edu.uw.zookeeper.safari.VersionTransition;
 import edu.uw.zookeeper.safari.VersionedId;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
@@ -58,7 +58,7 @@ import edu.uw.zookeeper.safari.volume.EmptyVolume;
 import edu.uw.zookeeper.safari.volume.RegionAndBranches;
 import edu.uw.zookeeper.safari.volume.VolumeVersion;
 
-public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedClientRequestMessage<?>, ShardedServerResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C, ShardedClientExecutor.PendingShardedTask> {
+public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C, ShardedClientExecutor.PendingShardedTask> {
 
     public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> fromConnect(
             Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
@@ -125,7 +125,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
 
     @Override
     public ListenableFuture<ShardedServerResponseMessage<?>> submit(
-            ShardedClientRequestMessage<?> request, Promise<ShardedServerResponseMessage<?>> promise) {
+            ShardedRequestMessage<?> request, Promise<ShardedServerResponseMessage<?>> promise) {
         ShardedRequestTask task = new ShardedRequestTask(
                 request, promise);
         LoggingFutureListener.listen(logger(), task);
@@ -156,6 +156,12 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
     }
 
     @Override
+    public void handleAutomatonTransition(Automaton.Transition<ProtocolState> transition) {
+        super.handleAutomatonTransition(transition);
+        actor.handleAutomatonTransition(transition);
+    }
+    
+    @Override
     protected Tasks actor() {
         return actor;
     }
@@ -165,10 +171,10 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         return actor.logger();
     }
 
-    protected static class ShardedRequestTask extends AbstractConnectionClientExecutor.RequestTask<ShardedClientRequestMessage<?>, ShardedServerResponseMessage<?>> {
+    protected static class ShardedRequestTask extends AbstractConnectionClientExecutor.RequestTask<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>> {
 
         public ShardedRequestTask(
-                ShardedClientRequestMessage<?> task,
+                ShardedRequestMessage<?> task,
                 Promise<ShardedServerResponseMessage<?>> promise) {
             super(task, promise);
             assert(task.xid() != OpCodeXid.PING.xid());
@@ -225,7 +231,13 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         @Override
         public void handleAutomatonTransition(
                 Automaton.Transition<ProtocolState> transition) {
-            // TODO Auto-generated method stub
+            switch (transition.to()) {
+            case ERROR:
+                stop();
+                break;
+            default:
+                break;
+            }
         }
         
         @Override

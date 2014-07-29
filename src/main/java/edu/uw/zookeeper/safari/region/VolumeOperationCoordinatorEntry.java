@@ -1,11 +1,12 @@
 package edu.uw.zookeeper.safari.region;
 
+import com.google.common.base.Objects;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.SameThreadExecutor;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -19,7 +20,7 @@ import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
 import edu.uw.zookeeper.safari.control.schema.VolumesSchemaRequests;
 import edu.uw.zookeeper.safari.volume.VolumeOperation;
 
-public class VolumeOperationCoordinatorEntry extends ForwardingListenableFuture<VolumeLogEntryPath> {
+public final class VolumeOperationCoordinatorEntry extends SimpleToStringListenableFuture<VolumeLogEntryPath> {
 
     public static VolumeOperationCoordinatorEntry newEntry(
             VolumeOperation<?> operation,
@@ -47,14 +48,13 @@ public class VolumeOperationCoordinatorEntry extends ForwardingListenableFuture<
         return new VolumeOperationCoordinatorEntry(operation, future);
     }
     
-    protected final VolumeOperation<?> operation;
-    protected final ListenableFuture<VolumeLogEntryPath> future;
+    private final VolumeOperation<?> operation;
     
     protected VolumeOperationCoordinatorEntry(
             VolumeOperation<?> operation,
             ListenableFuture<VolumeLogEntryPath> future) {
+        super(future);
         this.operation = operation;
-        this.future = future;
     }
     
     public VolumeOperation<?> operation() {
@@ -62,12 +62,13 @@ public class VolumeOperationCoordinatorEntry extends ForwardingListenableFuture<
     }
     
     @Override
-    protected ListenableFuture<VolumeLogEntryPath> delegate() {
-        return future;
+    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        return super.toStringHelper(helper.addValue(operation));
     }
 
-    protected static class ResponseToPath implements AsyncFunction<Operation.ProtocolResponse<?>, VolumeLogEntryPath> {
-        protected final VersionedId volume;
+    protected static final class ResponseToPath implements AsyncFunction<Operation.ProtocolResponse<?>, VolumeLogEntryPath> {
+        
+        private final VersionedId volume;
         
         public ResponseToPath(VersionedId volume) {
             this.volume = volume;

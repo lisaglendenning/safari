@@ -77,7 +77,7 @@ public class RegionTest extends AbstractMainTest {
                 ImmutableList.<Component<?>>of(root, control, server, client), 
                 pause);
     }
-
+    
     @Test(timeout=30000)
     public void testRegionStartAndStop() throws Exception {
         final int size = 3;

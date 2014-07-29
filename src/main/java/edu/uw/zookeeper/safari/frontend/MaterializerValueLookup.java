@@ -6,6 +6,7 @@ import java.util.concurrent.Callable;
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
@@ -18,14 +19,14 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SharedLookup;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
-public class MaterializerValueLookup<T,V> extends ToStringListenableFuture<List<Operation.ProtocolResponse<?>>> implements Callable<Optional<V>>, Runnable {
+public class MaterializerValueLookup<T,V> extends SimpleToStringListenableFuture<List<Operation.ProtocolResponse<?>>> implements Callable<Optional<V>>, Runnable {
 
     public static <T,V> CachedFunction<T, V> newCachedFunction(
             final Function<T, ZNodePath> paths,
@@ -108,5 +109,10 @@ public class MaterializerValueLookup<T,V> extends ToStringListenableFuture<List<
             return Optional.of(cached.apply(input));
         }
         return Optional.absent();
+    }
+    
+    @Override
+    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        return super.toStringHelper(helper.addValue(input)).addValue(toString(delegate));
     }
 }

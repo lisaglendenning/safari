@@ -195,7 +195,8 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
             switch (transition.to()) {
             case DISCONNECTED:
             case ERROR:
-                stop();
+                sessions.remove(session(), this);
+                client().unsubscribe(this);
                 break;
             default:
                 break;

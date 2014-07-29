@@ -97,7 +97,7 @@ public class VolumeCacheServiceTest extends AbstractMainTest {
         } else if (byPath.isDone()) {
             parent = Optional.of(byPath.get());
         }
-        VolumesSchemaRequests requests = VolumesSchemaRequests.create(control.materializer());
+        VolumesSchemaRequests<?> requests = VolumesSchemaRequests.create(control.materializer());
         UnsignedLong version = UnsignedLong.valueOf(System.currentTimeMillis());
         AssignedVolumeBranches volume = (AssignedVolumeBranches) operator.difference(
                     path,
@@ -136,7 +136,7 @@ public class VolumeCacheServiceTest extends AbstractMainTest {
             final VolumeCacheService volumes, final ControlClientService control, final SimpleVolumeOperator operator, final AssignedVolumeBranches volume, final long timeout) throws Exception {
         AssignedVolumeBranches parent = volumes.pathToVolume().apply(((AbsoluteZNodePath) volume.getDescriptor().getPath()).parent()).get(timeout, TimeUnit.MILLISECONDS);
         UnsignedLong version = UnsignedLong.valueOf(System.currentTimeMillis());
-        VolumesSchemaRequests requests = VolumesSchemaRequests.create(control.materializer());
+        VolumesSchemaRequests<?> requests = VolumesSchemaRequests.create(control.materializer());
         operator.union(volume, version).get(timeout, TimeUnit.MILLISECONDS);
         Operations.unlessError(
                 control.materializer().submit(new IMultiRequest(ImmutableList.of(requests.volume(volume.getDescriptor().getId()).version(version).latest().update())))

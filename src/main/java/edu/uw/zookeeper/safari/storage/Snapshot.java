@@ -20,6 +20,7 @@ import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
@@ -61,7 +62,7 @@ import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SubmitActor;
 import edu.uw.zookeeper.common.TaskExecutor;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
@@ -108,7 +109,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient,
             Identifier toVolume,
             ZNodeName toBranch) {
-        return DeleteExistingSnapshot.create(toClient, toVolume, toBranch);
+        return DeleteExistingSnapshot.create(toVolume, toBranch, toClient);
     }
     
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<UnsignedLong> recover(
@@ -249,7 +250,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             }
         }
         if (!last.isPresent() || (last.get() instanceof DeleteExistingSnapshot)) {
-            return Optional.of(CreateSnapshotPrefix.create(toClient, toVolume));
+            return Optional.of(CreateSnapshotPrefix.create(toVolume, toClient));
         } else if (last.get() instanceof CreateSnapshotPrefix) {
             return Optional.of(
                     PrepareSnapshotEnsembleWatches.create(
@@ -293,15 +294,9 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
                         walker.walk(fromRoot), 
                         new WalkerCallback(), 
                         SameThreadExecutor.getInstance());
-                return Optional.of(CreateSnapshot.create(future));
+                return Optional.of(CreateSnapshot.call(future));
             } else if (previous instanceof CreateSnapshot) {
-                try {
-                    CallSnapshotEnsembleWatches.fromPrevious((CallSnapshotEnsembleWatches) last.get());
-                } catch (InterruptedException e) {
-                    throw Throwables.propagate(e);
-                } catch (ExecutionException e) {
-                    return Optional.absent();
-                }
+                return Optional.absent();
             } else {
                 throw new AssertionError();
             }
@@ -316,6 +311,11 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             }
         }
         return Optional.absent();
+    }
+    
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).add("from", fromVolume).add("to", toVolume).toString();
     }
     
     public static final class FromRootWchc extends FilteredWchc {
@@ -368,45 +368,74 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
         }
     }
     
-    public static abstract class Action<V> extends ToStringListenableFuture<V> {
+    public static abstract class Action<V> extends SimpleToStringListenableFuture<V> {
 
         protected Action(ListenableFuture<V> delegate) {
             super(delegate);
         }
-        
     }
     
-    public static final class DeleteExistingSnapshot extends Action<List<List<AbsoluteZNodePath>>> {
+    public static final class DeleteExistingSnapshot extends Action<Boolean> {
 
         public static DeleteExistingSnapshot create(
-                final ConnectionClientExecutor<? super Records.Request, ?, SessionListener, ?> toConnection,
                 final Identifier toVolume,
-                final ZNodeName toBranch) {
+                final ZNodeName toBranch,
+                ClientExecutor<? super Records.Request,?,?> client) {
             ImmutableList<AbsoluteZNodePath> paths = 
                     ImmutableList.of(
                             StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume).join(toBranch),
                             StorageSchema.Safari.Volumes.Volume.Snapshot.Ephemerals.pathOf(toVolume),
                             StorageSchema.Safari.Volumes.Volume.Snapshot.Watches.pathOf(toVolume));
-            ImmutableList.Builder<ListenableFuture<List<AbsoluteZNodePath>>> deletes = 
-                    ImmutableList.builder();
-            for (AbsoluteZNodePath path: paths) {
-                deletes.add(DeleteSubtree.deleteChildren(path, toConnection));
-            }
-            return new DeleteExistingSnapshot(
-                    Futures.allAsList(deletes.build()));
+            return new DeleteExistingSnapshot(Deleted.create(paths, client));
         }
         
         protected DeleteExistingSnapshot(
-                ListenableFuture<List<List<AbsoluteZNodePath>>> future) {
+                ListenableFuture<Boolean> future) {
             super(future);
+        }
+
+        protected static class Deleted extends SimpleToStringListenableFuture<List<List<AbsoluteZNodePath>>> implements Callable<Optional<Boolean>> {
+
+            public static ListenableFuture<Boolean> create(
+                    List<? extends ZNodePath> paths,
+                    ClientExecutor<? super Records.Request,?,?> client) {
+                ImmutableList.Builder<ListenableFuture<List<AbsoluteZNodePath>>> deletes = 
+                        ImmutableList.builder();
+                for (ZNodePath path: paths) {
+                    deletes.add(DeleteSubtree.deleteChildren(path, client));
+                }
+                CallablePromiseTask<Deleted,Boolean> task = CallablePromiseTask.create(
+                        new Deleted(Futures.allAsList(deletes.build())), 
+                        SettableFuturePromise.<Boolean>create());
+                task.task().addListener(task, SameThreadExecutor.getInstance());
+                return task;
+            }
+            
+            protected Deleted(ListenableFuture<List<List<AbsoluteZNodePath>>> future) {
+                super(future);
+            }
+            
+            @Override
+            public Optional<Boolean> call() throws Exception {
+                if (isDone()) {
+                    Boolean deleted = Boolean.FALSE;
+                    for (List<AbsoluteZNodePath> paths: get()) {
+                        if (!paths.isEmpty() && !deleted.booleanValue()) {
+                            deleted = Boolean.TRUE;
+                        }
+                    }
+                    return Optional.of(deleted);
+                }
+                return Optional.absent();
+            }
         }
     }
 
-    public static final class CreateSnapshotPrefix<O extends Operation.ProtocolResponse<?>> extends Action<List<O>> {
+    public static final class CreateSnapshotPrefix extends Action<Boolean> {
         
-        public static <O extends Operation.ProtocolResponse<?>> CreateSnapshotPrefix<O> create(
-                ConnectionClientExecutor<? super Records.Request,O,?,?> toConnection,
-                Identifier toVolume) {
+        public static <O extends Operation.ProtocolResponse<?>> CreateSnapshotPrefix create(
+                Identifier toVolume,
+                ClientExecutor<? super Records.Request,O,?> client) {
             ImmutableList<AbsoluteZNodePath> paths = 
                     ImmutableList.of(
                             StorageSchema.Safari.Volumes.Volume.pathOf(toVolume),
@@ -414,17 +443,47 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
                             StorageSchema.Safari.Volumes.Volume.Snapshot.pathOf(toVolume),
                             StorageSchema.Safari.Volumes.Volume.Snapshot.Ephemerals.pathOf(toVolume),
                             StorageSchema.Safari.Volumes.Volume.Snapshot.Watches.pathOf(toVolume));
-            ImmutableList.Builder<Records.Request> creates = 
-                    ImmutableList.builder();
-            for (AbsoluteZNodePath path: paths) {
-                creates.add(Operations.Requests.create().setPath(path).build());
-            }
-            return new CreateSnapshotPrefix<O>(
-                    SubmittedRequests.submit(toConnection, creates.build()));
+            return new CreateSnapshotPrefix(Created.create(paths, client));
         }
         
-        protected CreateSnapshotPrefix(ListenableFuture<List<O>> future) {
+        protected CreateSnapshotPrefix(ListenableFuture<Boolean> future) {
             super(future);
+        }
+
+        protected static class Created<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Callable<Optional<Boolean>> {
+
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> create(
+                    List<? extends ZNodePath> paths,
+                    ClientExecutor<? super Records.Request,O,?> client) {
+                ImmutableList.Builder<Records.Request> creates = 
+                        ImmutableList.builder();
+                for (ZNodePath path: paths) {
+                    creates.add(Operations.Requests.create().setPath(path).build());
+                }
+                CallablePromiseTask<Created<O>,Boolean> task = CallablePromiseTask.create(new Created<O>(
+                        SubmittedRequests.submit(client, creates.build())), 
+                        SettableFuturePromise.<Boolean>create());
+                task.task().addListener(task, SameThreadExecutor.getInstance());
+                return task;
+            }
+            
+            protected Created(ListenableFuture<List<O>> future) {
+                super(future);
+            }
+            
+            @Override
+            public Optional<Boolean> call() throws Exception {
+                if (isDone()) {
+                    Boolean created = Boolean.FALSE;
+                    for (O response: get()) {
+                        if (!Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS).isPresent() && !created.booleanValue()) {
+                            created = Boolean.TRUE;
+                        }
+                    }
+                    return Optional.of(created);
+                }
+                return Optional.absent();
+            }
         }
     }
     
@@ -530,7 +589,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
     
     public static final class CreateSnapshot extends Action<UnsignedLong> {
         
-        public static CreateSnapshot create(ListenableFuture<UnsignedLong> future) {
+        public static CreateSnapshot call(ListenableFuture<UnsignedLong> future) {
             return new CreateSnapshot(future);
         }
         
@@ -605,6 +664,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
         protected final TreeWalker.Builder<ListenableFuture<UnsignedLong>> walker;
         protected final ZxidTracker zxid;
         protected int walkers;
+        protected int pending;
         
         public WalkerProcessor(
                 ZxidTracker zxid,
@@ -612,6 +672,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             this.zxid = zxid;
             this.promise = promise;
             this.walkers = 0;
+            this.pending = 0;
             this.walker = TreeWalker.forResult(this)
                     .setIterator(SortedChildrenIterator.create())
                     .setRequests(TreeWalker.toRequests(
@@ -645,7 +706,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
         @Override
         public synchronized void run() {
             if (!isDone()) {
-                if ((walkers == 0) && submitTo.isEmpty() && ephemerals.isEmpty() && changes.isEmpty()) {
+                if ((walkers == 0) && (pending == 0) && submitTo.isEmpty() && ephemerals.isEmpty() && changes.isEmpty()) {
                     promise.set(UnsignedLong.valueOf(zxid.get()));
                 }
             }
@@ -675,7 +736,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
                     if (input.get().request() instanceof IGetDataRequest) {
                         final long zxid = response.zxid();
                         final AbsoluteZNodePath fromPath = AbsoluteZNodePath.fromString(((Records.PathGetter) input.get().request()).getPath());
-                        final Records.ZNodeStatGetter stat = new IStat(((Records.StatGetter) response).getStat());
+                        final Records.ZNodeStatGetter stat = new IStat(((Records.StatGetter) response.record()).getStat());
                         CreateMode mode = (stat.getEphemeralOwner() == Stats.CreateStat.ephemeralOwnerNone()) ? CreateMode.PERSISTENT : CreateMode.EPHEMERAL;
                         final Optional<? extends Sequential<String,?>> sequential;
                         if (fromPath.length() > fromRoot.length()) {
@@ -694,7 +755,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
                         final Operations.Requests.Create create = Operations.Requests.create()
                                 .setMode(mode)
                                 .setPath(toPath)
-                                .setData(((Records.DataGetter) response).getData());
+                                .setData(((Records.DataGetter) response.record()).getData());
                         if (mode.contains(CreateFlag.EPHEMERAL)) {
                             ephemerals.submit(
                                     StampedValue.valueOf(
@@ -725,7 +786,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             }
         }
         
-        protected <V,T extends ListenableFuture<V>> T updateZxid(long zxid, T future) {
+        protected synchronized <V,T extends ListenableFuture<V>> T updateZxid(long zxid, T future) {
             new ZxidUpdater<V>(zxid, future);
             return future;
         }
@@ -745,6 +806,7 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
                     ListenableFuture<V> future) {
                 this.zxid = zxid;
                 this.future = future;
+                ++pending;
                 addListener(this, SameThreadExecutor.getInstance());
             }
 
@@ -757,6 +819,12 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
                     } catch (InterruptedException e) {
                         throw Throwables.propagate(e);
                     } catch (ExecutionException e) {
+                    } finally {
+                        synchronized (WalkerProcessor.this) {
+                            if (--pending == 0) {
+                                WalkerProcessor.this.run();
+                            }
+                        }
                     }
                 }
             }
@@ -1217,6 +1285,11 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             }
             return updated;
         }
+        
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(super.toString()).addValue(trie).toString();
+        }
 
         @Override
         protected ZNodePath join(ZNodeName remaining) {
@@ -1224,13 +1297,16 @@ public class Snapshot<O extends Operation.ProtocolResponse<?>> implements Functi
             Iterator<ZNodeName> prefixes = SequenceIterator.forName(remaining);
             List<String> names = Lists.newLinkedList();
             while (prefixes.hasNext()) {
-                ZNodeName next = prefixes.next();
+                final ZNodeName next = prefixes.next();
                 node = node.get(next);
+                final String name;
                 if (node != null) {
-                    names.add(node.get().toString());
+                    name = node.get().toString();
                 } else {
                     checkArgument(!prefixes.hasNext(), String.valueOf(next));
+                    name = next.toString();
                 }
+                names.add(name);
             }
             return super.join(ZNodeName.fromString(ZNodeLabelVector.join(names.iterator())));
         }

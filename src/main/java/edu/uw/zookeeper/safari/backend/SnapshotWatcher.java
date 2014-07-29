@@ -12,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
@@ -39,7 +40,7 @@ import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SubmitActor;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.AbstractNameTrie;
 import edu.uw.zookeeper.data.CreateFlag;
@@ -66,7 +67,7 @@ import edu.uw.zookeeper.protocol.proto.IGetChildrenRequest;
 import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.VersionedId;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.storage.SessionsWatcher;
 import edu.uw.zookeeper.safari.storage.StorageClientService;
@@ -170,8 +171,8 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
             super(SnapshotWatcher.this.service, 
                     storage.notifications(), 
                     WatchMatcher.exact(
-                    path.join(StorageSchema.Safari.Volumes.Volume.Snapshot.LABEL).join(StorageSchema.Safari.Volumes.Volume.Snapshot.Commit.LABEL), 
-                    Watcher.Event.EventType.NodeCreated));
+                            path.join(StorageSchema.Safari.Volumes.Volume.Snapshot.LABEL).join(StorageSchema.Safari.Volumes.Volume.Snapshot.Commit.LABEL), 
+                            Watcher.Event.EventType.NodeCreated));
             this.root = path.join(StorageSchema.Safari.Volumes.Volume.Root.LABEL);
             this.query = FixedQuery.forIterable(
                     storage.materializer(), 
@@ -219,7 +220,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
             deletes.stop();
         }
         
-        protected class Query extends edu.uw.zookeeper.client.Query {
+        protected class Query extends Watchers.Query {
             
             public Query() {
                 super(VolumeSnapshotCommitted.this.query, VolumeSnapshotCommitted.this);
@@ -256,7 +257,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
                 super(VolumeSnapshotCommitted.this.service, 
                         VolumeSnapshotCommitted.this.watch, 
                         WatchMatcher.exact(
-                                storage.materializer().schema().apply(type).path(), 
+                                root.parent().join(storage.materializer().schema().apply(type).parent().name()), 
                                 Watcher.Event.EventType.NodeDeleted));
                 this.type = type;
             }
@@ -264,12 +265,14 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
             @SuppressWarnings("unchecked")
             @Override
             public void handleWatchEvent(WatchEvent event) {
-                edu.uw.zookeeper.client.Query.call(FixedQuery.forIterable(
-                        storage.materializer(), 
-                        PathToRequests.forRequests(
-                                Operations.Requests.sync(), 
-                                Operations.Requests.exists())
-                            .apply(getWatchMatcher().getPath())), this);
+               Watchers.Query.call(
+                        FixedQuery.forIterable(
+                                storage.materializer(), 
+                                PathToRequests.forRequests(
+                                        Operations.Requests.sync(), 
+                                        Operations.Requests.exists())
+                                    .apply(event.getPath())), 
+                        this);
                 stopping(state());
             }
             
@@ -278,7 +281,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
                 new Query();
             }
             
-            protected class Query extends edu.uw.zookeeper.client.Query {
+            protected class Query extends Watchers.Query {
 
                 @SuppressWarnings("unchecked")
                 public Query() {
@@ -387,7 +390,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
                     }
                 }
                 
-                protected class Query extends edu.uw.zookeeper.client.Query {
+                protected class Query extends Watchers.Query {
 
                     protected final AbsoluteZNodePath path;
                     
@@ -574,7 +577,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
                     super(VolumeSnapshotCommitted.this.service, 
                             storage.cacheEvents(), 
                             WatchMatcher.exact(
-                                    root.parent().join(StorageSchema.Safari.Volumes.Volume.Snapshot.Ephemerals.LABEL),
+                                    ((AbsoluteZNodePath) VolumeSnapshotCommitted.this.getWatchMatcher().getPath()).parent().join(StorageSchema.Safari.Volumes.Volume.Snapshot.Ephemerals.LABEL),
                                     Watcher.Event.EventType.NodeDeleted));
                 }
                 
@@ -606,7 +609,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
                 BackendSessionExecutors.BackendSessionExecutor executor = executors.get(Long.valueOf(request.session()));
                 if (executor != null) {
                     final ListenableFuture<ShardedServerResponseMessage<?>> future = executor.client().submit(
-                            ShardedClientRequestMessage.valueOf(
+                            ShardedRequestMessage.valueOf(
                                     VersionedId.zero(), 
                                     ProtocolRequestMessage.of(0, request.request())));
                     if (!send(FutureValue.forValue(request.path(), future))) {
@@ -703,7 +706,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
                         }
                     }
                     for (AbsoluteZNodePath path: builder.build()) {
-                        edu.uw.zookeeper.client.Query.call(query.apply(path), this);
+                        Watchers.Query.call(query.apply(path), this);
                     }
                 }
             }
@@ -753,8 +756,8 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
             }
         }
         
-        protected edu.uw.zookeeper.client.Query newQuery(ZNodePath path) {
-            return edu.uw.zookeeper.client.Query.call(query.apply(path), this);
+        protected Watchers.Query newQuery(ZNodePath path) {
+            return Watchers.Query.call(query.apply(path), this);
         }
     }
 
@@ -786,7 +789,7 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
         }
     }
     
-    protected static final class FutureValue<U,V> extends ToStringListenableFuture<V> {
+    protected static final class FutureValue<U,V> extends SimpleToStringListenableFuture<V> {
 
         public static <U,V> FutureValue<U,V> forValue(U value,
                 ListenableFuture<V> future) {
@@ -804,6 +807,11 @@ public class SnapshotWatcher extends CacheNodeCreatedListener<StorageZNode<?>> {
         
         public U value() {
             return value;
+        }
+        
+        @Override
+        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+            return super.toStringHelper(helper.addValue(value));
         }
     }
 

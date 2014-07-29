@@ -1,197 +1,170 @@
 package edu.uw.zookeeper.safari.region;
 
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ExecutionException;
-
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
-import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.Processor;
-import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.RelativeZNodePath;
-import edu.uw.zookeeper.protocol.proto.IMultiRequest;
+import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
+import edu.uw.zookeeper.safari.control.schema.LinkVolumeLogEntry;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
 import edu.uw.zookeeper.safari.control.schema.VolumesSchemaRequests;
 import edu.uw.zookeeper.safari.volume.MergeParameters;
 import edu.uw.zookeeper.safari.volume.VolumeOperation;
 import edu.uw.zookeeper.safari.volume.VolumeOperator;
 
-public class VolumeOperationProposer implements Function<List<ListenableFuture<?>>,Optional<? extends ListenableFuture<?>>> {
+public class VolumeOperationProposer<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<VolumeLogEntryPath,Pair<VolumeLogEntryPath, Optional<VolumeLogEntryPath>>> {
 
-    public static ListenableFuture<Pair<VolumeLogEntryPath,Set<VolumeLogEntryPath>>> create(
+    public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Pair<VolumeLogEntryPath,Optional<VolumeLogEntryPath>>> forProposal(
             VolumeOperationCoordinatorEntry proposal,
-            Materializer<ControlZNode<?>,?> materializer,
-            Promise<Pair<VolumeLogEntryPath,Set<VolumeLogEntryPath>>> promise) {
-        return ChainedFutures.run(
-                ChainedFutures.process(
-                        ChainedFutures.chain(
-                                new VolumeOperationProposer(proposal, materializer), 
-                                Lists.<ListenableFuture<?>>newArrayListWithCapacity(2)), 
-                        new Processor<List<ListenableFuture<?>>,Pair<VolumeLogEntryPath,Set<VolumeLogEntryPath>>>() {
-                            @SuppressWarnings("unchecked")
-                            @Override
-                            public Pair<VolumeLogEntryPath, Set<VolumeLogEntryPath>> apply(
-                                    List<ListenableFuture<?>> input)
-                                    throws Exception {
-                                final VolumeLogEntryPath coordinator = (VolumeLogEntryPath) input.get(0).get();
-                                final Set<VolumeLogEntryPath> participants = (Set<VolumeLogEntryPath>) input.get(1).get();
-                                return Pair.create(coordinator, participants);
-                            }
-                        }), 
-                promise);
+            Materializer<ControlZNode<?>,O> materializer) {
+        return Futures.transform(
+                proposal, 
+                new VolumeOperationProposer<O>(proposal.operation(), materializer),
+                SameThreadExecutor.getInstance());
     }
     
-    protected final Materializer<ControlZNode<?>,?> materializer;
-    protected final VolumeOperationCoordinatorEntry proposal;
+    protected final Materializer<ControlZNode<?>,O> materializer;
+    protected final VolumeOperation<?> operation;
     
     protected VolumeOperationProposer(
-            VolumeOperationCoordinatorEntry proposal,
-            Materializer<ControlZNode<?>,?> materializer) {
-        this.proposal = proposal;
+            VolumeOperation<?> operation,
+            Materializer<ControlZNode<?>,O> materializer) {
+        this.operation = operation;
         this.materializer = materializer;
     }
     
     @Override
-    public Optional<? extends ListenableFuture<?>> apply(List<ListenableFuture<?>> input) {
-        switch (input.size()) {
-        case 0:
-            return Optional.of(proposal);
-        case 1:
-            VolumeLogEntryPath path;
-            try {
-                path = proposal.get();
-            } catch (InterruptedException e) {
-                throw new AssertionError(e);
-            } catch (ExecutionException e) {
-                return Optional.absent();
-            }
-            ListenableFuture<?> future = VolumeOperationEntryLinks.forOperation(
-                    path, 
-                    proposal.operation(), 
-                    materializer,
-                    SettableFuturePromise.<Set<VolumeLogEntryPath>>create());
-            LoggingFutureListener.listen(
-                    LogManager.getLogger(this), future);
-            return Optional.of(future);
-        case 2:
-            return Optional.absent();
-        default:
-            throw new AssertionError();
-        }
+    public ListenableFuture<Pair<VolumeLogEntryPath, Optional<VolumeLogEntryPath>>> apply(
+            final VolumeLogEntryPath proposal) throws Exception {
+        return Futures.transform(
+                LoggingFutureListener.listen(
+                    LogManager.getLogger(this),
+                    VolumeOperationEntryLinks.forOperation(
+                            proposal, 
+                            operation, 
+                            materializer)),
+                new Function<Optional<VolumeLogEntryPath>,Pair<VolumeLogEntryPath, Optional<VolumeLogEntryPath>>>() {
+                    @Override
+                    public Pair<VolumeLogEntryPath, Optional<VolumeLogEntryPath>> apply(
+                            Optional<VolumeLogEntryPath> input) {
+                        return Pair.create(proposal, input);
+                    }
+                }, SameThreadExecutor.getInstance());
     }
 
-    public static class VolumeOperationEntryLinks implements Function<List<ListenableFuture<?>>,Optional<? extends ListenableFuture<?>>> {
+    public static final class VolumeOperationEntryLinks<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<List<O>,VolumeLogEntryPath> {
 
-        public static ListenableFuture<Set<VolumeLogEntryPath>> forOperation(
-                VolumeLogEntryPath entry, VolumeOperation<?> operation, 
-                Materializer<ControlZNode<?>,?> materializer,
-                Promise<Set<VolumeLogEntryPath>> promise) {
-            final ImmutableSet<VersionedId> volumes;
-            if (operation.getOperator().getOperator() == VolumeOperator.MERGE) {
-                volumes = ImmutableSet.of(((MergeParameters) operation.getOperator().getParameters()).getParent());
-            } else {
-                volumes = ImmutableSet.of();
+        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Optional<VolumeLogEntryPath>> forOperation(
+                VolumeLogEntryPath entry, 
+                VolumeOperation<?> operation, 
+                Materializer<ControlZNode<?>,O> materializer) {
+            if (operation.getOperator().getOperator() != VolumeOperator.MERGE) {
+                return Futures.immediateFuture(Optional.<VolumeLogEntryPath>absent());
             }
-            final RelativeZNodePath link = entry.path().relative(ControlSchema.Safari.Volumes.PATH);
-            return create(link, volumes, materializer, promise);
+            final VersionedId volume = ((MergeParameters) operation.getOperator().getParameters()).getParent();
+            final RelativeZNodePath link = ControlSchema.Safari.Volumes.Volume.Log.Version.Entry.PATH.relative(entry.path());
+            return Futures.transform(
+                    create(link, volume, materializer),
+                    new Function<VolumeLogEntryPath, Optional<VolumeLogEntryPath>>() {
+                        @Override
+                        public Optional<VolumeLogEntryPath> apply(
+                                VolumeLogEntryPath input) {
+                            return Optional.of(input);
+                        }
+                    }, SameThreadExecutor.getInstance());
         }
         
-        public static ListenableFuture<Set<VolumeLogEntryPath>> create(
+        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<VolumeLogEntryPath> create(
                 RelativeZNodePath link,
-                ImmutableSet<VersionedId> volumes,
-                Materializer<ControlZNode<?>,?> materializer,
-                Promise<Set<VolumeLogEntryPath>> promise) {
-            return ChainedFutures.run(
-                    ChainedFutures.process(
-                        ChainedFutures.chain(
-                                new VolumeOperationEntryLinks(Pair.create(link, volumes), materializer), 
-                                Lists.<ListenableFuture<?>>newLinkedList()), 
-                        ChainedFutures.<Set<VolumeLogEntryPath>>castLast()), 
-                    promise);
+                VersionedId volume,
+                Materializer<ControlZNode<?>,O> materializer) {
+            VolumesSchemaRequests<O>.VolumeSchemaRequests.VolumeVersionSchemaRequests schema = 
+                    VolumesSchemaRequests.create(materializer)
+                    .version(volume);
+            return Futures.transform(
+                    SubmittedRequests.submit(
+                            materializer, 
+                            schema.children()),
+                    new VolumeOperationEntryLinks<O>(
+                            link,
+                            schema),
+                    SameThreadExecutor.getInstance());
         }
         
-        protected final Pair<RelativeZNodePath,ImmutableSet<VersionedId>> entry;
-        protected final Materializer<ControlZNode<?>,?> materializer;
+        private final RelativeZNodePath link;
+        private final VolumesSchemaRequests<O>.VolumeSchemaRequests.VolumeVersionSchemaRequests schema;
         
         protected VolumeOperationEntryLinks(
-                Pair<RelativeZNodePath,ImmutableSet<VersionedId>> entry,
-                Materializer<ControlZNode<?>,?> materializer) {
-            this.entry = entry;
-            this.materializer = materializer;
+                RelativeZNodePath link,
+                VolumesSchemaRequests<O>.VolumeSchemaRequests.VolumeVersionSchemaRequests schema) {
+            this.link = link;
+            this.schema = schema;
         }
 
         @Override
-        public Optional<? extends ListenableFuture<?>> apply(List<ListenableFuture<?>> input) {
-            if (input.isEmpty()) {
-                if (entry.second().isEmpty()) {
-                    return Optional.of(Futures.immediateFuture(ImmutableSet.<VolumeLogEntryPath>of()));
-                } else {
-                    ImmutableList.Builder<Records.Request> requests = ImmutableList.builder();
-                    for (VersionedId volume: entry.second()) {
-                        requests.addAll(VolumesSchemaRequests.create(materializer).volume(volume.getValue()).version(volume.getVersion()).children());
-                    }
-                    return Optional.of(SubmittedRequests.submit(materializer, requests.build()));
-                }
-            } 
-            try {
-                if (input.get(input.size() - 1).get() instanceof Set) {
-                    return Optional.absent();
-                }
-            } catch (Exception e) {
-                return Optional.absent();
+        public ListenableFuture<VolumeLogEntryPath> apply(
+                List<O> input) throws Exception {
+            for (Operation.ProtocolResponse<?> response: input) {
+                Operations.unlessError(response.record());
             }
-            List<Records.Request> requests = Lists.newLinkedList();
-            Map<VersionedId, VolumeLogEntryPath> links = Maps.newHashMapWithExpectedSize(entry.second().size());
+            final Materializer<ControlZNode<?>,O> materializer = schema.volume().volumes().getMaterializer();
+            Optional<VolumeLogEntryPath> entry = Optional.absent();
+            List<Records.Request> requests = ImmutableList.of();
             materializer.cache().lock().readLock().lock();
             try {
-                for (VersionedId volume: entry.second()) {
-                    ControlSchema.Safari.Volumes.Volume.Log.Version node = ControlSchema.Safari.Volumes.Volume.Log.Version.fromTrie(materializer.cache().cache(), volume.getValue(), volume.getVersion());
-                    for (ControlSchema.Safari.Volumes.Volume.Log.Version.Entry e: node.entries().values()) {
-                        if (e.data().get() == null) {
-                            requests.addAll(VolumesSchemaRequests.create(materializer).volume(volume.getValue()).version(volume.getVersion()).children());
-                        } else if (e.data().get().equals(entry.first())) {
-                            links.put(volume, VolumeLogEntryPath.valueOf(VersionedId.valueOf(e.version().name(), e.version().log().volume().name()), e.name()));
+                ControlSchema.Safari.Volumes.Volume.Log.Version node = ControlSchema.Safari.Volumes.Volume.Log.Version.fromTrie(
+                        materializer.cache().cache(), schema.volume().getVolume(), schema.getVersion());
+                for (ControlSchema.Safari.Volumes.Volume.Log.Version.Entry e: node.entries().values()) {
+                    if (e.data().get() == null) {
+                        if (requests.isEmpty()) {
+                            requests = Lists.newLinkedList();
                         }
+                        requests.addAll(schema.entry(e.name()).get());
+                    } else if ((e.data().get() instanceof LinkVolumeLogEntry) && e.data().get().get().equals(link)) {
+                        entry = Optional.of(
+                                VolumeLogEntryPath.valueOf(
+                                        VersionedId.valueOf(
+                                                e.version().name(), 
+                                                e.version().log().volume().name()), 
+                                        e.name()));
+                        break;
                     }
                 }
             } finally {
                 materializer.cache().lock().readLock().unlock();
             }
+
+            if (entry.isPresent()) {
+                return Futures.immediateFuture(entry.get());
+            }
+            
             if (requests.isEmpty()) {
-                Set<VersionedId> difference = Sets.difference(entry.second(), links.keySet());
-                ImmutableList.Builder<Records.MultiOpRequest> multi = ImmutableList.builder();
-                for (VersionedId volume: difference) {
-                    multi.add(VolumesSchemaRequests.create(materializer).volume(volume.getValue()).version(volume.getVersion()).logLink(entry.first()));
-                }
-                requests.add(new IMultiRequest(multi.build()));
+                requests = ImmutableList.<Records.Request>of(schema.logLink(link));
             }
-            if (!requests.isEmpty()) {
-                return Optional.<ListenableFuture<?>>of(SubmittedRequests.submit(materializer, requests));
-            } else {
-                assert (links.size() == entry.second().size());
-                return Optional.of(Futures.immediateFuture(ImmutableSet.copyOf(links.values())));
-            }
+            return Futures.transform(
+                    SubmittedRequests.submit(
+                            materializer, 
+                            requests),
+                    this,
+                    SameThreadExecutor.getInstance());
         }
     }
 }

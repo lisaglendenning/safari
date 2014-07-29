@@ -42,6 +42,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.ForwardingPromise;
@@ -51,7 +52,7 @@ import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.Automaton.Transition;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.AbstractWatchMatchListener;
 import edu.uw.zookeeper.data.Operations;
@@ -63,6 +64,7 @@ import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;
+import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.Lease;
 import edu.uw.zookeeper.safari.VersionTransition;
@@ -185,6 +187,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
     
     @SuppressWarnings("unchecked")
     public void update(final ZNodePath versionPath) {
+        List<Records.Request> requests = ImmutableList.of();
         control.materializer().cache().lock().readLock().lock();
         try {
             ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = 
@@ -212,33 +215,31 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                         Lease lease = Lease.valueOf(leaseNode.stat().get().getMtime(), leaseNode.data().get().longValue());
                         v.version().onSuccess(Pair.create(version, lease));
                     } else {
-                        new RequestCallback(
-                                versionPath, 
-                                SubmittedRequests.submitRequests(
-                                        control.materializer(),
-                                        Operations.Requests.sync().setPath(leaseNode.path()).build(),
-                                        Operations.Requests.getData().setPath(leaseNode.path()).build()));
-                        return;
+                        requests = PathToRequests.forRequests(
+                                Operations.Requests.sync(),
+                                Operations.Requests.getData()).apply(leaseNode.path());
                     }
                 }
                 
-                ControlSchema.Safari.Volumes.Volume.Path pathNode = versionNode.log().volume().getPath();
-                CachedVolume.VersionToVolume.PathListener forPath = v.volume().listen(VersionedValue.valueOf(version, state.get()));
-                if ((pathNode != null) && (pathNode.data().stamp() > 0L)) {
-                    ZNodePath path = pathNode.data().get();
-                    forPath.onSuccess(path);
-                } else {
-                    try {
-                        ListenableFuture<ZNodePath> future = idToPath.apply(id);
-                        Futures.addCallback(future, forPath, SameThreadExecutor.getInstance());
-                    } catch (Exception e) {
-                        forPath.onFailure(e);
+                if (requests.isEmpty()) {
+                    ControlSchema.Safari.Volumes.Volume.Path pathNode = versionNode.log().volume().getPath();
+                    CachedVolume.VersionToVolume.PathListener forPath = v.volume().listen(VersionedValue.valueOf(version, state.get()));
+                    if ((pathNode != null) && (pathNode.data().stamp() > 0L)) {
+                        ZNodePath path = pathNode.data().get();
+                        forPath.onSuccess(path);
+                    } else {
+                        try {
+                            ListenableFuture<ZNodePath> future = idToPath.apply(id);
+                            Futures.addCallback(future, forPath, SameThreadExecutor.getInstance());
+                        } catch (Exception e) {
+                            forPath.onFailure(e);
+                        }
                     }
-                }
-                
-                ControlSchema.Safari.Volumes.Volume.Log.Version.Xomega xomegaNode = versionNode.xomega();
-                if ((xomegaNode != null) && (xomegaNode.data().stamp() > 0L)) {
-                    v.zxid().onSuccess(Pair.create(versionNode.name(), xomegaNode.data().get()));
+                    
+                    ControlSchema.Safari.Volumes.Volume.Log.Version.Xomega xomegaNode = versionNode.xomega();
+                    if ((xomegaNode != null) && (xomegaNode.data().stamp() > 0L)) {
+                        v.zxid().onSuccess(Pair.create(versionNode.name(), xomegaNode.data().get()));
+                    }
                 }
             } else {
                 CachedVolume v = volumes.get(id);
@@ -248,6 +249,14 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
             }
         } finally {
             control.materializer().cache().lock().readLock().unlock();
+        }
+        
+        if (!requests.isEmpty()) {
+            new RequestCallback(
+                    versionPath, 
+                    SubmittedRequests.submit(
+                            control.materializer(),
+                            requests));
         }
     }
     
@@ -562,27 +571,29 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                     try {
                         if (t instanceof NonResidentVolumeException) {
                             UnsignedLong version = ((NonResidentVolumeException) t).getVersion();
-                            // assume that we already know the xomega of the preceding resident version
-                            Long lower = lowerEndpoint(version).get();
-                            Object value = values.get(lower);
-                            if (value != null) {
-                                assert (value instanceof Throwable);
-                            } else {
-                                Optional<Long> upper = Optional.absent();
-                                if (values.span().contains(lower)) {
-                                    for (Range<Long> k: values.asMapOfRanges().keySet()) {
-                                        if (k.hasLowerBound() && (k.lowerEndpoint().longValue() > lower.longValue()) && (!upper.isPresent() || upper.get().longValue() > k.lowerEndpoint().longValue())) {
-                                            upper = Optional.of(k.lowerEndpoint());
+                            if (version != null) {
+                                // assume that we already know the xomega of the preceding resident version
+                                Long lower = lowerEndpoint(version).get();
+                                Object value = values.get(lower);
+                                if (value != null) {
+                                    assert (value instanceof Throwable);
+                                } else {
+                                    Optional<Long> upper = Optional.absent();
+                                    if (values.span().contains(lower)) {
+                                        for (Range<Long> k: values.asMapOfRanges().keySet()) {
+                                            if (k.hasLowerBound() && (k.lowerEndpoint().longValue() > lower.longValue()) && (!upper.isPresent() || upper.get().longValue() > k.lowerEndpoint().longValue())) {
+                                                upper = Optional.of(k.lowerEndpoint());
+                                            }
                                         }
                                     }
-                                }
-                                Range<Long> range = upper.isPresent() ? Range.openClosed(lower, upper.get()) : Range.atLeast(lower);
-                                values.put(range, t);
-                                
-                                NavigableMap<Long, Lookup> toUpdate = lookups.subMap(range.lowerEndpoint(), false, range.upperEndpoint(), true);
-                                Iterator<Lookup> itr = Iterators.consumingIterator(toUpdate.values().iterator());
-                                while (itr.hasNext()) {
-                                    itr.next().setException(t);
+                                    Range<Long> range = upper.isPresent() ? Range.openClosed(lower, upper.get()) : Range.atLeast(lower);
+                                    values.put(range, t);
+                                    
+                                    NavigableMap<Long, Lookup> toUpdate = lookups.subMap(range.lowerEndpoint(), false, range.upperEndpoint(), true);
+                                    Iterator<Lookup> itr = Iterators.consumingIterator(toUpdate.values().iterator());
+                                    while (itr.hasNext()) {
+                                        itr.next().setException(t);
+                                    }
                                 }
                             }
                         }
@@ -601,7 +612,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 assert (log != null);
                 ZNodeName key = ZNodeName.fromString(version.toString());
                 Map.Entry<ZNodeName, ControlZNode<?>> prev;
-                for (prev = log.lowerEntry(key); prev != null; key = prev.getKey()) {
+                for (prev = log.lowerEntry(key); (prev != null) && (prev.getValue() instanceof ControlSchema.Safari.Volumes.Volume.Log.Version); key = prev.getKey()) {
                     ControlSchema.Safari.Volumes.Volume.Log.Version versionNode = (ControlSchema.Safari.Volumes.Volume.Log.Version) prev.getValue();
                     ControlSchema.Safari.Volumes.Volume.Log.Version.State stateNode = versionNode.state();
                     if ((stateNode == null) || (stateNode.data().stamp() < 0L)) {
@@ -700,12 +711,9 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                                 }
                             }
                             Lookup lookup = lookups.get(version);
-                            if (lookup != null) {
-                                return lookup;
+                            if (lookup == null) {
+                                lookup = new Lookup(version, SettableFuturePromise.<AssignedVolumeBranches>create());
                             }
-                            lookup = new Lookup(version, SettableFuturePromise.<AssignedVolumeBranches>create());
-                            lookups.put(version, lookup);
-                            lookup.addListener(lookup, SameThreadExecutor.getInstance());
                             return lookup;
                         } finally {
                             lock.writeLock().unlock();
@@ -761,9 +769,11 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 try {
                     if (t instanceof NonResidentVolumeException) {
                         UnsignedLong version = ((NonResidentVolumeException) t).getVersion();
-                        Lookup lookup = lookups.remove(version);
-                        if (lookup != null) {
-                            lookup.setException(t);
+                        if (version != null) {
+                            Lookup lookup = lookups.remove(version);
+                            if (lookup != null) {
+                                lookup.setException(t);
+                            }
                         }
                     }
                 } finally {
@@ -783,27 +793,28 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 public Lookup(UnsignedLong key, Promise<AssignedVolumeBranches> delegate) {
                     this.delegate = delegate;
                     this.key = key;
+                    lookups.put(key, this);
+                    addListener(this, SameThreadExecutor.getInstance());
                 }
                 
                 @Override
                 public void run() {
-                    if (! isDone()) {
-                        return;
-                    }
-                    lock.writeLock().lock();
-                    try {
-                        Lookup v = lookups.remove(key);
-                        if ((v != this) && !v.isDone()) {
-                            try {
-                                v.set(get());
-                            } catch (ExecutionException e) {
-                                v.setException(e.getCause());
-                            } catch (InterruptedException e) {
-                                throw new AssertionError(e);
+                    if (isDone()) {
+                        lock.writeLock().lock();
+                        try {
+                            Lookup v = lookups.remove(key);
+                            if ((v != this) && !v.isDone()) {
+                                try {
+                                    v.set(get());
+                                } catch (ExecutionException e) {
+                                    v.setException(e.getCause());
+                                } catch (InterruptedException e) {
+                                    throw new AssertionError(e);
+                                }
                             }
+                        } finally {
+                            lock.writeLock().unlock();
                         }
-                    } finally {
-                        lock.writeLock().unlock();
                     }
                 }
 
@@ -834,7 +845,7 @@ public final class VersionedVolumeCacheService extends AbstractIdleService {
                 }
             }
             
-            protected final class BranchesListener extends ToStringListenableFuture<AssignedVolumeBranches> implements Runnable {
+            protected final class BranchesListener extends SimpleToStringListenableFuture<AssignedVolumeBranches> implements Runnable {
 
                 private final VersionedId version;
                 

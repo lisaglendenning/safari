@@ -3,7 +3,6 @@ package edu.uw.zookeeper.safari.region;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -18,13 +17,10 @@ import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
-import com.google.common.base.Supplier;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
@@ -38,12 +34,12 @@ import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.WatchMatcher;
-import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
@@ -54,10 +50,9 @@ import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.schema.VolumesSchemaRequests;
 import edu.uw.zookeeper.safari.storage.StorageClientService;
-import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.volume.RegionAndLeaves;
 
-public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<ControlZNode<?>> implements Function<ControlSchema.Safari.Volumes.Volume.Log.Version.State, Optional<VolumesLeaseManager.VolumeLeaseManager>> {
+public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<ControlZNode<?>> implements Function<ControlSchema.Safari.Volumes.Volume.Log.Version.State, Optional<VolumesLeaseManager.VolumeLeaseManager>> {
 
     public static VolumesLeaseManager defaults(
             final Identifier region,
@@ -66,8 +61,7 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
             ControlClientService control,
             StorageClientService storage,
             Configuration configuration) {
-        final AsyncFunction<VersionedId, Boolean> voteOnRenewal = voteOnRenewal(service, control);
-        final AsyncFunction<Identifier, Boolean> noSnapshot = noSnapshot(service, storage);
+        final VolumeLeaseRenewer renewer = VolumeLeaseRenewer.listen(service, control, storage);
         return listen(
                 Predicates.equalTo(region), 
                 Functions.constant(
@@ -75,77 +69,12 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
                                 ConfigurableLeaseDuration.fromConfiguration(
                                         configuration)
                                     .value(TimeUnit.MILLISECONDS))),
-                new AsyncFunction<VersionedId, Boolean>() {
-                    @Override
-                    public ListenableFuture<Boolean> apply(
-                            final VersionedId volume)
-                            throws Exception {
-                        return Futures.transform(voteOnRenewal.apply(volume), 
-                                new AsyncFunction<Boolean,Boolean>() {
-                                    @Override
-                                    public ListenableFuture<Boolean> apply(
-                                            Boolean input) throws Exception {
-                                        if (input.booleanValue()) {
-                                            return noSnapshot.apply(volume.getValue());
-                                        } else {
-                                            return Futures.immediateFuture(input);
-                                        }
-                                    }
-                        });
-                    }
-                },
+                renewer,
                 scheduler,
                 service, 
                 control);
     }
     
-    public static AsyncFunction<VersionedId, Boolean> voteOnRenewal(
-            final Service service,
-            final ControlClientService control) {
-        final Function<Optional<?>, Boolean> isAbsent = new Function<Optional<?>, Boolean>() {
-            @Override
-            public Boolean apply(Optional<?> input) {
-                return !input.isPresent();
-            }
-        };
-        final AsyncFunction<VersionedId, Boolean> isCommitted = new AsyncFunction<VersionedId, Boolean>() {
-            @Override
-            public ListenableFuture<Boolean> apply(
-                    final VersionedId volume) throws Exception {
-                return Futures.transform(
-                        VolumeEntryAcceptor.defaults(
-                            volume, 
-                            service, 
-                            control),
-                        isAbsent,
-                        SameThreadExecutor.getInstance());
-            }
-        };
-        return isCommitted;
-    }
-    
-    public static AsyncFunction<Identifier, Boolean> noSnapshot(
-            final Service service,
-            final StorageClientService storage) {
-        return new AsyncFunction<Identifier, Boolean>() {
-            @Override
-            public ListenableFuture<Boolean> apply(Identifier volume)
-                    throws Exception {
-                final ZNodePath path = StorageSchema.Safari.Volumes.Volume.Snapshot.pathOf(volume);
-                return Watchers.AbsenceWatcher.listen(
-                        path,
-                        new Supplier<Boolean>(){
-                            @Override
-                            public Boolean get() {
-                                return Boolean.TRUE;
-                            }
-                }, 
-                storage.materializer(), 
-                service, 
-                storage.notifications());
-            }
-        };
-    }
     
     public static VolumesLeaseManager listen(
             Predicate<Identifier> isAssigned,
@@ -247,7 +176,7 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
         return Optional.absent();
     }
     
-    public class VolumeLeaseManager extends Service.Listener implements Runnable {
+    public final class VolumeLeaseManager extends Service.Listener implements Runnable {
         
         protected final Logger logger;
         protected final VolumesSchemaRequests<?>.VolumeSchemaRequests.VolumeVersionSchemaRequests version;
@@ -300,6 +229,7 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
                     next = call();
                 } catch (Exception e) {
                     // TODO
+                    logger.warn("", e);
                     throw new UnsupportedOperationException(e);
                 }
                 if (next.isPresent()) {
@@ -323,6 +253,11 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
             }
         }
         
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this).add("volume", getVolume()).toString();
+        }
+
         protected ListenableFuture<Boolean> doLease() {
             try {
                 return doLease.apply(getVolume());
@@ -394,12 +329,7 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
             return Optional.absent();
         }
         
-        @Override
-        public String toString() {
-            return Objects.toStringHelper(this).add("volume", getVolume()).toString();
-        }
-        
-        protected class LeaseRequestListener extends ForwardingListenableFuture<Lease> implements Callable<Optional<Lease>>, Runnable {
+        protected class LeaseRequestListener extends ToStringListenableFuture<Lease> implements Callable<Optional<Lease>>, Runnable {
 
             protected final SubmittedRequests<Records.Request,?> requests;
             protected final CallablePromiseTask<LeaseRequestListener,Lease> promise;
@@ -414,37 +344,36 @@ public class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<Contr
             
             @Override
             public Optional<Lease> call() throws Exception {
-                List<? extends Operation.ProtocolResponse<?>> responses = requests.get();
-                for (int i=0; i<requests.requests().size(); ++i) {
-                    Records.Request request = requests.requests().get(i);
-                    Records.Response response = responses.get(i).record();
-                    switch (request.opcode()) {
-                    case CREATE:
-                    case CREATE2:
-                        Operations.maybeError(response, KeeperException.Code.NODEEXISTS);
-                        break;
-                    default:
-                        Operations.unlessError(response);
-                        break;
+                if (requests.isDone()) {
+                    List<? extends Operation.ProtocolResponse<?>> responses = requests.get();
+                    for (int i=0; i<requests.requests().size(); ++i) {
+                        Records.Request request = requests.requests().get(i);
+                        Records.Response response = responses.get(i).record();
+                        switch (request.opcode()) {
+                        case CREATE:
+                        case CREATE2:
+                            Operations.maybeError(response, KeeperException.Code.NODEEXISTS);
+                            break;
+                        default:
+                            Operations.unlessError(response);
+                            break;
+                        }
                     }
+                    return Optional.of(updateLease().get());
                 }
-                return Optional.of(updateLease().get());
+                return Optional.absent();
             }
 
             @Override
             public void run() {
                 if (!isDone()) {
                     delegate().run();
-                } else {
+                } else if (!isCancelled()) {
                     Lease lease;
                     try {
                         lease = get();
-                    } catch (InterruptedException e) {
-                        throw new AssertionError(e);
-                    } catch (ExecutionException e) {
-                        // TODO Auto-generated catch block
-                        logger.warn("", e);
-                        throw Throwables.propagate(e);
+                    } catch (Exception e) {
+                        return;
                     }
                     if (logger.isInfoEnabled()) {
                         for (Records.Request request: requests.requests()) {

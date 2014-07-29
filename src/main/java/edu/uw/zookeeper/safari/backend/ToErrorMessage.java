@@ -14,28 +14,28 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.safari.SafariException;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 
 public final class ToErrorMessage extends ForwardingListenableFuture<ShardedServerResponseMessage<?>> implements Callable<Optional<ShardedResponseMessage<?>>>, Runnable {
     
     public static ListenableFuture<ShardedResponseMessage<?>> submit(
-            ClientExecutor<? super ShardedClientRequestMessage<?>, ShardedServerResponseMessage<?>, ?> client,
-            ShardedClientRequestMessage<?> request) {
+            ClientExecutor<? super ShardedRequestMessage<?>, ShardedServerResponseMessage<?>, ?> client,
+            ShardedRequestMessage<?> request) {
         Promise<ShardedResponseMessage<?>> promise = SettableFuturePromise.create();
         ListenableFuture<ShardedServerResponseMessage<?>> response = client.submit(request);
         new ToErrorMessage(request, response, promise);
         return promise;
     }
     
-    private final ShardedClientRequestMessage<?> request;
+    private final ShardedRequestMessage<?> request;
     private final ListenableFuture<ShardedServerResponseMessage<?>> future;
     private final CallablePromiseTask<ToErrorMessage, ShardedResponseMessage<?>> delegate;
     
     protected ToErrorMessage(
-            ShardedClientRequestMessage<?> request,
+            ShardedRequestMessage<?> request,
             ListenableFuture<ShardedServerResponseMessage<?>> response,
             Promise<ShardedResponseMessage<?>> promise) {
         this.request = request;

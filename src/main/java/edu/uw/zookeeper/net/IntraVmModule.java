@@ -3,12 +3,14 @@ package edu.uw.zookeeper.net;
 import io.netty.buffer.ByteBuf;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.Executor;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.Factory;
+import edu.uw.zookeeper.net.intravm.AbstractIntraVmEndpointFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmCodecEndpointFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
 import edu.uw.zookeeper.net.intravm.IntraVmFactory;
@@ -37,9 +39,7 @@ public class IntraVmModule extends AbstractModule {
     @Provides @Singleton
     public IntraVmNetModule getIntraVmNetModule(
             IntraVmFactory<ByteBuf,ByteBuf> factory) {
-        return IntraVmNetModule.create(
-                IntraVmCodecEndpointFactory.unpooled(),
-                IntraVmEndpointFactory.sameThreadExecutors(),
+        return newIntraVmNetModule(
                 factory);
     }
 
@@ -47,5 +47,17 @@ public class IntraVmModule extends AbstractModule {
     public IntraVmFactory<ByteBuf,ByteBuf> getIntraVmFactory(
             Factory<InetSocketAddress> addresses) {
         return IntraVmFactory.newInstance(addresses);
+    }
+    
+    protected IntraVmNetModule newIntraVmNetModule(
+            IntraVmFactory<ByteBuf,ByteBuf> factory) {
+        return IntraVmNetModule.create(
+                IntraVmCodecEndpointFactory.unpooled(),
+                newExecutor(),
+                factory);
+    }
+
+    protected Factory<? extends Executor> newExecutor() {
+        return AbstractIntraVmEndpointFactory.sameThreadExecutors();
     }
 }

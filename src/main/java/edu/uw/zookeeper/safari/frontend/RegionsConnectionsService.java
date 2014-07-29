@@ -1,7 +1,9 @@
 package edu.uw.zookeeper.safari.frontend;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
@@ -13,10 +15,13 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
@@ -26,6 +31,8 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.FixedQuery;
+import edu.uw.zookeeper.client.PathToRequests;
+import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.LockableZNodeCache;
@@ -41,10 +48,14 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.Call;
+import edu.uw.zookeeper.common.CallablePromiseTask;
+import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
+import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
@@ -98,8 +109,9 @@ public class RegionsConnectionsService extends ServiceListenersService implement
             Materializer<ControlZNode<?>,?> control,
             WatchListeners watch,
             Iterable<? extends Service.Listener> listeners) {
+        final Logger logger = LogManager.getLogger(RegionsConnectionsService.class);
         AsyncFunction<Identifier, Identifier> selector = 
-                SelectSelfTask.defaults(myId, myRegion, control);
+                SelectSelfTask.defaults(myId, myRegion, control, logger);
         RegionsConnectionsService instance = new RegionsConnectionsService(
                 myRegion,
                 selector,
@@ -241,9 +253,10 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         public static SelectSelfTask defaults(
                 Identifier myId,
                 Identifier myRegion,
-                Materializer<ControlZNode<?>,?> materializer) {
+                Materializer<ControlZNode<?>,?> materializer,
+                Logger logger) {
             return new SelectSelfTask(myId, myRegion, 
-                    SelectMemberTask.defaults(materializer));
+                    SelectMemberTask.defaults(materializer, logger));
         }
         
         protected final Identifier myId;
@@ -270,9 +283,12 @@ public class RegionsConnectionsService extends ServiceListenersService implement
     
     public static class SelectMemberTask<T> implements AsyncFunction<Identifier, Identifier> {
 
-        public static SelectMemberTask<List<Identifier>> defaults(Materializer<ControlZNode<?>,?> materializer) {
-            return new SelectMemberTask<List<Identifier>>(getRegionMembers(materializer),
-                    SelectPresentMemberTask.defaults(materializer));
+        public static SelectMemberTask<List<Identifier>> defaults(
+                Materializer<ControlZNode<?>,?> materializer,
+                Logger logger) {
+            return new SelectMemberTask<List<Identifier>>(
+                    getRegionMembers(materializer),
+                    SelectPresentMemberTask.random(materializer, logger));
         }
         
         protected final CachedFunction<Identifier, ? extends T> memberLookup;
@@ -298,21 +314,24 @@ public class RegionsConnectionsService extends ServiceListenersService implement
 
     public static class SelectPresentMemberTask implements AsyncFunction<List<Identifier>, Identifier> {
 
-        public static SelectPresentMemberTask defaults(
-                ClientExecutor<? super Records.Request, ?, ?> client) {
+        public static SelectPresentMemberTask random(
+                ClientExecutor<? super Records.Request, ?, ?> client,
+                Logger logger) {
             return new SelectPresentMemberTask(
                     client,
-                    SelectRandom.<Identifier>create());
+                    SelectRandom.<Identifier>create(),
+                    logger);
         }
 
         protected final Logger logger;
         protected final ClientExecutor<? super Records.Request, ?, ?> client;
         protected final Function<List<Identifier>, Identifier> selector;
         
-        public SelectPresentMemberTask(
+        protected SelectPresentMemberTask(
                 ClientExecutor<? super Records.Request, ?, ?> client,
-                Function<List<Identifier>, Identifier> selector) {
-            this.logger = LogManager.getLogger(getClass());
+                Function<List<Identifier>, Identifier> selector,
+                Logger logger) {
+            this.logger = logger;
             this.client = client;
             this.selector = selector;
         }
@@ -321,51 +340,84 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         public ListenableFuture<Identifier> apply(
                 List<Identifier> members) {
             logger.debug("Selecting from region members {}", members);
-            List<ListenableFuture<? extends Operation.ProtocolResponse<?>>> presence = Lists.newArrayListWithCapacity(members.size());
-            Operations.Requests.Exists exists = Operations.Requests.exists();
-            for (Identifier member: members) {
-                presence.add(client.submit(exists.setPath(ControlSchema.Safari.Peers.Peer.Presence.pathOf(member)).build()));
-            }
-            ListenableFuture<List<Operation.ProtocolResponse<?>>> future = Futures.successfulAsList(presence);
-            return Futures.transform(future, 
-                    SelectPresentMemberFunction.defaults(members, selector), 
-                    SameThreadExecutor.getInstance());
+            return SelectPresentMemberFunction.submit(members, selector, client, logger);
         }
     }
     
-    public static class SelectPresentMemberFunction implements Function<List<Operation.ProtocolResponse<?>>, Identifier> {
+    public static final class SelectPresentMemberFunction<O extends Operation.ProtocolResponse<?>> extends ForwardingListenableFuture<List<O>> implements Callable<Optional<Identifier>>, Runnable {
 
-        public static SelectPresentMemberFunction defaults(
+        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Identifier> submit(
                 List<Identifier> members,
-                Function<List<Identifier>, Identifier> selector) {
-            return new SelectPresentMemberFunction(members, selector);
+                Function<List<Identifier>, Identifier> selector,
+                ClientExecutor<? super Records.Request, O, ?> client,
+                Logger logger) {
+            final Promise<Identifier> promise = SettableFuturePromise.create();
+            @SuppressWarnings("unchecked")
+            final PathToRequests toRequests = PathToRequests.forRequests(Operations.Requests.sync(), Operations.Requests.exists());
+            final ImmutableList.Builder<Records.Request> requests = ImmutableList.builder();
+            for (Identifier member: members) {
+                requests.addAll(toRequests.apply(ControlSchema.Safari.Peers.Peer.Presence.pathOf(member)));
+            }
+            new SelectPresentMemberFunction<O>(
+                    members, 
+                    selector, 
+                    SubmittedRequests.submit(client, requests.build()), 
+                    logger, 
+                    promise);
+            return promise;
         }
         
-        protected final Logger logger;
-        protected final List<Identifier> members;
-        protected final Function<List<Identifier>, Identifier> selector;
+        private final Logger logger;
+        private final List<Identifier> members;
+        private final Function<List<Identifier>, Identifier> selector;
+        private final SubmittedRequests<? extends Records.Request,O> future;
+        private final CallablePromiseTask<?,Identifier> delegate;
         
-        public SelectPresentMemberFunction(
+        protected SelectPresentMemberFunction(
                 List<Identifier> members,
-                Function<List<Identifier>, Identifier> selector) {
-            this.logger = LogManager.getLogger(getClass());
+                Function<List<Identifier>, Identifier> selector,
+                SubmittedRequests<? extends Records.Request,O> future,
+                Logger logger,
+                Promise<Identifier> promise) {
+            this.future = future;
+            this.logger = logger;
             this.members = members;
             this.selector = selector;
+            this.delegate = CallablePromiseTask.create(this, promise);
+            addListener(this, SameThreadExecutor.getInstance());
+        }
+
+        @Override
+        public void run() {
+            delegate.run();
+        }
+
+        @Override
+        public Optional<Identifier> call() throws Exception {
+            if (isDone()) {
+                final List<O> responses = get();
+                final List<Identifier> living = Lists.newArrayListWithCapacity(members.size());
+                Iterator<O> response = responses.iterator();
+                for (Identifier member: members) {
+                    if (!Operations.maybeError(Iterators.get(response, 1).record(), KeeperException.Code.NONODE).isPresent()) {
+                        living.add(member);
+                    }
+                }
+                final Identifier selected = selector.apply(living);
+                logger.info("Selected {} from live region members: {}", selected, living);
+                return Optional.of(selected);
+            }
+            return Optional.absent();
         }
         
         @Override
-        public Identifier apply(List<Operation.ProtocolResponse<?>> presence) {
-            List<Identifier> living = Lists.newArrayListWithCapacity(members.size());
-            for (int i=0; i<members.size(); ++i) {
-                try {
-                    if (Boolean.TRUE.equals(presence.get(i))) {
-                        living.add(members.get(i));
-                    }
-                } catch (Exception e) {}
-            }
-            Identifier selected = selector.apply(living);
-            logger.info("Selected {} from live region members: {}", selected, living);
-            return (selected == null) ? null : selected;
+        public String toString() {
+            return ToStringListenableFuture.toString(this);
+        }
+
+        @Override
+        protected ListenableFuture<List<O>> delegate() {
+            return future;
         }
     }
     

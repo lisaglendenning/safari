@@ -4,11 +4,13 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.data.LockableZNodeCache;
@@ -24,6 +26,7 @@ import edu.uw.zookeeper.safari.Identifier;
 
 public class LookupEntity<O extends Operation.ProtocolResponse<?>,V,T extends ControlZNode<V>,U extends ControlZNode.IdentifierControlZNode,C extends ControlZNode.EntityDirectoryZNode<V,T,U>> extends EntityLookup<O,V,T,U,C> implements Callable<ListenableFuture<Optional<Identifier>>> {
 
+    @SuppressWarnings("unchecked")
     public static <O extends Operation.ProtocolResponse<?>,V,T extends ControlZNode<V>, U extends ControlZNode.IdentifierControlZNode,C extends ControlZNode.EntityDirectoryZNode<V,T,U>>
     ListenableFuture<Optional<Identifier>> sync(
             V value,
@@ -32,10 +35,11 @@ public class LookupEntity<O extends Operation.ProtocolResponse<?>,V,T extends Co
         LookupEntity<O,V,T,U,C> instance = create(value, type, materializer);
         ZNodePath path = instance.directory();
         return Futures.transform(
-                SubmittedRequests.submitRequests(
+                SubmittedRequests.submit(
                         materializer,
-                        Operations.Requests.sync().setPath(path).build(),
-                        Operations.Requests.getChildren().setPath(path).build()), 
+                        PathToRequests.forRequests(
+                                Operations.Requests.sync(),
+                                Operations.Requests.getChildren()).apply(path)), 
                 instance.new Callback(), 
                 SameThreadExecutor.getInstance());
     }
@@ -59,6 +63,7 @@ public class LookupEntity<O extends Operation.ProtocolResponse<?>,V,T extends Co
     @Override
     public ListenableFuture<Optional<Identifier>> call() throws Exception {
         final LockableZNodeCache<ControlZNode<?>,?,?> cache = materializer().cache();
+        List<Records.Request> requests = ImmutableList.of();
         cache.lock().readLock().lock();
         try {
             C directory = (C) cache.cache().get(directory());
@@ -76,13 +81,10 @@ public class LookupEntity<O extends Operation.ProtocolResponse<?>,V,T extends Co
                     T value = (T) entity.get(valueName);
                     if ((value == null) || (value.data().stamp() < 0L)) {
                         ZNodePath path = entity.path().join(valueName);
-                        return Futures.transform(
-                                SubmittedRequests.submitRequests(
-                                    materializer(), 
-                                    Operations.Requests.sync().setPath(path).build(), 
-                                    Operations.Requests.getData().setPath(path).build()),
-                                new Callback(),
-                                SameThreadExecutor.getInstance());
+                        requests = PathToRequests.forRequests(
+                                Operations.Requests.sync(),
+                                Operations.Requests.getData()).apply(path);
+                        break;
                     } else {
                         if (value().equals(value.data().get())) {
                             return Futures.immediateFuture(Optional.of(entity.name()));
@@ -94,33 +96,37 @@ public class LookupEntity<O extends Operation.ProtocolResponse<?>,V,T extends Co
                     break;
                 }
             } while (true);
-            
-            // fall back to a linear scan
-            List<Records.Request> requests = Lists.newLinkedList();
-            for (ControlZNode<?> entity: directory.values()) {
-                T value = (T) entity.get(valueName);
-                if ((value == null) || (value.data().stamp() < 0L)) {
-                    ZNodePath path = entity.path().join(valueName);
-                    requests.add(Operations.Requests.sync().setPath(path).build()); 
-                    requests.add(Operations.Requests.getData().setPath(path).build());
-                } else {
-                    if (value().equals(value.data().get())) {
-                        return Futures.immediateFuture(Optional.of(((U) entity).name()));
+
+            if (requests.isEmpty()) {
+                // fall back to a linear scan
+                requests = Lists.newLinkedList();
+                PathToRequests toRequests = PathToRequests.forRequests(
+                        Operations.Requests.sync(),
+                        Operations.Requests.getData());
+                for (ControlZNode<?> entity: directory.values()) {
+                    T value = (T) entity.get(valueName);
+                    if ((value == null) || (value.data().stamp() < 0L)) {
+                        ZNodePath path = entity.path().join(valueName);
+                        requests.addAll(toRequests.apply(path)); 
+                    } else {
+                        if (value().equals(value.data().get())) {
+                            return Futures.immediateFuture(Optional.of(((U) entity).name()));
+                        }
                     }
                 }
             }
-            
-            if (requests.isEmpty()) {
-                return Futures.immediateFuture(Optional.<Identifier>absent());
-            } else {
-                return Futures.transform(
-                        SubmittedRequests.submit(
-                                materializer(), requests),
-                        new Callback(),
-                        SameThreadExecutor.getInstance());
-            }
         } finally {
             cache.lock().readLock().unlock();
+        }
+        
+        if (requests.isEmpty()) {
+            return Futures.immediateFuture(Optional.<Identifier>absent());
+        } else {
+            return Futures.transform(
+                    SubmittedRequests.submit(
+                            materializer(), requests),
+                    new Callback(),
+                    SameThreadExecutor.getInstance());
         }
     }
     

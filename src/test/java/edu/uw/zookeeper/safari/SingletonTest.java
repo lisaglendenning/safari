@@ -3,16 +3,17 @@ package edu.uw.zookeeper.safari;
 import static org.junit.Assert.*;
 
 import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Key;
@@ -39,16 +40,16 @@ import edu.uw.zookeeper.safari.frontend.Frontend;
 @RunWith(JUnit4.class)
 public class SingletonTest extends AbstractMainTest {
 
-    @Test(timeout=12000)
+    @Test(timeout=18000)
     public void testStartAndStop() throws Exception {
         final long pause = 4000L;
-        final List<Component<?>> components = newSingletonServerAndClient();
+        final List<Component<?>> components = SafariModules.newSingletonSafari();
         pauseWithComponents(components, pause);
     }
 
-    @Test(timeout=16000)
+    @Test(timeout=20000)
     public void testClientConnect() throws Exception {
-        final long pause = 4000L;
+        final long pause = 6000L;
         final List<Component<?>> components = newSingletonServerAndClient();
         pauseWithComponents(components, pause);
     }
@@ -63,8 +64,7 @@ public class SingletonTest extends AbstractMainTest {
                 pause);
     }
 
-    @Ignore
-    @Test(timeout=20000)
+    @Test(timeout=30000)
     public void testClientPipeline() throws Exception {
         final int iterations = 32;
         final int logInterval = 8;
@@ -73,13 +73,17 @@ public class SingletonTest extends AbstractMainTest {
         final Callable<Void> callable = new Callable<Void>() {
             @Override
             public Void call() throws Exception {
+                final Queue<ListenableFuture<Message.ServerResponse<?>>> futures = Queues.newArrayDeque();
                 final Generator<? extends Records.Request> requests = Generators.constant(Operations.Requests.exists().setPath(ZNodePath.root()).build());
                 final CountingGenerator<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> operations = 
                         CountingGenerator.create(iterations, logInterval, 
                                 SubmitGenerator.create(requests, client.injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor()), logger);
                 while (operations.hasNext()) {
-                     Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>> operation = operations.next();
-                     assertFalse(operation.second().get(5000L, TimeUnit.MILLISECONDS).record() instanceof Operation.Error);
+                     futures.add(operations.next().second());
+                }
+                ListenableFuture<Message.ServerResponse<?>> response;
+                while ((response = futures.poll()) != null) {
+                    assertFalse(response.get(5000L, TimeUnit.MILLISECONDS).record() instanceof Operation.Error);
                 }
                 return null;
             }
@@ -91,8 +95,7 @@ public class SingletonTest extends AbstractMainTest {
                 callable);
     }
 
-    @Ignore
-    @Test(timeout=30000)
+    @Test(timeout=40000)
     public void testClientsPipeline() throws Exception {
         final int nclients = 2;
         final int iterations = 32;

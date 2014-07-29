@@ -26,6 +26,7 @@ import edu.uw.zookeeper.jackson.databind.ResponseRecordSerializer;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.SafariException;
 import edu.uw.zookeeper.safari.Version;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntry;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryDeserializer;
@@ -82,7 +83,9 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 .add(ProtocolRequestSerializer.create())
                 .add(ProtocolResponseHeaderSerializer.create())
                 .add(BoundVolumeOperatorSerializer.create())
-                .add(VolumeLogEntrySerializer.create());
+                .add(VolumeLogEntrySerializer.create())
+                .add(SafariExceptionSerializer.create())
+                .add(ShardedResponseMessageSerializer.create());
             return serializers.build();
         }
 
@@ -100,7 +103,9 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 .put(Message.ClientRequest.class, ProtocolRequestDeserializer.create())
                 .put(Message.ServerResponse.class, ProtocolResponseHeaderDeserializer.create())
                 .put(BoundVolumeOperator.class, BoundVolumeOperatorDeserializer.create())
-                .put(VolumeLogEntry.class, VolumeLogEntryDeserializer.create());
+                .put(VolumeLogEntry.class, VolumeLogEntryDeserializer.create())
+                .put(SafariException.class, SafariExceptionDeserializer.create())
+                .put(ShardedResponseMessage.class, ShardedResponseMessageDeserializer.create());
             return deserializers.build();
         }
         

@@ -13,6 +13,7 @@ import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
@@ -20,7 +21,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.AbstractModule;
@@ -32,6 +32,7 @@ import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.DeleteSubtree;
+import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.QueryZKLeader;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.client.SubmittedRequest;
@@ -46,6 +47,8 @@ import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.EmptyZNodeLabel;
 import edu.uw.zookeeper.data.LockableZNodeCache;
@@ -162,7 +165,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                             } else {
                                 return Futures.transform(
                                         Futures.transform(
-                                            regionToEnsemble.apply(region),
+                                            regionToEnsemble.apply(input),
                                             ensembleToLeader,
                                             SameThreadExecutor.getInstance()),
                                         clients,
@@ -572,7 +575,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
         }
     }
     
-    protected abstract static class OperationStep<V> extends ForwardingListenableFuture<V> implements Runnable {
+    protected abstract static class OperationStep<V> extends ToStringListenableFuture<V> implements Runnable {
 
         protected final PromiseTask<VolumeOperationDirective, Boolean> request;
         protected boolean hasRun;
@@ -765,7 +768,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                     List<? extends Operation.ProtocolResponse<?>> input) throws Exception {
                 for (Operation.ProtocolResponse<?> response: input) {
                     if (response.record() instanceof IMultiResponse) {
-                        Operations.unlessMultiError((IMultiResponse) response.record());
+                        Operations.maybeMultiError((IMultiResponse) response.record(), KeeperException.Code.NODEEXISTS);
                     } else {
                         Operations.unlessError(response.record());
                     }
@@ -883,7 +886,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
             cache.lock().readLock().lock();
             try {
                 ControlZNode<?> node = cache.cache().get(path());
-                if (node != null) {
+                if ((node != null) && (node.data().stamp() > 0L)) {
                     return Optional.of((UnsignedLong) node.data().get());
                 }
             } finally {
@@ -893,120 +896,150 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
         }
     }
     
-    public static final class GetXomega<O extends Operation.ProtocolResponse<?>> extends ForwardingListenableFuture<List<O>> implements Callable<Optional<Optional<UnsignedLong>>> {
+    public static final class GetXomega extends SimpleToStringListenableFuture<Optional<UnsignedLong>> {
         
         public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Optional<UnsignedLong>> create(
                 final VersionedId volume,
                 final Materializer<ControlZNode<?>,O> materializer) {
-            final CachedXomega cached = CachedXomega.create(volume, materializer.cache());
-            final ZNodePath path = cached.path();
-            @SuppressWarnings("unchecked")
-            final SubmittedRequests<? extends Records.Request, O> query = SubmittedRequests.submitRequests(
-                    materializer, 
-                    Operations.Requests.sync().setPath(path).build(), 
-                    Operations.Requests.getData().setPath(path).build());
-            CallablePromiseTask<GetXomega<O>,Optional<UnsignedLong>> task = CallablePromiseTask.create(
-                    new GetXomega<O>(query, cached), SettableFuturePromise.<Optional<UnsignedLong>>create());
-            task.task().addListener(task, SameThreadExecutor.getInstance());
-            return task;
+            return new GetXomega(Call.create(volume, materializer));
         }
-        
-        private final SubmittedRequests<? extends Records.Request, O> query;
-        private final CachedXomega cached;
         
         protected GetXomega(
-                SubmittedRequests<? extends Records.Request, O> query,
-                CachedXomega cached) {
-            this.cached = cached;                
-            this.query = query;
+                ListenableFuture<Optional<UnsignedLong>> future) { 
+            super(future);
         }
         
-        @Override
-        public Optional<Optional<UnsignedLong>> call() throws Exception {
-            if (isDone()) {
-                List<O> responses = get();
-                int index;
-                Optional<Operation.Error> error = null;
-                for (index=0; index<responses.size(); ++index) {
-                    error = Operations.maybeError(responses.get(index).record(), KeeperException.Code.NONODE);
-                }
-                Optional<UnsignedLong> xomega;
-                if (error.isPresent()) {
-                    xomega = Optional.<UnsignedLong>absent();
-                } else {
-                    xomega = cached.call();
-                }
-                return Optional.of(xomega);
-            }
-            return Optional.absent();
-        }
+        protected static class Call<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Callable<Optional<Optional<UnsignedLong>>> {
 
-        @Override
-        protected ListenableFuture<List<O>> delegate() {
-            return query;
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Optional<UnsignedLong>> create(
+                    final VersionedId volume,
+                    final Materializer<ControlZNode<?>,O> materializer) {
+                final CachedXomega cached = CachedXomega.create(volume, materializer.cache());
+                final ZNodePath path = cached.path();
+                @SuppressWarnings("unchecked")
+                final SubmittedRequests<? extends Records.Request, O> query = SubmittedRequests.submit(
+                        materializer, 
+                        PathToRequests.forRequests(
+                                Operations.Requests.sync(),
+                                Operations.Requests.getData()).apply(path));
+                CallablePromiseTask<Call<O>,Optional<UnsignedLong>> task = CallablePromiseTask.create(
+                        new Call<O>(cached, query), 
+                        SettableFuturePromise.<Optional<UnsignedLong>>create());
+                task.task().addListener(task, SameThreadExecutor.getInstance());
+                return task;
+            }
+            
+            private final CachedXomega cached;
+            
+            protected Call(
+                    CachedXomega cached,
+                    ListenableFuture<List<O>> future) {
+                super(future);
+                this.cached = cached;
+            }
+            
+            @Override
+            public Optional<Optional<UnsignedLong>> call() throws Exception {
+                if (isDone()) {
+                    List<O> responses = get();
+                    int index;
+                    Optional<Operation.Error> error = null;
+                    for (index=0; index<responses.size(); ++index) {
+                        error = Operations.maybeError(responses.get(index).record(), KeeperException.Code.NONODE);
+                    }
+                    Optional<UnsignedLong> xomega;
+                    if (error.isPresent()) {
+                        xomega = Optional.<UnsignedLong>absent();
+                    } else {
+                        xomega = cached.call();
+                    }
+                    return Optional.of(xomega);
+                }
+                return Optional.absent();
+            }
         }
     }
 
-    public static final class CreateXomega implements AsyncFunction<UnsignedLong,UnsignedLong> {
-        
-        public static CreateXomega create(
+    public static final class CreateXomega extends SimpleToStringListenableFuture<UnsignedLong> {
+
+        public static Create creator(
                 final VersionedId volume,
                 final Materializer<ControlZNode<?>,?> materializer) {
-            final CachedXomega cached = CachedXomega.create(volume, materializer.cache());
-            return new CreateXomega(cached, materializer);
+            return Create.create(volume, materializer);
         }
         
-        private final CachedXomega cached;
-        private final Materializer<ControlZNode<?>,?> materializer;
-        
-        protected CreateXomega(
-                CachedXomega cached,
-                Materializer<ControlZNode<?>,?> materializer) {
-            this.cached = cached;
-            this.materializer = materializer;
+        protected CreateXomega(ListenableFuture<UnsignedLong> future) {
+            super(future);
         }
         
-        @Override
-        public ListenableFuture<UnsignedLong> apply(final UnsignedLong input) throws Exception {
-            Optional<UnsignedLong> xomega = cached.call();
-            if (xomega.isPresent()) {
-                checkArgument(input.equals(xomega.get()));
-                return Futures.immediateFuture(input);
-            } else {
-                return Futures.transform(
-                        materializer.create(cached.path(), input).call(),
-                        new AsyncFunction<Operation.ProtocolResponse<?>, UnsignedLong>() {
-                            @Override
-                            public ListenableFuture<UnsignedLong> apply(Operation.ProtocolResponse<?> response) throws Exception {
-                                Operations.unlessError(response.record());
-                                return Futures.immediateFuture(input);
-                            }
-                        }, SameThreadExecutor.getInstance());
+        protected static class Create implements AsyncFunction<UnsignedLong,UnsignedLong> {
+
+            public static Create create(
+                    final VersionedId volume,
+                    final Materializer<ControlZNode<?>,?> materializer) {
+                final CachedXomega cached = CachedXomega.create(volume, materializer.cache());
+                return new Create(cached, materializer);
             }
+            
+            private final CachedXomega cached;
+            private final Materializer<ControlZNode<?>,?> materializer;
+
+            protected Create(
+                    CachedXomega cached,
+                    Materializer<ControlZNode<?>,?> materializer) {
+                this.cached = cached;
+                this.materializer = materializer;
+            }
+            
+            @Override
+            public CreateXomega apply(final UnsignedLong input) throws Exception {
+                Optional<UnsignedLong> xomega = cached.call();
+                ListenableFuture<UnsignedLong> future;
+                if (xomega.isPresent()) {
+                    checkArgument(input.equals(xomega.get()));
+                    future = Futures.immediateFuture(input);
+                } else {
+                    future = Futures.transform(
+                            materializer.create(cached.path(), input).call(),
+                            new AsyncFunction<Operation.ProtocolResponse<?>, UnsignedLong>() {
+                                @Override
+                                public ListenableFuture<UnsignedLong> apply(Operation.ProtocolResponse<?> response) throws Exception {
+                                    Operations.unlessError(response.record());
+                                    return Futures.immediateFuture(input);
+                                }
+                            }, SameThreadExecutor.getInstance());
+                }
+                return new CreateXomega(future);
+            }   
         }
     }
     
-    public static final class CommitSnapshot implements AsyncFunction<Operation.ProtocolResponse<?>, Boolean> {
+    public static final class CommitSnapshot extends SimpleToStringListenableFuture<Boolean> {
         
         public static ListenableFuture<Boolean> create(
                 final Identifier volume,
                 final ClientExecutor<? super Records.Request,?,?> client,
                 final ByteCodec<Object> codec) throws IOException {
             final ZNodePath path = StorageSchema.Safari.Volumes.Volume.Snapshot.Commit.pathOf(volume);
-            return Futures.transform(
+            return new CommitSnapshot(
+                    Futures.transform(
                     SubmittedRequest.submit(client, Operations.Requests.create().setPath(path).setData(codec.toBytes(Boolean.TRUE)).build()),
-                    new CommitSnapshot(),
-                    SameThreadExecutor.getInstance());
+                    CALLBACK,
+                    SameThreadExecutor.getInstance()));
         }
         
-        protected CommitSnapshot() {}
-
-        @Override
-        public ListenableFuture<Boolean> apply(
-                Operation.ProtocolResponse<?> response) throws Exception {
-            Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS, KeeperException.Code.NONODE);
-            return Futures.immediateFuture(Boolean.TRUE);
+        protected CommitSnapshot(ListenableFuture<Boolean> future) {
+            super(future);
         }
+
+        private static AsyncFunction<Operation.ProtocolResponse<?>, Boolean> CALLBACK = new AsyncFunction<Operation.ProtocolResponse<?>, Boolean>() {
+            @Override
+            public ListenableFuture<Boolean> apply(
+                    Operation.ProtocolResponse<?> response) throws Exception {
+                Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS, KeeperException.Code.NONODE);
+                return Futures.immediateFuture(Boolean.TRUE);
+            }
+        };
     }
     
     protected static abstract class ExecuteSnapshot implements Function<List<ListenableFuture<?>>, Optional<? extends ListenableFuture<?>>> {
@@ -1082,7 +1115,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                         return GetXomega.create(volume, control);
                     }
                 };
-                final CreateXomega createXomega = CreateXomega.create(volume, control);
+                final AsyncFunction<UnsignedLong, UnsignedLong> createXomega = CreateXomega.creator(volume, control);
                 final Callable<ListenableFuture<UnsignedLong>> doSnapshot = new Callable<ListenableFuture<UnsignedLong>>() {
                     @Override
                     public ListenableFuture<UnsignedLong> call() throws Exception {
@@ -1102,7 +1135,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                 final Callable<ListenableFuture<Boolean>> commitSnapshot = new Callable<ListenableFuture<Boolean>>() {
                     @Override
                     public ListenableFuture<Boolean> call() throws Exception {
-                        return CommitSnapshot.create(volume.getValue(), toClient.second(), fromMaterializer.codec());
+                        return CommitSnapshot.create(toVolume, toClient.second(), fromMaterializer.codec());
                     }
                 };
                 final Callable<ListenableFuture<?>> deleteVolume = new Callable<ListenableFuture<?>>() {
@@ -1176,218 +1209,223 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
             this.paths = paths;
             this.control = control;
         }
+        
+        @Override
+        public String toString() {
+            return Objects.toStringHelper(this).addValue(request).toString();
+        }
+    }
 
-        protected static class DoSnapshot extends ExecuteSnapshot {
+    protected static final class DoSnapshot extends ExecuteSnapshot {
 
-            protected static ListenableFuture<Boolean> create(
-                    Callable<ListenableFuture<Optional<UnsignedLong>>> getXomega,
-                    AsyncFunction<UnsignedLong, UnsignedLong> createXomega,
-                    Callable<ListenableFuture<UnsignedLong>> doSnapshot,
-                    Callable<ListenableFuture<Boolean>> commitSnapshot,
-                    Callable<ListenableFuture<?>> deleteVolume,
-                    PromiseTask<VolumeOperationDirective, Boolean> request,
-                    Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
-                    List<ZNodePath> paths,
-                    Materializer<ControlZNode<?>,?> control) {
-                return ChainedFutures.run(
-                        ChainedFutures.process(
-                                ChainedFutures.chain(
-                                        new DoSnapshot(
-                                                getXomega,
-                                                createXomega,
-                                                doSnapshot,
-                                                deleteVolume,
-                                                commitSnapshot,
-                                                request,
-                                                undoSnapshot,
-                                                paths, 
-                                                control), 
-                                        Lists.<ListenableFuture<?>>newArrayListWithCapacity(6)), 
-                                ChainedFutures.<Boolean>castLast()), 
-                        request);
-                
-            }
+        protected static ListenableFuture<Boolean> create(
+                Callable<ListenableFuture<Optional<UnsignedLong>>> getXomega,
+                AsyncFunction<UnsignedLong, UnsignedLong> createXomega,
+                Callable<ListenableFuture<UnsignedLong>> doSnapshot,
+                Callable<ListenableFuture<Boolean>> commitSnapshot,
+                Callable<ListenableFuture<?>> deleteVolume,
+                PromiseTask<VolumeOperationDirective, Boolean> request,
+                Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
+                List<ZNodePath> paths,
+                Materializer<ControlZNode<?>,?> control) {
+            return ChainedFutures.run(
+                    ChainedFutures.process(
+                            ChainedFutures.chain(
+                                    new DoSnapshot(
+                                            getXomega,
+                                            createXomega,
+                                            doSnapshot,
+                                            deleteVolume,
+                                            commitSnapshot,
+                                            request,
+                                            undoSnapshot,
+                                            paths, 
+                                            control), 
+                                    Lists.<ListenableFuture<?>>newArrayListWithCapacity(6)), 
+                            ChainedFutures.<Boolean>castLast()), 
+                    request);
             
-            private final Callable<ListenableFuture<Optional<UnsignedLong>>> getXomega;
-            private final AsyncFunction<UnsignedLong, UnsignedLong> createXomega;
-            private final Callable<ListenableFuture<UnsignedLong>> doSnapshot;
-            private final Callable<ListenableFuture<Boolean>> commitSnapshot;
-            private final Callable<ListenableFuture<?>> deleteVolume;
-            
-            protected DoSnapshot(
-                    Callable<ListenableFuture<Optional<UnsignedLong>>> getXomega,
-                    AsyncFunction<UnsignedLong, UnsignedLong> createXomega,
-                    Callable<ListenableFuture<UnsignedLong>> doSnapshot,
-                    Callable<ListenableFuture<?>> deleteVolume,
-                    Callable<ListenableFuture<Boolean>> commitSnapshot,
-                    PromiseTask<VolumeOperationDirective, Boolean> request,
-                    Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
-                    List<ZNodePath> paths,
-                    Materializer<ControlZNode<?>,?> control) {
-                super(request, undoSnapshot, paths, control);
-                this.getXomega = getXomega;
-                this.createXomega = createXomega;
-                this.doSnapshot = doSnapshot;
-                this.commitSnapshot = commitSnapshot;
-                this.deleteVolume = deleteVolume;
-            }
-            
-            @SuppressWarnings("unchecked")
-            @Override
-            public Optional<? extends ListenableFuture<?>> apply(
-                    List<ListenableFuture<?>> input) {
-                switch (input.size()) {
-                case 0:
-                {
-                    ListenableFuture<?> future;
-                    try {
-                        future = getXomega.call();
-                    } catch (Exception e) {
-                        future = Futures.immediateFuture(e);
-                    }
-                    return Optional.of(future);
-                }
-                case 1:
-                {
-                    Optional<UnsignedLong> xomega;
-                    try {
-                        xomega = (Optional<UnsignedLong>) input.get(input.size()-1).get();
-                    } catch (InterruptedException e) {
-                        throw Throwables.propagate(e);
-                    } catch (ExecutionException e) {
-                        return Optional.absent();
-                    }
-                    ListenableFuture<UnsignedLong> future;
-                    if (xomega.isPresent()) {
-                        future = Futures.immediateFuture(xomega.get());
-                    } else {
-                        try {
-                            future = doSnapshot.call();
-                        } catch (Exception e) {
-                            future = Futures.immediateFailedFuture(e);
-                        }
-                    }
-                    return Optional.of(future);
-                }
-                case 2:
-                {
-                    UnsignedLong xomega;
-                    try {
-                        xomega = (UnsignedLong) input.get(input.size()-1).get();
-                    } catch (InterruptedException e) {
-                        throw Throwables.propagate(e);
-                    } catch (ExecutionException e) {
-                        return Optional.of(undoSnapshot(request, undoSnapshot, paths, control));
-                    }
-                    ListenableFuture<UnsignedLong> future;
-                    try {
-                        future = createXomega.apply(xomega);
-                    } catch (Exception e) {
-                        future = Futures.immediateFailedFuture(e);
-                    }
-                    return Optional.of(future);
-                }
-                case 3:
-                {
-                    Object last;
-                    try {
-                        last = input.get(input.size()-1).get();
-                    } catch (InterruptedException e) {
-                        throw Throwables.propagate(e);
-                    } catch (ExecutionException e) {
-                        return Optional.absent();
-                    }
-                    if (last instanceof Boolean) {
-                        return Optional.absent();
-                    } else {
-                        assert (last instanceof UnsignedLong);
-                        ListenableFuture<Boolean> future;
-                        try {
-                            future = commitSnapshot.call();
-                        } catch (Exception e) {
-                            future = Futures.immediateFailedFuture(e);
-                        }
-                        return Optional.of(future);
-                    }
-                }
-                case 4:
-                {
-                    ListenableFuture<?> future;
-                    try {
-                        future = deleteVolume.call();
-                    } catch (Exception e) {
-                        future = Futures.immediateFailedFuture(e);
-                    }
-                    return Optional.of(future);
-                }
-                case 5:
-                {
-                    try {
-                        input.get(input.size()-1).get();
-                    } catch (InterruptedException e) {
-                        throw Throwables.propagate(e);
-                    } catch (ExecutionException e) {
-                        return Optional.absent();
-                    }
-                    return Optional.of(Futures.immediateFuture(Boolean.TRUE));
-                }
-                case 6:
-                    return Optional.absent();
-                default:
-                    throw new AssertionError();
-                }
-            }
         }
         
-        protected static class UndoSnapshot extends ExecuteSnapshot {
-
-            protected static ListenableFuture<Boolean> create(
-                    PromiseTask<VolumeOperationDirective, Boolean> request,
-                    Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
-                    List<ZNodePath> paths,
-                    Materializer<ControlZNode<?>,?> control) {
-                return ChainedFutures.run(
-                        ChainedFutures.process(
-                                ChainedFutures.chain(
-                                        new UndoSnapshot(request, undoSnapshot, paths, control), 
-                                        Lists.<ListenableFuture<?>>newArrayListWithCapacity(3)), 
-                                ChainedFutures.<Boolean>castLast()), 
-                        request);
+        private final Callable<ListenableFuture<Optional<UnsignedLong>>> getXomega;
+        private final AsyncFunction<UnsignedLong, UnsignedLong> createXomega;
+        private final Callable<ListenableFuture<UnsignedLong>> doSnapshot;
+        private final Callable<ListenableFuture<Boolean>> commitSnapshot;
+        private final Callable<ListenableFuture<?>> deleteVolume;
+        
+        protected DoSnapshot(
+                Callable<ListenableFuture<Optional<UnsignedLong>>> getXomega,
+                AsyncFunction<UnsignedLong, UnsignedLong> createXomega,
+                Callable<ListenableFuture<UnsignedLong>> doSnapshot,
+                Callable<ListenableFuture<?>> deleteVolume,
+                Callable<ListenableFuture<Boolean>> commitSnapshot,
+                PromiseTask<VolumeOperationDirective, Boolean> request,
+                Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
+                List<ZNodePath> paths,
+                Materializer<ControlZNode<?>,?> control) {
+            super(request, undoSnapshot, paths, control);
+            this.getXomega = getXomega;
+            this.createXomega = createXomega;
+            this.doSnapshot = doSnapshot;
+            this.commitSnapshot = commitSnapshot;
+            this.deleteVolume = deleteVolume;
+        }
+        
+        @SuppressWarnings("unchecked")
+        @Override
+        public Optional<? extends ListenableFuture<?>> apply(
+                List<ListenableFuture<?>> input) {
+            switch (input.size()) {
+            case 0:
+            {
+                ListenableFuture<?> future;
+                try {
+                    future = getXomega.call();
+                } catch (Exception e) {
+                    future = Futures.immediateFuture(e);
+                }
+                return Optional.of(future);
             }
-            
-            protected UndoSnapshot(
-                    PromiseTask<VolumeOperationDirective, Boolean> request,
-                    Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
-                    List<ZNodePath> paths,
-                    Materializer<ControlZNode<?>,?> control) {
-                super(request, undoSnapshot, paths, control);
-            }
-            
-            @Override
-            public Optional<? extends ListenableFuture<?>> apply(
-                    List<ListenableFuture<?>> input) {
-                Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.get(input.size()-1));
-                if (!last.isPresent()) {
-                    ListenableFuture<?> future;
+            case 1:
+            {
+                Optional<UnsignedLong> xomega;
+                try {
+                    xomega = (Optional<UnsignedLong>) input.get(input.size()-1).get();
+                } catch (InterruptedException e) {
+                    throw Throwables.propagate(e);
+                } catch (ExecutionException e) {
+                    return Optional.absent();
+                }
+                ListenableFuture<UnsignedLong> future;
+                if (xomega.isPresent()) {
+                    future = Futures.immediateFuture(xomega.get());
+                } else {
                     try {
-                        future = undoSnapshot.call();
+                        future = doSnapshot.call();
+                    } catch (Exception e) {
+                        future = Futures.immediateFailedFuture(e);
+                    }
+                }
+                return Optional.of(future);
+            }
+            case 2:
+            {
+                UnsignedLong xomega;
+                try {
+                    xomega = (UnsignedLong) input.get(input.size()-1).get();
+                } catch (InterruptedException e) {
+                    throw Throwables.propagate(e);
+                } catch (ExecutionException e) {
+                    return Optional.of(undoSnapshot(request, undoSnapshot, paths, control));
+                }
+                ListenableFuture<UnsignedLong> future;
+                try {
+                    future = createXomega.apply(xomega);
+                } catch (Exception e) {
+                    future = Futures.immediateFailedFuture(e);
+                }
+                return Optional.of(future);
+            }
+            case 3:
+            {
+                Object last;
+                try {
+                    last = input.get(input.size()-1).get();
+                } catch (InterruptedException e) {
+                    throw Throwables.propagate(e);
+                } catch (ExecutionException e) {
+                    return Optional.absent();
+                }
+                if (last instanceof Boolean) {
+                    return Optional.absent();
+                } else {
+                    assert (last instanceof UnsignedLong);
+                    ListenableFuture<Boolean> future;
+                    try {
+                        future = commitSnapshot.call();
                     } catch (Exception e) {
                         future = Futures.immediateFailedFuture(e);
                     }
                     return Optional.of(future);
+                }
+            }
+            case 4:
+            {
+                ListenableFuture<?> future;
+                try {
+                    future = deleteVolume.call();
+                } catch (Exception e) {
+                    future = Futures.immediateFailedFuture(e);
+                }
+                return Optional.of(future);
+            }
+            case 5:
+            {
+                try {
+                    input.get(input.size()-1).get();
+                } catch (InterruptedException e) {
+                    throw Throwables.propagate(e);
+                } catch (ExecutionException e) {
+                    return Optional.absent();
+                }
+                return Optional.of(Futures.immediateFuture(Boolean.TRUE));
+            }
+            case 6:
+                return Optional.absent();
+            default:
+                throw new AssertionError();
+            }
+        }
+    }
+    
+    protected static final class UndoSnapshot extends ExecuteSnapshot {
+
+        protected static ListenableFuture<Boolean> create(
+                PromiseTask<VolumeOperationDirective, Boolean> request,
+                Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
+                List<ZNodePath> paths,
+                Materializer<ControlZNode<?>,?> control) {
+            return ChainedFutures.run(
+                    ChainedFutures.process(
+                            ChainedFutures.chain(
+                                    new UndoSnapshot(request, undoSnapshot, paths, control), 
+                                    Lists.<ListenableFuture<?>>newArrayListWithCapacity(3)), 
+                            ChainedFutures.<Boolean>castLast()), 
+                    request);
+        }
+        
+        protected UndoSnapshot(
+                PromiseTask<VolumeOperationDirective, Boolean> request,
+                Callable<Snapshot.DeleteExistingSnapshot> undoSnapshot,
+                List<ZNodePath> paths,
+                Materializer<ControlZNode<?>,?> control) {
+            super(request, undoSnapshot, paths, control);
+        }
+        
+        @Override
+        public Optional<? extends ListenableFuture<?>> apply(
+                List<ListenableFuture<?>> input) {
+            Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.get(input.size()-1));
+            if (!last.isPresent()) {
+                ListenableFuture<?> future;
+                try {
+                    future = undoSnapshot.call();
+                } catch (Exception e) {
+                    future = Futures.immediateFailedFuture(e);
+                }
+                return Optional.of(future);
+            } else {
+                try {
+                    last.get().get();
+                } catch (InterruptedException e) {
+                    throw Throwables.propagate(e);
+                } catch (ExecutionException e) {
+                    return Optional.absent();
+                }
+                if (input.size() == 1) {
+                    return Optional.of(UndoOperation.create(control, paths, request));
                 } else {
-                    try {
-                        last.get().get();
-                    } catch (InterruptedException e) {
-                        throw Throwables.propagate(e);
-                    } catch (ExecutionException e) {
-                        return Optional.absent();
-                    }
-                    if (input.size() == 1) {
-                        return Optional.of(UndoOperation.create(control, paths, request));
-                    } else {
-                        return Optional.absent();
-                    }
+                    return Optional.absent();
                 }
             }
         }

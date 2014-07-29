@@ -1,7 +1,10 @@
 package edu.uw.zookeeper.client;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.zookeeper.KeeperException;
@@ -19,7 +22,7 @@ import edu.uw.zookeeper.common.Call;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.NodeWatchEvent;
@@ -96,7 +99,7 @@ public abstract class Watchers {
         
         @Override
         public void handleWatchEvent(WatchEvent event) {
-            if (service.isRunning()) {
+            if (isRunning()) {
                 run();
             }
         }
@@ -182,7 +185,7 @@ public abstract class Watchers {
             }
         }
         
-        protected class QueryCallback extends ToStringListenableFuture<List<O>> implements Runnable {
+        protected class QueryCallback extends SimpleToStringListenableFuture<List<O>> implements Runnable {
 
             public QueryCallback() {
                 super(Futures.allAsList(query.call()));
@@ -394,6 +397,54 @@ public abstract class Watchers {
         public void stopping(Service.State from) {
             super.stopping(from);
             listener.stopping(from);
+        }
+    }
+    
+    public static class Query extends SimpleToStringListenableFuture<List<Operation.ProtocolResponse<?>>> implements Runnable, Callable<Optional<Operation.Error>> {
+
+        public static Query call(
+                FixedQuery<?> query,
+                AbstractWatchListener listener) {
+            return new Query(query, listener);
+        }
+        
+        protected final AbstractWatchListener listener;
+        
+        protected Query(
+                FixedQuery<?> query,
+                AbstractWatchListener listener) {
+            this(listener, Futures.<Operation.ProtocolResponse<?>>allAsList(query.call()));
+            checkArgument(!query.requests().isEmpty());
+        }
+
+        protected Query(
+                AbstractWatchListener listener,
+                ListenableFuture<List<Operation.ProtocolResponse<?>>> future) {
+            super(future);
+            this.listener = listener;
+            addListener(this, SameThreadExecutor.getInstance());
+        }
+        
+        @Override
+        public void run() {
+            if (isDone() && listener.isRunning()) {
+                try {
+                    call();
+                } catch (Exception e) {
+                    listener.stopping(listener.state());
+                    return;
+                }
+            }
+        }
+        
+        @Override
+        public Optional<Operation.Error> call() throws Exception {
+            Optional<Operation.Error> error = null;
+            for (Operation.ProtocolResponse<?> response: get()) {
+                error = Operations.maybeError(response.record(), KeeperException.Code.NONODE);
+            }
+            assert (error != null);
+            return error;
         }
     }
     

@@ -46,7 +46,7 @@ import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.common.WaitingActor;
 import edu.uw.zookeeper.data.OptionalNode;
 import edu.uw.zookeeper.data.SimpleLabelTrie;
@@ -67,7 +67,7 @@ import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.backend.OutdatedVersionException;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedClientRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
@@ -265,13 +265,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
         default: 
         {
-            Promise<Records.Response> response = SettableFuturePromise.create();
-            LoggingFutureListener.listen(logger, response);
-            Promise<Message.ServerResponse<?>> promise = SettableFuturePromise.create();
-            LoggingFutureListener.listen(logger, promise);
-            task = new FrontendRequestTask(
-                    Pair.create(request, response), 
-                    promise);
+            task = LoggingFutureListener.listen(logger, 
+                    new FrontendRequestTask(
+                            Pair.create(request, 
+                                    SettableFuturePromise.<Records.Response>create()), 
+                            SettableFuturePromise.<Message.ServerResponse<?>>create()));
             break;
         }
         }
@@ -287,7 +285,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         return processor.apply(Pair.create(session.id(), input));
     }
     
-    protected class FrontendRequestTask extends PromiseTask<Pair<? extends Message.ClientRequest<?>, ? extends Promise<Records.Response>>, Message.ServerResponse<?>> implements Runnable {
+    protected final class FrontendRequestTask extends PromiseTask<Pair<? extends Message.ClientRequest<?>, ? extends Promise<Records.Response>>, Message.ServerResponse<?>> implements Runnable {
 
         public FrontendRequestTask(
                 Pair<? extends Message.ClientRequest<?>, ? extends Promise<Records.Response>> task,
@@ -307,7 +305,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
     }
 
-    protected class FrontendSessionActor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
+    protected final class FrontendSessionActor extends ExecutedPeekingQueuedActor<FrontendRequestTask> {
 
         public FrontendSessionActor(
                 Executor executor) {
@@ -390,7 +388,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
     /**
      * Tracks session watches
      */
-    protected class NotificationProcessor implements NotificationListener<ShardedServerResponseMessage<IWatcherEvent>> {
+    protected final class NotificationProcessor implements NotificationListener<ShardedServerResponseMessage<IWatcherEvent>> {
 
         protected final AsyncFunction<VersionedId, Long> versionToZxid;
         protected final AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume;
@@ -408,7 +406,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         
         public synchronized Optional<? extends ListenableFuture<?>> handleRequest(Records.Request request, ShardedServerResponseMessage<?> response) throws Exception {
             final VersionedId shard = response.getShard();
-            if (!latest.containsKey(shard.getValue()) || (latest.get(shard).longValue() < shard.getVersion().longValue())) {
+            if (!latest.containsKey(shard.getValue()) || (latest.get(shard.getValue()).longValue() < shard.getVersion().longValue())) {
                 final ListenableFuture<AssignedVolumeBranches> volumeFuture = versionToVolume.apply(shard);
                 if (!volumeFuture.isDone()) {
                     return Optional.of(volumeFuture);
@@ -587,7 +585,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         // TODO equals()
     }
     
-    protected static class ShardTask extends ForwardingListenableFuture<VolumeVersion<?>> {
+    protected static final class ShardTask extends ForwardingListenableFuture<VolumeVersion<?>> {
 
         private final ListenableFuture<? extends VolumeVersion<?>> future;
         private final ListenableFuture<?> task;
@@ -610,9 +608,9 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
     }
     
-    protected static class RequestToVolume implements AsyncFunction<Records.Request, VolumeVersion<?>> {
+    protected static final class RequestToVolume implements AsyncFunction<Records.Request, VolumeVersion<?>> {
 
-        protected final AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume;
+        private final AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume;
         
         public RequestToVolume(AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume) {
             this.pathToVolume = pathToVolume;
@@ -669,10 +667,10 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         }
     }
     
-    protected class ShardingProcessor extends WaitingActor<ListenableFuture<?>, ShardTask> implements TaskExecutor<ListenableFuture<?>, VolumeVersion<?>> {
+    protected final class ShardingProcessor extends WaitingActor<ListenableFuture<?>, ShardTask> implements TaskExecutor<ListenableFuture<?>, VolumeVersion<?>> {
 
-        protected final LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume;
-        protected final RequestToVolume requestToVolume;
+        private final LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume;
+        private final RequestToVolume requestToVolume;
         
         public ShardingProcessor(
                 LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
@@ -706,7 +704,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     idToVolume.lock().unlock();
                 }
             }
-            ShardTask task = new ShardTask(request, shard);
+            ShardTask task = LoggingFutureListener.listen(logger,
+                    new ShardTask(request, shard));
             if (!send(task)) {
                 throw new RejectedExecutionException();
             }
@@ -760,12 +759,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                             frontend.task().second().set(new IErrorResponse(e.code()));
                         }
                         if (! frontend.task().second().isDone()) {
-                            ShardedClientRequestMessage<?> message = ShardedClientRequestMessage.valueOf(
+                            ShardedRequestMessage<?> message = ShardedRequestMessage.valueOf(
                                     VersionedId.valueOf(volume.getState().getVersion(), volume.getDescriptor().getId()), 
                                     frontend.task().first());
                             ListenableFuture<ShardedResponseMessage<?>> response = 
                                     executor.submit(message);
-                            new OperationResponseTask(frontend, response);
+                            LoggingFutureListener.listen(logger, 
+                                    new OperationResponseTask(frontend, response));
                         }
                         return true;
                     }
@@ -780,7 +780,9 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                         return false;
                     }
                     if (mailbox.remove(input)) {
-                        new BroadcastResponseTask((FrontendRequestTask) input.task()).run();
+                        LoggingFutureListener.listen(logger,
+                                new BroadcastResponseTask((FrontendRequestTask) input.task()))
+                                .run();
                         return true;
                     }
                 }
@@ -791,13 +793,13 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             return false;
         }
         
-        protected class BroadcastResponseTask extends PromiseTask<Pair<? extends ShardedClientRequestMessage<?>, FrontendRequestTask>, Records.Response> implements Runnable, Callable<Optional<Records.Response>> {
+        protected class BroadcastResponseTask extends PromiseTask<Pair<? extends ShardedRequestMessage<?>, FrontendRequestTask>, Records.Response> implements Runnable, Callable<Optional<Records.Response>> {
 
             protected final CallablePromiseTask<BroadcastResponseTask, Records.Response> delegate;
             protected final Map<Identifier, ListenableFuture<?>> responses;
             
             public BroadcastResponseTask(FrontendRequestTask task) {
-                super(Pair.create(ShardedClientRequestMessage.valueOf(
+                super(Pair.create(ShardedRequestMessage.valueOf(
                         VersionedId.zero(), 
                         task.task().first()), task),
                     task.task().second());
@@ -857,7 +859,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             }
         }
         
-        protected class OperationResponseTask extends ToStringListenableFuture<ShardedResponseMessage<?>> implements Runnable, Callable<Optional<Records.Response>> {
+        protected class OperationResponseTask extends SimpleToStringListenableFuture<ShardedResponseMessage<?>> implements Runnable, Callable<Optional<Records.Response>> {
 
             protected final FrontendRequestTask task;
             protected final CallablePromiseTask<OperationResponseTask,Records.Response> delegate;
@@ -900,11 +902,16 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                             return Optional.of((Records.Response) response.record());
                         }
                     } else {
-                        assert (((ShardedErrorResponseMessage) result).getException() instanceof OutdatedVersionException);
+                        assert (((ShardedErrorResponseMessage) result).getError() instanceof OutdatedVersionException);
                         sharding.submit(this);
                     }
                 }
                 return Optional.absent();
+            }
+            
+            @Override
+            protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+                return super.toStringHelper(helper.addValue(task)).addValue(toString(delegate));
             }
             
             protected class Callback implements Runnable {
