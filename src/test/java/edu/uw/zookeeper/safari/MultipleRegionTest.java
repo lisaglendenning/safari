@@ -5,9 +5,6 @@ import static org.junit.Assert.assertFalse;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
-
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -30,6 +27,7 @@ import edu.uw.zookeeper.common.Generator;
 import edu.uw.zookeeper.common.Generators;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Services;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Message;
@@ -42,7 +40,6 @@ import edu.uw.zookeeper.safari.storage.StorageModules;
 @RunWith(JUnit4.class)
 public class MultipleRegionTest extends AbstractMainTest {
 
-    @Ignore
     @Test(timeout=30000)
     public void testStartAndStop() throws Exception {
         final long pause = 4000L;
@@ -66,7 +63,6 @@ public class MultipleRegionTest extends AbstractMainTest {
         pauseWithComponents(components.build(), pause);
     }
 
-    @Ignore
     @Test(timeout=40000)
     public void testClientConnect() throws Exception {
         final long pause = 4000L;
@@ -109,6 +105,7 @@ public class MultipleRegionTest extends AbstractMainTest {
         final int logInterval = 8;
         final long pause = 4000L;
         final int num_regions = 2;
+        final TimeValue timeOut = TimeValue.seconds(15L);
 
         final Component<?> root = Modules.newRootComponent();
         final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
@@ -151,7 +148,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                 }
                 ListenableFuture<Message.ServerResponse<?>> response;
                 while ((response = futures.poll()) != null) {
-                    assertFalse(response.get(5000L, TimeUnit.MILLISECONDS).record() instanceof Operation.Error);
+                    assertFalse(response.get(timeOut.value(), timeOut.unit()).record() instanceof Operation.Error);
                 }
                 return null;
             }

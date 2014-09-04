@@ -13,6 +13,7 @@ import net.engio.mbassy.common.IConcurrentSet;
 import net.engio.mbassy.common.StrongConcurrentSet;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.Service;
 
@@ -120,6 +121,14 @@ public abstract class PeerConnections<C extends PeerConnection<?,?>> extends Ser
     @Override
     protected Executor executor() {
         return SameThreadExecutor.getInstance();
+    }
+    
+    @Override
+    protected void shutDown() throws Exception {
+        super.shutDown();
+        for (C connection: Iterables.consumingIterable(peers.values())) {
+            connection.close();
+        }
     }
 
     protected boolean remove(C connection) {

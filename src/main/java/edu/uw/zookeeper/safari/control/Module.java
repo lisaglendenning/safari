@@ -1,40 +1,42 @@
 package edu.uw.zookeeper.safari.control;
 
-import java.lang.annotation.Annotation;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
-
-import edu.uw.zookeeper.safari.AbstractSafariModule;
+import com.google.inject.Injector;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import edu.uw.zookeeper.safari.AbstractCompositeSafariModule;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 
-public class Module extends AbstractSafariModule {
+public class Module extends AbstractCompositeSafariModule<Service> {
 
     public static Class<Control> annotation() {
         return Control.class;
     }
 
     public static Module create() {
-        return new Module();
+        ControlClientService module = ControlClientService.create();
+        return new Module(
+                module.getKey(),
+                ImmutableList.<com.google.inject.Module>of(
+                        JacksonModule.create(),
+                        ControlEnsembleConnections.create(),
+                        module));
     }
     
-    public Module() {}
+    protected Module(
+            Key<? extends Service> key,
+            Iterable<? extends com.google.inject.Module> modules) {
+        super(key, modules);
+    }
 
     @Override
-    public Class<? extends Annotation> getAnnotation() {
-        return annotation();
+    public Key<Service> getKey() {
+        return Key.get(Service.class, annotation());
     }
-
-    @Override    
-    protected ImmutableList<? extends com.google.inject.Module> getModules() {
-        return ImmutableList.<com.google.inject.Module>of(
-                JacksonModule.create(),
-                ControlEnsembleConnections.create(),
-                ControlClientService.module());
-    }
-
-    @Override  
-    protected Class<? extends Service> getServiceType() {
-        return ControlClientService.class;
+    
+    @Provides @Control
+    public Service getService(Injector injector) {
+        return getInstance(injector);
     }
 }

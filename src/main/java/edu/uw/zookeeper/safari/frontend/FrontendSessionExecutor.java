@@ -71,9 +71,9 @@ import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
-import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
-import edu.uw.zookeeper.safari.volume.NullVolume;
-import edu.uw.zookeeper.safari.volume.VolumeVersion;
+import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeBranches;
+import edu.uw.zookeeper.safari.schema.volumes.NullVolume;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 import edu.uw.zookeeper.server.AbstractSessionExecutor;
 
 public class FrontendSessionExecutor extends AbstractSessionExecutor implements Processors.UncheckedProcessor<Pair<Optional<Operation.ProtocolRequest<?>>, Records.Response>, Message.ServerResponse<?>> {
@@ -84,7 +84,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
             AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
             AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
-            AsyncFunction<VersionedId, Long> versionToZxid,
+            AsyncFunction<VersionedId, Long> versionToXomega,
             Supplier<Set<Identifier>> regions,
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             ScheduledExecutorService scheduler,
@@ -95,7 +95,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                         idToVolume,
                         pathToVolume,
                         versionToVolume,
-                        versionToZxid,
+                        versionToXomega,
                         regions,
                         dispatchers,
                         scheduler,
@@ -109,7 +109,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         private final LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume;
         private final AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume;
         private final AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume;
-        private final AsyncFunction<VersionedId, Long> versionToZxid;
+        private final AsyncFunction<VersionedId, Long> versionToXomega;
         private final Supplier<Set<Identifier>> regions;
         private final AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers;
         private final ScheduledExecutorService scheduler;
@@ -121,7 +121,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
                 AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
                 AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
-                AsyncFunction<VersionedId, Long> versionToZxid,
+                AsyncFunction<VersionedId, Long> versionToXomega,
                 Supplier<Set<Identifier>> regions,
                 AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
                 ScheduledExecutorService scheduler,
@@ -131,7 +131,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             this.idToVolume = idToVolume;
             this.pathToVolume = pathToVolume;
             this.versionToVolume = versionToVolume;
-            this.versionToZxid = versionToZxid;
+            this.versionToXomega = versionToXomega;
             this.regions = regions;
             this.dispatchers = dispatchers;
             this.scheduler = scheduler;
@@ -146,7 +146,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     idToVolume,
                     pathToVolume,
                     versionToVolume,
-                    versionToZxid,
+                    versionToXomega,
                     regions,
                     dispatchers,
                     scheduler,
@@ -161,7 +161,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
             AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
             AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
-            AsyncFunction<VersionedId, Long> versionToZxid,
+            AsyncFunction<VersionedId, Long> versionToXomega,
             Supplier<Set<Identifier>> regions,
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             ScheduledExecutorService scheduler,
@@ -174,7 +174,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                                         ProtocolMessageAutomaton.asAutomaton(
                                                 ProtocolState.CONNECTED))));
         IConcurrentSet<SessionListener> listeners = new StrongConcurrentSet<SessionListener>();
-        return new FrontendSessionExecutor(processor, idToVolume, pathToVolume, versionToVolume, versionToZxid, regions, dispatchers, executor, renew, session, state, listeners, scheduler);
+        return new FrontendSessionExecutor(processor, idToVolume, pathToVolume, versionToVolume, versionToXomega, regions, dispatchers, executor, renew, session, state, listeners, scheduler);
     }
     
     public static <T extends Records.Request> T validate(AssignedVolumeBranches volume, T request) throws KeeperException {
@@ -219,7 +219,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             LockingCachedFunction<Identifier, VolumeVersion<?>> idToVolume,
             AsyncFunction<ZNodePath, AssignedVolumeBranches> pathToVolume,
             AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
-            AsyncFunction<VersionedId, Long> versionToZxid,
+            AsyncFunction<VersionedId, Long> versionToXomega,
             Supplier<Set<Identifier>> regions,
             AsyncFunction<Identifier, ClientPeerConnectionDispatcher> dispatchers,
             Executor executor,
@@ -231,7 +231,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         super(session, state, listeners, scheduler);
         this.logger = LogManager.getLogger(getClass());
         this.processor = processor;
-        this.notifications = new NotificationProcessor(versionToVolume, versionToZxid);
+        this.notifications = new NotificationProcessor(versionToVolume, versionToXomega);
         this.backends = ClientPeerConnectionExecutors.newInstance(session, renew, notifications, regions, dispatchers);
         this.actor = new FrontendSessionActor(executor);
         this.sharding = new ShardingProcessor(idToVolume, pathToVolume, executor);
@@ -390,15 +390,15 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
      */
     protected final class NotificationProcessor implements NotificationListener<ShardedServerResponseMessage<IWatcherEvent>> {
 
-        protected final AsyncFunction<VersionedId, Long> versionToZxid;
+        protected final AsyncFunction<VersionedId, Long> versionToXomega;
         protected final AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume;
         protected final SimpleLabelTrie<OptionalNode<Watch>> watches;
         protected final Map<Identifier, UnsignedLong> latest;
         
         public NotificationProcessor(
                 AsyncFunction<VersionedId, AssignedVolumeBranches> versionToVolume,
-                AsyncFunction<VersionedId, Long> versionToZxid) {
-            this.versionToZxid = versionToZxid;
+                AsyncFunction<VersionedId, Long> versionToXomega) {
+            this.versionToXomega = versionToXomega;
             this.versionToVolume = versionToVolume;
             this.watches = SimpleLabelTrie.forRoot(OptionalNode.<Watch>root());
             this.latest = Maps.newHashMap();
@@ -425,12 +425,12 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     }
                     if (node.isPresent() && (node.get().getVersion().getVersion().longValue() < shard.getVersion().longValue())) {
                         if (node.get().getType() != WatchType.CHILD) {
-                            final ListenableFuture<Long> zxidFuture = versionToZxid.apply(node.get().getVersion());
-                            if (!zxidFuture.isDone()) {
-                                return Optional.of(zxidFuture);
+                            final ListenableFuture<Long> xomegaFuture = versionToXomega.apply(node.get().getVersion());
+                            if (!xomegaFuture.isDone()) {
+                                return Optional.of(xomegaFuture);
                             }
-                            final long zxid = zxidFuture.get().longValue();
-                            if (node.get().getZxid() == zxid) {
+                            final long xomega = xomegaFuture.get().longValue();
+                            if (node.get().getZxid() == xomega) {
                                 handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeDataChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
                             }
                         }

@@ -1,39 +1,42 @@
 package edu.uw.zookeeper.safari.storage;
 
-import java.lang.annotation.Annotation;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Injector;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import edu.uw.zookeeper.safari.AbstractCompositeSafariModule;
 
-import edu.uw.zookeeper.safari.AbstractSafariModule;
-
-public class Module extends AbstractSafariModule {
+public class Module extends AbstractCompositeSafariModule<Service> {
 
     public static Class<Storage> annotation() {
         return Storage.class;
     }
     
     public static Module create() {
-        return new Module();
+        StorageClientService module = StorageClientService.create();
+        return new Module(
+                module.getKey(),
+                ImmutableList.<com.google.inject.Module>of(
+                    StorageCfgFile.module(),
+                    StorageEnsembleConnections.create(),
+                    StorageServerConnections.create(),
+                    module));
     }
     
-    public Module() {}
-
-    @Override
-    public Class<? extends Annotation> getAnnotation() {
-        return annotation();
+    protected Module(
+            Key<? extends Service> key,
+            Iterable<? extends com.google.inject.Module> modules) {
+        super(key, modules);
     }
 
     @Override
-    protected ImmutableList<? extends com.google.inject.Module> getModules() {
-        return ImmutableList.<com.google.inject.Module>of(
-                StorageCfgFile.module(),
-                StorageEnsembleConnections.create(),
-                StorageServerConnections.create(),
-                StorageClientService.module());
+    public Key<Service> getKey() {
+        return Key.get(Service.class, annotation());
     }
-
-    @Override
-    protected Class<? extends Service> getServiceType() {
-        return StorageClientService.class;
+    
+    @Provides @Storage
+    public Service getService(Injector injector) {
+        return getInstance(injector);
     }
 }

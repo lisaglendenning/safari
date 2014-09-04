@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 
 @SuppressWarnings("rawtypes")
 public class BoundVolumeOperatorSerializer extends StdSerializer<BoundVolumeOperator> {

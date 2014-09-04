@@ -4,25 +4,40 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import javax.annotation.Nullable;
 
-import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 
 import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.safari.Identifier;
 
-public class RegionRoleAutomaton implements Automaton<RegionRole, LeaderEpoch> {
+public final class RegionRoleAutomaton implements Automaton<RegionRole, LeaderEpoch> {
 
-    public static RegionRoleAutomaton unknown(Identifier self) {
-        return new RegionRoleAutomaton(self, null);
+    public static RegionRole getRoleFor(Identifier self, Optional<LeaderEpoch> leader) {
+        EnsembleRole role;
+        if (!leader.isPresent()) {
+            role = EnsembleRole.UNKNOWN;
+        } else if (self.equals(leader.get().getLeader())) {
+            role = EnsembleRole.LEADING;
+        } else {
+            role = EnsembleRole.FOLLOWING;
+        }
+        return new RegionRole(role, leader);
+    }
+
+    public static RegionRoleAutomaton forRole(Identifier self, RegionRole role) {
+        return new RegionRoleAutomaton(self, role);
     }
     
-    private Identifier self;
+    public static RegionRoleAutomaton unknown(Identifier self) {
+        return new RegionRoleAutomaton(self, RegionRole.unknown());
+    }
+    
+    private final Identifier self;
     private RegionRole state;
 
-    public RegionRoleAutomaton(Identifier self, @Nullable LeaderEpoch leader) {
+    protected RegionRoleAutomaton(Identifier self, RegionRole state) {
         this.self = checkNotNull(self);
-        this.state = new RegionRole(leader, getRoleFor(leader));
+        this.state = checkNotNull(state);
     }
     
     @Override
@@ -30,28 +45,19 @@ public class RegionRoleAutomaton implements Automaton<RegionRole, LeaderEpoch> {
         return state;
     }
 
+    /**
+     * Not threadsafe.
+     */
     @Override
     public Optional<Automaton.Transition<RegionRole>> apply(
             @Nullable LeaderEpoch input) {
-        if (! Objects.equal(state.getLeader(), input) 
-                && ((state.getLeader() == null) 
-                        || (input == null) 
-                        || (state.getLeader().getEpoch() < input.getEpoch()))) {
+        Optional<LeaderEpoch> leader = Optional.fromNullable(input);
+        RegionRole next = getRoleFor(self, leader);
+        if (!state.equals(next)) {
             RegionRole prevState = state;
-            state = new RegionRole(input, getRoleFor(input));
+            state = next;
             return Optional.of(Automaton.Transition.create(prevState, state));
-        } else {
-            return Optional.absent();
         }
-    }
-
-    public EnsembleRole getRoleFor(LeaderEpoch leader) {
-        if ((leader == null) || (leader.getLeader() == null)) {
-            return EnsembleRole.LOOKING;
-        } else if (self.equals(leader.getLeader())) {
-            return EnsembleRole.LEADING;
-        } else {
-            return EnsembleRole.FOLLOWING;
-        }
+        return Optional.absent();
     }
 }

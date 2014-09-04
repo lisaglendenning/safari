@@ -6,8 +6,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -30,6 +29,7 @@ import edu.uw.zookeeper.common.Generators;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Message;
@@ -40,21 +40,21 @@ import edu.uw.zookeeper.safari.frontend.Frontend;
 @RunWith(JUnit4.class)
 public class SingletonTest extends AbstractMainTest {
 
-    @Test(timeout=18000)
+    @Test(timeout=20000)
     public void testStartAndStop() throws Exception {
-        final long pause = 4000L;
+        final long pause = 8000L;
         final List<Component<?>> components = SafariModules.newSingletonSafari();
         pauseWithComponents(components, pause);
     }
 
-    @Test(timeout=20000)
+    @Test(timeout=30000)
     public void testClientConnect() throws Exception {
-        final long pause = 6000L;
+        final long pause = 10000L;
         final List<Component<?>> components = newSingletonServerAndClient();
         pauseWithComponents(components, pause);
     }
 
-    @Test(timeout=20000)
+    @Test(timeout=30000)
     public void testClientsConnect() throws Exception {
         final long pause = 8000L;
         final int nclients = 2;
@@ -68,6 +68,7 @@ public class SingletonTest extends AbstractMainTest {
     public void testClientPipeline() throws Exception {
         final int iterations = 32;
         final int logInterval = 8;
+        final TimeValue timeOut = TimeValue.seconds(15L);
         final List<Component<?>> components = newSingletonServerAndClient();
         final Component<?> client = components.get(components.size()-1);
         final Callable<Void> callable = new Callable<Void>() {
@@ -83,7 +84,7 @@ public class SingletonTest extends AbstractMainTest {
                 }
                 ListenableFuture<Message.ServerResponse<?>> response;
                 while ((response = futures.poll()) != null) {
-                    assertFalse(response.get(5000L, TimeUnit.MILLISECONDS).record() instanceof Operation.Error);
+                    assertFalse(response.get(timeOut.value(), timeOut.unit()).record() instanceof Operation.Error);
                 }
                 return null;
             }

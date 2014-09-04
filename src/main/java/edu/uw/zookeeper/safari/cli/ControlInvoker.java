@@ -41,14 +41,14 @@ import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.schema.LookupEntity;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
-import edu.uw.zookeeper.safari.control.schema.VolumesSchemaRequests;
-import edu.uw.zookeeper.safari.data.PrepareVolumeOperation;
+import edu.uw.zookeeper.safari.control.volumes.PrepareVolumeOperation;
+import edu.uw.zookeeper.safari.control.volumes.VolumesSchemaRequests;
+import edu.uw.zookeeper.safari.control.volumes.VolumeOperationCoordinatorEntry;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonSerializer;
 import edu.uw.zookeeper.safari.peer.protocol.ObjectMapperBuilder;
-import edu.uw.zookeeper.safari.region.VolumeOperationCoordinatorEntry;
 import edu.uw.zookeeper.safari.schema.PrefixCreator;
-import edu.uw.zookeeper.safari.volume.VolumeOperation;
-import edu.uw.zookeeper.safari.volume.VolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeOperation;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeOperator;
 
 public class ControlInvoker extends AbstractIdleService implements Invoker<ControlInvoker.Command> {
 

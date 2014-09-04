@@ -7,7 +7,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.jackson.JacksonCoreSerializer;
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 
 @SuppressWarnings("rawtypes")
 public class VolumeLogEntryCoreSerializer implements JacksonCoreSerializer<VolumeLogEntry> {

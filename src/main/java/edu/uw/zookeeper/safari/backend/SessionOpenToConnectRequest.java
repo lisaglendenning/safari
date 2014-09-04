@@ -10,14 +10,13 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.ZxidReference;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
-import edu.uw.zookeeper.safari.storage.SessionLookup;
+import edu.uw.zookeeper.safari.storage.schema.SessionLookup;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -51,8 +50,7 @@ public class SessionOpenToConnectRequest implements AsyncFunction<MessageSession
                         LoggingFutureListener.listen(logger, 
                                 SessionLookup.create(
                                     request.getIdentifier(), 
-                                    materializer,
-                                    SettableFuturePromise.<StorageSchema.Safari.Sessions.Session.Data>create()));
+                                    materializer));
                 return Futures.transform(
                         lookup, 
                         new SessionLookupCallback(message), 

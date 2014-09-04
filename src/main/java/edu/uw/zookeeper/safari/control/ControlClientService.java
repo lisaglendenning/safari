@@ -23,95 +23,67 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
-public class ControlClientService extends SchemaClientService<ControlZNode<?>> {
+public class ControlClientService extends AbstractModule implements SafariModule {
 
-    public static Module module() {
-        return new Module();
+    public static ControlClientService create() {
+        return new ControlClientService();
     }
     
-    public static class Module extends AbstractModule {
-
-        public static Module create() {
-            return new Module();
-        }
-        
-        public Module() {}
-        
-        @Provides @Control @Singleton
-        public ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> newControlClient(
-                @Control EnsembleViewFactory<? extends ServerViewFactory<Session, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>>>> connections,
-                ServiceMonitor monitor,
-                ScheduledExecutorService scheduler) {
-            ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> instance = 
-                    ConnectionClientExecutorService.newInstance(connections, scheduler);
-            monitor.add(instance);
-            return instance;
-        }
-
-        @Provides @Control @Singleton
-        public Materializer<ControlZNode<?>, Message.ServerResponse<?>> newControlClientMaterializer(
-                ControlClientService service) {
-            return service.materializer();
-        }
-        
-        @Provides @Singleton
-        public ControlClientService newControlClientService(
-                final @Control ClientConnectionFactory<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> connections,
-                final @Control ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> client,
-                Serializers.ByteCodec<Object> serializer,
-                ServiceMonitor monitor) {
-            ControlClientService instance = ControlClientService.forClient(
-                    client,
-                    serializer,
-                    ImmutableList.<Service.Listener>of(
-                            new Service.Listener() {
-                                @Override
-                                public void starting() {
-                                    Services.startAndWait(connections);
-                                }
-                            }));
-            monitor.add(instance);
-            return instance;
-        }
-
-        @Override
-        protected void configure() {
-            bind(Key.get(new TypeLiteral<Materializer<ControlZNode<?>, ?>>(){}, Control.class)).to(Key.get(new TypeLiteral<Materializer<ControlZNode<?>, Message.ServerResponse<?>>>(){}, Control.class));
-        }
+    protected ControlClientService() {}
+    
+    @Override
+    public Key<? extends Service> getKey() {
+        return Key.get(new TypeLiteral<SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>>>(){});
     }
 
-    public static ControlClientService forClient(
-            final ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> client,
-            Serializers.ByteCodec<Object> serializer,
-            Iterable<? extends Service.Listener> listeners) {
-        return create(
+    @Provides @Control @Singleton
+    public ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> newControlClient(
+            @Control EnsembleViewFactory<? extends ServerViewFactory<Session, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>>>> connections,
+            ServiceMonitor monitor,
+            ScheduledExecutorService scheduler) {
+        ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> instance = 
+                ConnectionClientExecutorService.newInstance(connections, scheduler);
+        monitor.add(instance);
+        return instance;
+    }
+
+    @Provides @Control @Singleton
+    public Materializer<ControlZNode<?>, Message.ServerResponse<?>> getControlClientMaterializer(
+            SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> service) {
+        return service.materializer();
+    }
+    
+    @Provides @Singleton
+    public SchemaClientService<ControlZNode<?>, Message.ServerResponse<?>> newControlClientService(
+            final @Control ClientConnectionFactory<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> connections,
+            final @Control ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> client,
+            final Serializers.ByteCodec<Object> serializer,
+            final ServiceMonitor monitor) {
+        SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> instance = SchemaClientService.create(
                 Materializer.<ControlZNode<?>, Message.ServerResponse<?>>fromHierarchy(
-                    ControlSchema.class,
-                    serializer,
-                    client),
-                ImmutableList.<Service.Listener>builder()
-                    .addAll(listeners)
-                    .add(new Service.Listener() {
-                                @Override
-                                public void starting() {
-                                    Services.startAndWait(client);
-                                }
-                            }).build());
-    }
-            
-    public static ControlClientService create(
-            Materializer<ControlZNode<?>, Message.ServerResponse<?>> materializer,
-            Iterable<? extends Service.Listener> listeners) {
-        return new ControlClientService(materializer, listeners);
+                        ControlSchema.class,
+                        serializer,
+                        client),
+                ImmutableList.<Service.Listener>of(
+                        new Service.Listener() {
+                            @Override
+                            public void starting() {
+                                Services.startAndWait(connections);
+                                Services.startAndWait(client);
+                            }
+                        }));
+        monitor.add(instance);
+        return instance;
     }
 
-    protected ControlClientService(
-            Materializer<ControlZNode<?>, Message.ServerResponse<?>> materializer,
-            Iterable<? extends Service.Listener> listeners) {
-        super(materializer, listeners);
+    @Override
+    protected void configure() {
+        bind(Key.get(new TypeLiteral<SchemaClientService<ControlZNode<?>, ?>>(){})).to(Key.get(new TypeLiteral<SchemaClientService<ControlZNode<?>, Message.ServerResponse<?>>>(){}));
+        bind(Key.get(new TypeLiteral<Materializer<ControlZNode<?>, ?>>(){}, Control.class)).to(Key.get(new TypeLiteral<Materializer<ControlZNode<?>, Message.ServerResponse<?>>>(){}, Control.class));
     }
 }

@@ -19,6 +19,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
+import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -46,7 +47,8 @@ import edu.uw.zookeeper.net.intravm.IntraVmEndpoint;
 import edu.uw.zookeeper.net.intravm.IntraVmEndpointFactory;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.control.ControlClientService;
+import edu.uw.zookeeper.safari.SafariModule;
+import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
@@ -62,7 +64,7 @@ public class PeerConnectionsService extends ServiceListenersService {
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends AbstractModule implements SafariModule {
 
         @SuppressWarnings("rawtypes")
         public static Factory<Codec<MessagePacket,MessagePacket,MessagePacket,MessagePacket>> codecFactory(
@@ -89,6 +91,11 @@ public class PeerConnectionsService extends ServiceListenersService {
         
         protected Module() {}
 
+        @Override
+        public Key<? extends Service> getKey() {
+            return Key.get(PeerConnectionsService.class);
+        }
+
         @Provides @Singleton
         public PeerConnectionsService getPeerConnectionsService(
                 @Peer Identifier id,
@@ -98,7 +105,7 @@ public class PeerConnectionsService extends ServiceListenersService {
                 ObjectMapper mapper,
                 ScheduledExecutorService scheduler,
                 Executor executor,
-                ControlClientService control,
+                @Control Materializer<ControlZNode<?>,?> control,
                 ServiceMonitor monitor,
                 Factory<InetSocketAddress> addresses) throws InterruptedException, ExecutionException, KeeperException {
             PeerConnectionsService instance = PeerConnectionsService.create(
@@ -109,7 +116,7 @@ public class PeerConnectionsService extends ServiceListenersService {
                     executor,
                     scheduler,
                     addresses,
-                    control.materializer());
+                    control);
             monitor.add(instance);
             return instance;
         }
@@ -123,12 +130,12 @@ public class PeerConnectionsService extends ServiceListenersService {
                 ScheduledExecutorService scheduler,
                 ObjectMapper mapper,
                 NetClientModule clients,
-                ControlClientService control) {
+                @Control Materializer<ControlZNode<?>,?> control) {
             ClientConnectionFactory<? extends Connection<MessagePacket,MessagePacket,?>> clientConnections =  
                     clients.getClientConnectionFactory(
                             codecFactory(mapper), 
                             connectionFactory()).get();
-            ClientPeerConnections instance = ClientPeerConnections.newInstance(id, timeOut, scheduler, peerAddressLookup(control.materializer()), clientConnections);
+            ClientPeerConnections instance = ClientPeerConnections.newInstance(id, timeOut, scheduler, peerAddressLookup(control), clientConnections);
             monitor.add(instance);
             return instance;
         }

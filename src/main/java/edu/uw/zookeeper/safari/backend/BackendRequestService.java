@@ -20,6 +20,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
+import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -45,6 +46,7 @@ import edu.uw.zookeeper.protocol.ZxidReference;
 import edu.uw.zookeeper.protocol.proto.IErrorResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.control.Control;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
@@ -59,6 +61,8 @@ import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 public class BackendRequestService extends ServiceListenersService {
 
@@ -66,13 +70,9 @@ public class BackendRequestService extends ServiceListenersService {
         return new Module();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends AbstractModule implements SafariModule {
 
         protected Module() {}
-        
-        @Override
-        protected void configure() {
-        }
 
         @Provides @Singleton
         public BackendRequestService getBackendRequestService(
@@ -80,13 +80,23 @@ public class BackendRequestService extends ServiceListenersService {
                 @Backend ServerInetAddressView address,
                 @Backend ZxidReference zxids,
                 @Control Materializer<ControlZNode<?>,?> control,
+                SchemaClientService<StorageZNode<?>,?> storage,
                 BackendSessionExecutors sessions,
                 ServerPeerConnections peers,
                 ServiceMonitor monitor) throws Exception {
-            BackendRequestService instance = BackendRequestService.newInstance(
-                    peer, address, zxids, control, sessions, peers, ImmutableList.<Service.Listener>of());
+            BackendRequestService instance = BackendRequestService.create(
+                    peer, address, zxids, control, storage, sessions, peers, ImmutableList.<Service.Listener>of());
             monitor.add(instance);
             return instance;
+        }
+
+        @Override
+        public Key<? extends Service> getKey() {
+            return Key.get(BackendRequestService.class);
+        }
+        
+        @Override
+        protected void configure() {
         }
     }
 
@@ -109,11 +119,12 @@ public class BackendRequestService extends ServiceListenersService {
         });
     }
     
-    public static BackendRequestService newInstance(
+    public static BackendRequestService create(
             Identifier peer,
             ServerInetAddressView address,
             ZxidReference zxids,
             Materializer<ControlZNode<?>,?> control,
+            SchemaClientService<StorageZNode<?>,?> storage,
             BackendSessionExecutors sessions,
             ServerPeerConnections peers,
             Iterable<? extends Service.Listener> listeners) {
@@ -124,6 +135,12 @@ public class BackendRequestService extends ServiceListenersService {
                 ImmutableList.<Service.Listener>builder()
                 .addAll(listeners)
                 .add(new Advertiser(peer, address, control)).build());
+        MessageXomegaSender.listen(
+                peers, 
+                storage.materializer().cache(), 
+                storage.cacheEvents(), 
+                instance, 
+                instance.logger());
         return instance;
     }
 

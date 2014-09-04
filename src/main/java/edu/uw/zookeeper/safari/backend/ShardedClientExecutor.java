@@ -14,7 +14,6 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
-import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Queues;
@@ -26,10 +25,13 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.LoggingFutureListener;
+import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.WaitingActor;
+import edu.uw.zookeeper.data.EmptyZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -47,30 +49,27 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.SafariException;
-import edu.uw.zookeeper.safari.VersionTransition;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
+import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeBranches;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeBranches;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
-import edu.uw.zookeeper.safari.volume.AssignedVolumeBranches;
-import edu.uw.zookeeper.safari.volume.EmptyVolume;
-import edu.uw.zookeeper.safari.volume.RegionAndBranches;
-import edu.uw.zookeeper.safari.volume.VolumeVersion;
+import edu.uw.zookeeper.safari.storage.volumes.VolumeVersionCache;
+import edu.uw.zookeeper.safari.storage.volumes.VolumeVersionCache.CachedVolume;
 
-public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C, ShardedClientExecutor.PendingShardedTask> {
+public final class ShardedClientExecutor<C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> extends PendingQueueClientExecutor<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>, ShardedClientExecutor.ShardedRequestTask, C, ShardedClientExecutor.PendingShardedTask> {
 
     public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> fromConnect(
-            Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
-            Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
-            Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume,
+            Function<Identifier, CachedVolume> idToVersion,
+            AsyncFunction<VersionedId, ? extends VolumeVersion<?>> versionToState,
             AsyncFunction<Identifier, ZNodePath> idToPath,
             ConnectTask<C> connect,
             ScheduledExecutorService scheduler) {
         return create(
                 idToVersion,
-                idToZxid,
-                idToVolume,
+                versionToState,
                 idToPath,
                 connect,
                 connect.task().second(),
@@ -79,9 +78,8 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
     }
 
     public static <C extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> ShardedClientExecutor<C> create(
-            Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
-            Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
-            Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume,
+            Function<Identifier, CachedVolume> idToVersion,
+            AsyncFunction<VersionedId, ? extends VolumeVersion<?>> versionToState,
             AsyncFunction<Identifier, ZNodePath> idToPath,
             ListenableFuture<ConnectMessage.Response> session,
             C connection,
@@ -89,9 +87,8 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             ScheduledExecutorService scheduler) {
         return new ShardedClientExecutor<C>(
                 idToVersion,
-                idToZxid,
-                idToVolume,
                 idToPath,
+                versionToState,
                 LogManager.getLogger(ShardedClientExecutor.class),
                 session, 
                 connection,
@@ -99,28 +96,19 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                 scheduler);
     }
 
-    protected final Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion;
-    protected final Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid;
-    protected final Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume;
-    protected final AsyncFunction<Identifier, ZNodePath> idToPath;
     protected final Tasks actor;
     
     protected ShardedClientExecutor(
-            Function<Identifier, ? extends Supplier<VersionTransition>> idToVersion,
-            Function<Identifier, ? extends AsyncFunction<Long,UnsignedLong>> idToZxid,
-            Function<Identifier, ? extends AsyncFunction<UnsignedLong,AssignedVolumeBranches>> idToVolume,
+            Function<Identifier, CachedVolume> idToVersion,
             AsyncFunction<Identifier, ZNodePath> idToPath,
+            AsyncFunction<VersionedId, ? extends VolumeVersion<?>> versionToState,
             Logger logger,
             ListenableFuture<ConnectMessage.Response> session,
             C connection,
             TimeValue timeOut,
             ScheduledExecutorService scheduler) {
         super(logger, session, connection, timeOut, scheduler);
-        this.idToVersion = idToVersion;
-        this.idToZxid = idToZxid;
-        this.idToVolume = idToVolume;
-        this.idToPath = idToPath;
-        this.actor = new Tasks(logger);
+        this.actor = new Tasks(idToVersion, idToPath, versionToState, logger);
     }
 
     @Override
@@ -171,8 +159,12 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         return actor.logger();
     }
 
-    protected static class ShardedRequestTask extends AbstractConnectionClientExecutor.RequestTask<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>> {
+    protected static final class ShardedRequestTask extends AbstractConnectionClientExecutor.RequestTask<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>> {
 
+        // keep a strong reference to our processor during processing
+        @SuppressWarnings("rawtypes")
+        protected ShardedClientExecutor.Tasks.ShardProcessor processor;
+        
         public ShardedRequestTask(
                 ShardedRequestMessage<?> task,
                 Promise<ShardedServerResponseMessage<?>> promise) {
@@ -181,7 +173,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         }
     }
     
-    public static class PendingShardedTask extends PendingTask {
+    public static final class PendingShardedTask extends PendingTask {
 
         public static PendingShardedTask create(
                 ShardedRequestTask sharded,
@@ -205,13 +197,62 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
         }
     }
 
-    protected class Tasks extends WaitingActor<ListenableFuture<?>,ShardedRequestTask> implements FutureCallback<PendingShardedTask>, SessionListener {
+    protected static final class SetOnRun<V> extends ToStringListenableFuture<V> implements Runnable {
 
+        public static <V> SetOnRun<V> forValue(V value) {
+            return new SetOnRun<V>(value);
+        }
+        
+        private final V value;
+        private final Promise<V> promise;
+
+        private SetOnRun(
+                V value) {
+            this(value, SettableFuturePromise.<V>create());
+        }
+        
+        private SetOnRun(
+                V value,
+                Promise<V> promise) {
+            this.value = value;
+            this.promise = promise;
+        }
+
+        @Override
+        public void run() {
+            if (!isDone()) {
+                delegate().set(value);
+            }
+        }
+
+        @Override
+        protected Promise<V> delegate() {
+            return promise;
+        }
+
+        @Override
+        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+            return super.toStringHelper(helper.addValue(value));
+        }
+    }
+    
+    protected final class Tasks extends WaitingActor<ListenableFuture<?>,ShardedRequestTask> implements FutureCallback<PendingShardedTask>, SessionListener {
+
+        private final Function<Identifier, CachedVolume> idToVersion;
+        private final AsyncFunction<Identifier, ZNodePath> idToPath;
+        private final AsyncFunction<VersionedId, ? extends VolumeVersion<?>> versionToState;
         private final ConcurrentMap<Identifier, ShardProcessor> processors;
         
-        protected Tasks(Logger logger) {
+        protected Tasks(
+                Function<Identifier, CachedVolume> idToVersion,
+                AsyncFunction<Identifier, ZNodePath> idToPath,
+                AsyncFunction<VersionedId, ? extends VolumeVersion<?>> versionToState,
+                Logger logger) {
             super(executor(), Queues.<ShardedRequestTask>newConcurrentLinkedQueue(), logger);
-            this.processors = new MapMaker().makeMap();
+            this.idToVersion = idToVersion;
+            this.idToPath = idToPath;
+            this.versionToState = versionToState;
+            this.processors = new MapMaker().softValues().makeMap();
         }
         
         public Logger logger() {
@@ -246,7 +287,7 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             if (!id.equals(Identifier.zero())) {
                 ShardProcessor processor = processors.get(id);
                 if (processor != null) {
-                    if (!processor.responses.send(result)) {
+                    if (!processor.responses().send(result)) {
                         result.getSharded().cancel(true);
                     }
                 }
@@ -280,16 +321,16 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             Identifier id = input.task().getShard().getValue();
             if (id.equals(Identifier.zero())) {
                 if (input.task().getRequest().record().opcode() == OpCode.CLOSE_SESSION) {
-                    ImmutableList.Builder<Promise<Identifier>> builder = ImmutableList.builder();
+                    ImmutableList.Builder<ListenableFuture<?>> builder = ImmutableList.builder();
                     for (Map.Entry<Identifier, ShardProcessor> e: processors.entrySet()) {
-                        if (e.getKey().equals(id) || e.getValue().requests.isEmpty()) {
+                        if (e.getValue().requests.isEmpty()) {
                             continue;
                         }
-                        Promise<Identifier> promise = SettableFuturePromise.create();
+                        SetOnRun<Identifier> promise = SetOnRun.forValue(e.getKey());
                         builder.add(promise);
                         e.getValue().requests.send(promise);
                     }
-                    ImmutableList<Promise<Identifier>> futures = builder.build();
+                    ImmutableList<ListenableFuture<?>> futures = builder.build();
                     if (!futures.isEmpty()) {
                         wait(Futures.allAsList(futures));
                         return false;
@@ -317,16 +358,20 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                         return false;
                     }
                     ZNodePath path = future.get();
-                    Supplier<VersionTransition> version = idToVersion.apply(id);
-                    AsyncFunction<Long,UnsignedLong> zxid = idToZxid.apply(id);
-                    AsyncFunction<UnsignedLong,AssignedVolumeBranches> volume = idToVolume.apply(id);
-                    processor = new ShardProcessor(id, path, version, zxid, volume);
-                    ShardProcessor existing = processors.putIfAbsent(id, processor);
-                    if (existing != null) {
-                        processor = existing;
+                    processor = new ShardProcessor(id, path);
+                    ShardProcessor existing = processors.put(id, processor);
+                    assert (existing != null);
+                }
+                if (mailbox.remove(input)) {
+                    input.processor = processor;
+                    if (processor.requests().send(input)) {
+                        return true;
+                    } else {
+                        input.processor = null;
+                        input.cancel(false);
                     }
                 }
-                return mailbox.remove(input) && processor.requests.send(input);
+                return false;
             }
         }
 
@@ -340,100 +385,291 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
             }
         }
         
-        // TODO: delete processors for transferred volumes
-        protected class ShardProcessor {
+        protected final class ShardProcessor {
 
-            private final Identifier identifier;
-            private final Supplier<VersionTransition> version;
-            private final AsyncFunction<Long,UnsignedLong> zxid;
-            private final AsyncFunction<UnsignedLong,? extends VolumeVersion<?>> volume;
+            private final CachedVolume version;
             private final RequestProcessor requests;
             private final ResponseProcessor responses;
             
-            public ShardProcessor(
-                    Identifier identifier,
-                    ZNodePath fromPrefix,
-                    Supplier<VersionTransition> version,
-                    AsyncFunction<Long,UnsignedLong> zxid,
-                    AsyncFunction<UnsignedLong,? extends VolumeVersion<?>> volume) {
-                this.identifier = identifier;
-                this.version = version;
-                this.zxid = zxid;
-                this.volume = volume;
-                final ZNodePath toPrefix = identifier.equals(Identifier.zero()) ? ZNodePath.root() : StorageSchema.Safari.Volumes.Volume.Root.pathOf(identifier);
+            protected ShardProcessor(
+                    Identifier id,
+                    ZNodePath fromPrefix) {
+                assert(!id.equals(Identifier.zero()));
+                this.version = idToVersion.apply(id);
+                final ZNodePath toPrefix = StorageSchema.Safari.Volumes.Volume.Root.pathOf(id);
                 this.requests = new RequestProcessor(MessageRequestPrefixTranslator.forPrefix(fromPrefix, toPrefix));
                 this.responses = new ResponseProcessor(MessageResponsePrefixTranslator.forPrefix(toPrefix, fromPrefix));
             }
+            
+            public RequestProcessor requests() {
+                return requests;
+            }
+            
+            public ResponseProcessor responses() {
+                return responses;
+            }
+            
+            protected abstract class TaskProcessor<V> implements Processor<V, ListenableFuture<?>> {
 
-            protected class RequestProcessor extends WaitingActor<ListenableFuture<?>,Promise<?>> {
+                protected Optional<VolumeVersionCache.LeasedVersion> lease;
 
+                protected TaskProcessor() {
+                    this.lease = Optional.absent();
+                }
+            }
+            
+            protected final class ShardedRequestTaskProcessor extends TaskProcessor<ShardedRequestTask> {
+            
                 private final MessageRequestPrefixTranslator translator;
-                
-                protected RequestProcessor(MessageRequestPrefixTranslator translator) {
-                    super(executor(), Queues.<Promise<?>>newConcurrentLinkedQueue(), logger());
+            
+                protected ShardedRequestTaskProcessor(
+                        MessageRequestPrefixTranslator translator) {
                     this.translator = translator;
+                }
+                
+                @SuppressWarnings("unchecked")
+                @Override
+                public ListenableFuture<?> apply(ShardedRequestTask input) throws Exception {
+                    VolumeVersionCache.Version last;
+                    if (lease.isPresent() && lease.get().getLease().getRemaining() > 0L) {
+                        last = lease.get();
+                    } else {
+                        version.getLock().readLock().lock();
+                        try {
+                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                            if (!latest.isPresent()) {
+                                return version.getFuture();
+                            }
+                            if (latest.get() instanceof VolumeVersionCache.LeasedVersion) {
+                                if (lease != latest) {
+                                    lease = (Optional<VolumeVersionCache.LeasedVersion>) latest;
+                                }
+                                if (lease.get().getLease().getRemaining() <= 0L) {
+                                    return version.getFuture();
+                                }
+                            } else if (lease.isPresent()) {
+                                lease = Optional.absent();
+                            }
+                            last = latest.get();
+                        } finally {
+                            version.getLock().readLock().unlock();
+                        }
+                    }
+                    final int cmp = last.getVersion().compareTo(input.task().getShard().getVersion());
+                    if (cmp < 0) {
+                        // I'm out of date
+                        version.getLock().readLock().lock();
+                        try {
+                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                            if (!latest.isPresent() || latest.get().equals(last)) {
+                                return version.getFuture();
+                            }
+                        } finally {
+                            version.getLock().readLock().unlock();
+                        }
+                        // missed an update, try again
+                        return apply(input);
+                    } else if ((cmp > 0) || (last instanceof VolumeVersionCache.PastVersion)) {
+                        // request is out of date
+                        input.setException(new OutdatedVersionException(input.task().getShard()));
+                    }
+                    final Message.ClientRequest<?> translated = 
+                            input.isDone() ? null : translator.apply(input.task().getRequest());
+                    return LoggingFutureListener.listen(
+                            logger, 
+                            PendingShardedTask.create(
+                                    input, 
+                                    new SoftReference<Message.ClientRequest<?>>(translated), 
+                                    SettableFuturePromise.<Message.ServerResponse<?>>create()));
+                }
+            }
+
+            protected final class PendingShardedTaskProcessor extends TaskProcessor<PendingShardedTask> {
+            
+                private final MessageResponsePrefixTranslator translator;
+                
+                protected PendingShardedTaskProcessor(
+                        MessageResponsePrefixTranslator translator) {
+                    super();
+                    this.translator = translator;
+                }
+                
+                public MessageResponsePrefixTranslator translator() {
+                    return translator;
+                }
+                
+                @SuppressWarnings("unchecked")
+                @Override
+                public ListenableFuture<?> apply(
+                        PendingShardedTask input) throws Exception {
+                    assert (input.isDone());
+                    ShardedRequestTask task = ((PendingShardedTask) input).getSharded();
+                    if (task.isDone()) {
+                        return task;
+                    } else if (input.isCancelled()) {
+                        task.cancel(false);
+                        return task;
+                    }
+                    Message.ServerResponse<?> response;
+                    try {
+                        response = input.get();
+                    } catch (ExecutionException e) {
+                        task.setException(e);
+                        return task;
+                    }
+                    VolumeVersionCache.Version last;
+                    if (lease.isPresent() && lease.get().getLease().getRemaining() > 0L) {
+                        last = lease.get();
+                    } else {
+                        version.getLock().readLock().lock();
+                        try {
+                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                            if (!latest.isPresent()) {
+                                return version.getFuture();
+                            }
+                            if (latest.get() instanceof VolumeVersionCache.LeasedVersion) {
+                                if (lease != latest) {
+                                    lease = (Optional<VolumeVersionCache.LeasedVersion>) latest;
+                                }
+                            } else if (lease.isPresent()) {
+                                lease = Optional.absent();
+                            }
+                            last = latest.get();
+                        } finally {
+                            version.getLock().readLock().unlock();
+                        }
+                    }
+                    if (task.task().getShard().getVersion().equals(last.getVersion())) {
+                        if (last instanceof VolumeVersionCache.LeasedVersion) {
+                            if (((VolumeVersionCache.LeasedVersion) last).getLease().getRemaining() > 0L) {
+                                task.set(ShardedServerResponseMessage.valueOf(task.task().getShard(), translator.apply(response)));
+                                return task;
+                            } else {
+                                version.getLock().readLock().lock();
+                                try {
+                                    Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                                    if (!latest.isPresent() || latest.get().equals(last)) {
+                                        return version.getFuture();
+                                    }
+                                } finally {
+                                    version.getLock().readLock().unlock();
+                                }
+                                // missed an update, try again
+                                return apply(input);
+                            }
+                        }
+                    } else {
+                        assert (task.task().getShard().getVersion().longValue() < last.getVersion().longValue());
+                    }
+                    Object result = null;
+                    version.getLock().readLock().lock();
+                    try {
+                        Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                        if (last.equals(latest.orNull())) {
+                            VolumeVersionCache.RecentHistory history = version.getRecentHistory(task.task().getShard().getVersion());
+                            assert (!history.getPast().isEmpty());
+                            for (VolumeVersionCache.PastVersion version: history.getPast()) {
+                                if (response.zxid() < version.getZxids().lowerEndpoint().longValue()) {
+                                    result = new OutdatedVersionException(task.task().getShard());
+                                    break;
+                                } else if (response.zxid() <= version.getZxids().upperEndpoint().longValue()) {
+                                    result = version.getVersion();
+                                    break;
+                                }
+                            }
+                            if ((result == null) && history.hasLeased()) {
+                                if (response.zxid() >= history.getLeased().getXalpha().longValue()) {
+                                    if (history.getLeased().getLease().getRemaining() <= 0L) {
+                                        return version.getFuture();
+                                    }
+                                    result = history.getLeased().getVersion();
+                                }
+                            }  
+                            if (result == null) {
+                                result = new OutdatedVersionException(task.task().getShard());
+                            }
+                        }
+                    } finally {
+                        version.getLock().readLock().unlock();
+                    }
+                    if (result == null) {
+                        // missed an update, try again
+                        return apply(input);
+                    }
+                    if (result instanceof UnsignedLong) {
+                        UnsignedLong v = (UnsignedLong) result;
+                        if (v.longValue() > task.task().getShard().getVersion().longValue()) {
+                            ZNodeName remaining = ZNodePath.fromString(((Records.PathGetter) task.task().getRequest().record()).getPath()).suffix(translator.getPrefix().from());
+                            if (!(remaining instanceof EmptyZNodeLabel)) {
+                                ListenableFuture<? extends VolumeVersion<?>> state = versionToState.apply(VersionedId.valueOf(v, version.getId()));
+                                if (!state.isDone()) {
+                                    return state;
+                                }
+                                if (!VolumeBranches.contains(((AssignedVolumeBranches) state.get()).getState().getValue().getBranches().keySet(), remaining)) {
+                                    result = new OutdatedVersionException(task.task().getShard());
+                                }
+                            }
+                        } else { 
+                            assert (v.equals(task.task().getShard().getVersion()));
+                        }
+                    }
+                    if (!task.isDone()) {
+                        if (result instanceof UnsignedLong) { 
+                            task.set(ShardedServerResponseMessage.valueOf(VersionedId.valueOf((UnsignedLong) result, version.getId()), translator.apply(response)));
+                        } else {
+                            task.setException((Exception) result);
+                        }
+                    }
+                    return task;
+                }
+            }
+
+            protected abstract class TaskProcessorActor<V, T extends TaskProcessor<V>> extends WaitingActor<ListenableFuture<?>,ListenableFuture<?>> {
+
+                private final T processor;
+                
+                protected TaskProcessorActor(
+                        T processor) {
+                    super(executor(), Queues.<ListenableFuture<?>>newConcurrentLinkedQueue(), logger());
+                    this.processor = processor;
+                }
+                
+                protected T processor() {
+                    return processor;
+                }
+            }
+
+            protected final class RequestProcessor extends TaskProcessorActor<ShardedRequestTask, ShardedRequestTaskProcessor> {
+
+                protected RequestProcessor(MessageRequestPrefixTranslator translator) {
+                    super(new ShardedRequestTaskProcessor(translator));
                 }
                 
                 public boolean isEmpty() {
                     return mailbox.isEmpty();
                 }
-
-                @SuppressWarnings("unchecked")
+                
                 @Override
-                protected boolean apply(Promise<?> input)
+                protected boolean apply(ListenableFuture<?> input)
                         throws Exception {
                     if (input instanceof ShardedRequestTask) {
-                        VersionTransition transition = version.get();
-                        if (!transition.getCurrent().isPresent() && !transition.getNext().isDone()) {
-                            wait(transition.getNext());
-                            return false;
-                        }
-                        UnsignedLong current = transition.getCurrent().get();
-                        if (current == null) {
-                            try {
-                                current = transition.getNext().get();
-                            } catch (ExecutionException e) {
-                                input.setException(e.getCause());
-                            } catch (CancellationException e) {
-                                input.cancel(true);
-                            } catch (InterruptedException e) {
-                                throw new AssertionError(e);
-                            }
-                        }
-                        final ShardedRequestTask request = (ShardedRequestTask) input;
-                        final int cmp = (current == null) ? 1 : current.compareTo(request.task().getShard().getVersion());
-                        if (cmp >= 0) {
-                            if (!mailbox.remove(input)) {
-                                return false;
-                            }
-                            Message.ClientRequest<?> translated = null;
-                            if (! input.isDone()) {
-                                if (cmp == 0) {
-                                    // green light
-                                    translated = translator.apply(request.task().getRequest());
-                                } else {
-                                    // request is out of date
-                                    input.setException(new OutdatedVersionException(request.task().getShard()));
+                        final ShardedRequestTask task = (ShardedRequestTask) input;
+                        ListenableFuture<?> future = processor().apply(task);
+                        if (future instanceof PendingShardedTask) {
+                            if (mailbox.remove(input)) {
+                                if (pending.send((PendingShardedTask) future)) {
+                                    return true;
                                 }
+                                task.processor = null;
+                                input.cancel(false);
                             }
-                            PendingShardedTask task = PendingShardedTask.create(
-                                    request, 
-                                    new SoftReference<Message.ClientRequest<?>>(translated), 
-                                    SettableFuturePromise.<Message.ServerResponse<?>>create());
-                            LoggingFutureListener.listen(logger, task);
-                            if (! pending.send(task)) {
-                                input.cancel(true);
-                                return false;
-                            }
-                            return true;
                         } else {
-                            // I am out of date
-                            wait(version.get().getNext());
-                            return false;
+                            wait(future);
                         }
+                        return false;
                     } else {
                         if (mailbox.remove(input)) {
-                            ((Promise<Identifier>) input).set(identifier);
+                            ((Runnable) input).run();
                             return true;
                         }
                         return false;
@@ -441,136 +677,31 @@ public class ShardedClientExecutor<C extends ProtocolConnection<? super Message.
                 }
             }
             
-            protected class ResponseProcessor extends WaitingActor<ListenableFuture<?>,ListenableFuture<?>> {
+            protected final class ResponseProcessor extends TaskProcessorActor<PendingShardedTask, PendingShardedTaskProcessor> {
 
-                private final MessageResponsePrefixTranslator translator;
-                
                 protected ResponseProcessor(
                         MessageResponsePrefixTranslator translator) {
-                    super(executor(), Queues.<ListenableFuture<?>>newConcurrentLinkedQueue(), logger());
-                    this.translator = translator;
+                    super(new PendingShardedTaskProcessor(translator));
                 }
 
                 @SuppressWarnings("unchecked")
                 @Override
                 protected boolean apply(ListenableFuture<?> input) throws Exception {
                     assert (input.isDone());
-                    VersionTransition transition = version.get();
-                    if (!transition.getCurrent().isPresent() && !transition.getNext().isDone()) {
-                        wait(transition.getNext());
-                        return false;
-                    }
-                    UnsignedLong current = transition.getCurrent().get();
                     if (input instanceof PendingShardedTask) {
-                        ShardedRequestTask task = ((PendingShardedTask) input).getSharded();
-                        Message.ServerResponse<?> response = null;
-                        try {
-                            response = (Message.ServerResponse<?>) input.get();
-                        } catch (ExecutionException e) {
-                            task.setException(e.getCause());
-                            onFailure(e.getCause());
+                        PendingShardedTask task = (PendingShardedTask) input;
+                        ListenableFuture<?> future = processor().apply(task);
+                        if (!(future instanceof ShardedRequestTask)) {
+                            wait(future);
                             return false;
-                        } catch (CancellationException e) {
-                            task.cancel(true);
-                        } catch (InterruptedException e) {
-                            throw new AssertionError(e);
                         }
-                        if (! task.isDone()) {
-                            if (current == null) {
-                                try {
-                                    current = transition.getNext().get();
-                                } catch (ExecutionException e) {
-                                    if (!(e.getCause() instanceof SafariException)) {
-                                        task.setException(e.getCause());
-                                        onFailure(e.getCause());
-                                        return false;
-                                    }
-                                } catch (CancellationException e) {
-                                    task.cancel(true);
-                                } catch (InterruptedException e) {
-                                    throw new AssertionError(e);
-                                }
-                            }
-                            
-                            if (! task.isDone()) {
-                                if (!Objects.equal(current, task.task().getShard().getVersion())) {
-                                    assert ((current == null) || (current.longValue() > task.task().getShard().getVersion().longValue()));
-                                    ZNodePath path = ZNodePath.fromString(((Records.PathGetter) task.task().record()).getPath());
-                                    try {
-                                        Optional<UnsignedLong> version = validate(response.zxid(), path);
-                                        if (!version.isPresent()) {
-                                            return false;
-                                        }
-                                    } catch (SafariException e) {
-                                        task.setException(e);
-                                    }
-                                }
-                                if (! task.isDone()) {
-                                    task.set(ShardedServerResponseMessage.valueOf(task.task().getShard(), translator.apply(response)));
-                                }
-                            }
-                        }
+                        task.getSharded().processor = null;
                     } else {
-                        // notification
-                        Message.ServerResponse<?> response = (Message.ServerResponse<?>) Futures.getUnchecked(input);
-                        if (current == null) {
-                            try {
-                                current = transition.getNext().get();
-                            } catch (ExecutionException e) {
-                                if (! (e.getCause() instanceof SafariException)) {
-                                    onFailure(e.getCause());
-                                    return false;                                    
-                                }
-                            } catch (InterruptedException e) {
-                                throw new AssertionError(e);
-                            } catch (Exception e) {
-                                onFailure(e);
-                                return false;
-                            }
-                        }
-
-                        // we don't have much context for notifications
-                        // so check every notification for validity
-                        ZNodePath path = ZNodePath.fromString(((Records.PathGetter) response.record()).getPath());
-                        Optional<UnsignedLong> version;
-                        try {
-                            version = validate(response.zxid(), path);
-                        } catch (SafariException e) {
-                            return mailbox.remove(input);
-                        }
-                        if (!version.isPresent()) {
-                            return false;
-                        }
-                        listeners.handleNotification(ShardedServerResponseMessage.valueOf(VersionedId.valueOf(version.get(), identifier), (Message.ServerResponse<IWatcherEvent>) translator.apply(response)));
+                        // pass on all notifications
+                        Message.ServerResponse<IWatcherEvent> response = (Message.ServerResponse<IWatcherEvent>) Futures.getUnchecked(input);
+                        listeners.handleNotification(ShardedServerResponseMessage.valueOf(VersionedId.valueOf(UnsignedLong.ZERO, version.getId()), (Message.ServerResponse<IWatcherEvent>) processor().translator().apply(response)));
                     }
                     return mailbox.remove(input);
-                }
-                
-                protected Optional<UnsignedLong> validate(long zxid, ZNodePath path) throws Exception {
-                    ListenableFuture<UnsignedLong> versionFuture = ShardProcessor.this.zxid.apply(zxid);
-                    if (!versionFuture.isDone()) {
-                        wait(versionFuture);
-                        return Optional.absent();
-                    }
-                    UnsignedLong version = versionFuture.get();
-                    ListenableFuture<? extends VolumeVersion<?>> volumeFuture = ShardProcessor.this.volume.apply(version);
-                    if (!volumeFuture.isDone()) {
-                        wait(volumeFuture);
-                        return Optional.absent();
-                    }
-                    VolumeVersion<?> volume = volumeFuture.get();
-                    if (volume instanceof EmptyVolume) {
-                        throw new OutdatedVersionException(VersionedId.valueOf(volume.getState().getVersion(), volume.getDescriptor().getId()));
-                    }
-                    
-                    ZNodePath prefix = volume.getDescriptor().getPath();
-                    ZNodeName remaining = path.suffix((prefix.isRoot()) ? 0: prefix.length());
-                    for (ZNodeName branch: ((RegionAndBranches) volume.getState().getValue()).getBranches().keySet()) {
-                        if (remaining.startsWith(branch)) {
-                            throw new OutdatedVersionException(VersionedId.valueOf(volume.getState().getVersion(), volume.getDescriptor().getId()));
-                        }
-                    }
-                    return Optional.of(version);
                 }
             }
         }

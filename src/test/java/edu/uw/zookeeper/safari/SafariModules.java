@@ -43,9 +43,7 @@ public class SafariModules {
                 server, 
                 components, 
                 name,
-                ImmutableList.<SafariModule>of(
-                        edu.uw.zookeeper.safari.backend.Module.create(),
-                        edu.uw.zookeeper.safari.frontend.Module.create()),
+                getModules(),
                 FrontendModules.FrontendProvider.class);
     }
 
@@ -88,10 +86,18 @@ public class SafariModules {
                 components,
                 format,
                 ImmutableList.<com.google.inject.Module>of(),
-                ImmutableList.<SafariModule>of(
-                        edu.uw.zookeeper.safari.backend.Module.create(),
-                        edu.uw.zookeeper.safari.frontend.Module.create()),
+                getModules(),
                 Modules.SafariServerModuleProvider.class,
                 FrontendModules.FrontendProvider.class);
+    }
+    
+    public static ImmutableList<SafariModule> getModules() {
+        return ImmutableList.<SafariModule>of(
+                edu.uw.zookeeper.safari.control.volumes.Module.create(),
+                edu.uw.zookeeper.safari.storage.volumes.Module.create(),
+                edu.uw.zookeeper.safari.storage.snapshot.Module.create(),
+                edu.uw.zookeeper.safari.volumes.Module.create(),
+                edu.uw.zookeeper.safari.backend.Module.create(),
+                edu.uw.zookeeper.safari.frontend.Module.create());
     }
 }

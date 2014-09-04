@@ -20,89 +20,67 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public class StorageClientService extends SchemaClientService<StorageZNode<?>> {
+public class StorageClientService extends AbstractModule implements SafariModule {
 
-    public static Module module() {
-        return new Module();
+    public static StorageClientService create() {
+        return new StorageClientService();
     }
     
-    public static class Module extends AbstractModule {
+    protected StorageClientService() {}
 
-        public static Module create() {
-            return new Module();
-        }
-        
-        protected Module() {}
-
-        @Provides @Storage @Singleton
-        public Materializer<StorageZNode<?>, Message.ServerResponse<?>> getStorageClientMaterializer(
-                StorageClientService service) throws InterruptedException, ExecutionException {
-            return service.materializer();
-        }
-        
-        @Provides @Singleton
-        public StorageClientService newStorageClientService(
-                Serializers.ByteCodec<Object> serializer,
-                @Storage ListenableFuture<? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>>> future,
-                ServiceMonitor monitor) throws InterruptedException, ExecutionException {
-            StorageClientService instance = StorageClientService.forClient(
-                    serializer,
-                    future.get(), 
-                    ImmutableList.<Service.Listener>of());
-            monitor.add(instance);
-            return instance;
-        }
-
-        @Override
-        protected void configure() {
-            bind(Key.get(new TypeLiteral<Materializer<StorageZNode<?>, ?>>(){}, Storage.class)).to(Key.get(new TypeLiteral<Materializer<StorageZNode<?>, Message.ServerResponse<?>>>(){}, Storage.class));
-        }
+    @Override
+    public Key<? extends Service> getKey() {
+        return Key.get(new TypeLiteral<SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>>>(){});
     }
-    
-    public static StorageClientService forClient(
-            Serializers.ByteCodec<Object> serializer,
-            final OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> client,
-            Iterable<? extends Service.Listener> listeners) {
-        return create(
+
+    @Provides @Singleton
+    public SchemaClientService<StorageZNode<?>, Message.ServerResponse<?>> newStorageClientService(
+            final Serializers.ByteCodec<Object> serializer,
+            final @Storage ListenableFuture<? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>>> future,
+            final ServiceMonitor monitor) throws InterruptedException, ExecutionException {
+        final OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>> client = future.get();
+        SchemaClientService<StorageZNode<?>, Message.ServerResponse<?>> instance = SchemaClientService.create(
                 Materializer.<StorageZNode<?>, Message.ServerResponse<?>>fromHierarchy(
-                    StorageSchema.class,
-                    serializer,
-                    client),
-                ImmutableList.<Service.Listener>builder()
-                    .addAll(listeners)
-                    .add(new Service.Listener() {
-                        @Override
-                        public void starting() {
-                            try {
-                                client.session().get();
-                            } catch (Exception e) {
-                                throw Throwables.propagate(e);
+                        StorageSchema.class,
+                        serializer,
+                        client),
+                ImmutableList.<Service.Listener>of(
+                        new Service.Listener() {
+                            @Override
+                            public void starting() {
+                                try {
+                                    client.session().get();
+                                } catch (Exception e) {
+                                    throw Throwables.propagate(e);
+                                }
                             }
-                        }
-                        @Override
-                        public void stopping(State from) {
-                            try {
-                                ConnectionClientExecutorService.disconnect(client);
-                            } catch (Exception e) {
-                                throw Throwables.propagate(e);
+                            @Override
+                            public void stopping(Service.State from) {
+                                try {
+                                    ConnectionClientExecutorService.disconnect(client);
+                                } catch (Exception e) {
+                                    throw Throwables.propagate(e);
+                                }
                             }
-                        }
-                    }).build());
-    }
-    
-    public static StorageClientService create(
-            Materializer<StorageZNode<?>, Message.ServerResponse<?>> materializer,
-            Iterable<? extends Service.Listener> listeners) {
-        return new StorageClientService(materializer, listeners);
+                        }));
+        monitor.add(instance);
+        return instance;
     }
 
-    protected StorageClientService(
-            Materializer<StorageZNode<?>, Message.ServerResponse<?>> materializer,
-            Iterable<? extends Service.Listener> listeners) {
-        super(materializer, listeners);
+    @Provides @Storage @Singleton
+    public Materializer<StorageZNode<?>, Message.ServerResponse<?>> getStorageClientMaterializer(
+            SchemaClientService<StorageZNode<?>, Message.ServerResponse<?>> service) {
+        return service.materializer();
+    }
+    
+    @Override
+    protected void configure() {
+        bind(Key.get(new TypeLiteral<SchemaClientService<StorageZNode<?>, ?>>(){})).to(Key.get(new TypeLiteral<SchemaClientService<StorageZNode<?>, Message.ServerResponse<?>>>(){}));
+        bind(Key.get(new TypeLiteral<Materializer<StorageZNode<?>, ?>>(){}, Storage.class)).to(Key.get(new TypeLiteral<Materializer<StorageZNode<?>, Message.ServerResponse<?>>>(){}, Storage.class));
     }
 }

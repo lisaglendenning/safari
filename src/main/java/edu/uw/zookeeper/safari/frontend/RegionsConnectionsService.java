@@ -56,13 +56,13 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
-import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.Peer;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.region.Region;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 public class RegionsConnectionsService extends ServiceListenersService implements AsyncFunction<Identifier, ClientPeerConnection<?>> {
 
@@ -78,7 +78,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         public RegionsConnectionsService getRegionsConnectionsService(
                 @Peer Identifier peer,
                 @Region Identifier region,
-                ControlClientService control,
+                SchemaClientService<ControlZNode<?>,?> control,
                 final ClientPeerConnections connections,
                 ServiceMonitor monitor) {
             RegionsConnectionsService instance = RegionsConnectionsService.defaults(
@@ -166,7 +166,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         return CachedFunction.create(cached, lookup, LogManager.getLogger(RegionsConnectionsService.class));
     }
 
-    public static Watchers.RunnableWatcher<?> newRegionDirectoryWatcher(
+    public static Watchers.RunnableServiceListener<?> newRegionDirectoryWatcher(
             Service service,
             WatchListeners watch,
             ClientExecutor<? super Records.Request,?,?> client) {
@@ -177,7 +177,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         final FixedQuery<?> query = FixedQuery.forRequests(client, 
                 Operations.Requests.sync().setPath(matcher.getPath()).build(),
                 Operations.Requests.getChildren().setPath(matcher.getPath()).setWatch(true).build());
-        return Watchers.RunnableWatcher.listen(Call.create(query), service, watch, matcher);
+        return Watchers.RunnableServiceListener.listen(Call.create(query), service, watch, matcher);
     }
     
     private final Identifier region;

@@ -1,40 +1,44 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.lang.annotation.Annotation;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Injector;
+import com.google.inject.Key;
+import com.google.inject.Provides;
 
-import edu.uw.zookeeper.safari.AbstractSafariModule;
+import edu.uw.zookeeper.safari.AbstractCompositeSafariModule;
 
-public class Module extends AbstractSafariModule {
+public class Module extends AbstractCompositeSafariModule<Service> {
 
     public static Class<Frontend> annotation() {
         return Frontend.class;
     }
 
     public static Module create() {
-        return new Module();
+        FrontendServerService.Module module = FrontendServerService.module();
+        return new Module(
+                module.getKey(),
+                ImmutableList.<com.google.inject.Module>of(
+                        RegionsConnectionsService.module(),
+                        XomegaCache.module(),
+                        FrontendServerExecutor.create(),
+                        FrontendConnections.create(),
+                        module));
     }
     
-    public Module() {}
-
-    @Override
-    public Class<? extends Annotation> getAnnotation() {
-        return annotation();
-    }
-
-    @Override    
-    protected ImmutableList<? extends com.google.inject.Module> getModules() {
-        return ImmutableList.<com.google.inject.Module>of(
-                RegionsConnectionsService.module(),
-                FrontendServerExecutor.create(),
-                FrontendConnections.create(),
-                FrontendServerService.module());
+    protected Module(
+            Key<? extends Service> key,
+            Iterable<? extends com.google.inject.Module> modules) {
+        super(key, modules);
     }
 
     @Override  
-    protected Class<? extends Service> getServiceType() {
-        return FrontendServerService.class;
+    public Key<Service> getKey() {
+        return Key.get(Service.class, annotation());
+    }
+    
+    @Provides @Frontend
+    public Service getService(Injector injector) {
+        return getInstance(injector);
     }
 }

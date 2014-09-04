@@ -18,9 +18,10 @@ import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.schema.CreateEntity;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 public class PeerConfiguration extends AbstractModule {
 
@@ -48,7 +49,7 @@ public class PeerConfiguration extends AbstractModule {
 
     @Provides @Peer @Singleton
     public Identifier getPeerIdConfiguration(
-            ControlClientService control, 
+            SchemaClientService<ControlZNode<?>,?> control, 
             @Peer ServerInetAddressView address,
             Configuration configuration) throws InterruptedException, ExecutionException, KeeperException {
         if(!control.isRunning()) {

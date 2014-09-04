@@ -6,7 +6,7 @@ import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
 
 import edu.uw.zookeeper.jackson.ListCoreSerializer;
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 
 public class BoundVolumeOperatorCoreSerializer extends ListCoreSerializer<BoundVolumeOperator<?>> {
 

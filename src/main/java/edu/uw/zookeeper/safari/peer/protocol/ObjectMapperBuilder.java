@@ -33,8 +33,8 @@ import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryDeserializer;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntrySerializer;
 import edu.uw.zookeeper.safari.control.schema.BoundVolumeOperatorDeserializer;
 import edu.uw.zookeeper.safari.control.schema.BoundVolumeOperatorSerializer;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
 
 public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.ObjectMapperBuilder {
 

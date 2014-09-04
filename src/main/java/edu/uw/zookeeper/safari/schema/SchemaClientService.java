@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.schema;
 
 import java.util.Set;
 
+import com.google.common.base.Objects;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -14,16 +15,22 @@ import edu.uw.zookeeper.data.NodeWatchEvent;
 import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.ZNodeCache;
 import edu.uw.zookeeper.data.ZNodeCache.CacheEvents;
-import edu.uw.zookeeper.protocol.Message;
+import edu.uw.zookeeper.protocol.Operation;
 
-public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>> extends ServiceListenersService {
+public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>, O extends Operation.ProtocolResponse<?>> extends ServiceListenersService {
 
-    protected final Materializer<E, Message.ServerResponse<?>> materializer;
+    public static <E extends Materializer.MaterializedNode<E,?>, O extends Operation.ProtocolResponse<?>> SchemaClientService<E,O> create(
+            Materializer<E,O> materializer,
+            Iterable<? extends Service.Listener> listeners) {
+        return new SchemaClientService<E,O>(materializer, listeners);
+    }
+    
+    protected final Materializer<E,O> materializer;
     protected final WatchListeners notifications;
     protected final WatchListeners cacheEvents;
 
     protected SchemaClientService(
-            Materializer<E, Message.ServerResponse<?>> materializer,
+            Materializer<E,O> materializer,
             Iterable<? extends Service.Listener> listeners) {
         this(WatchListeners.newInstance(materializer.schema().get()), 
                 WatchListeners.newInstance(materializer.schema().get()), 
@@ -33,7 +40,7 @@ public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>> e
     protected SchemaClientService(
             WatchListeners cacheEvents,
             WatchListeners notifications,
-            Materializer<E, Message.ServerResponse<?>> materializer,
+            Materializer<E,O> materializer,
             Iterable<? extends Service.Listener> listeners) {
         super(ImmutableList.<Service.Listener>builder()
                 .add(new CacheEventWatchListeners(
@@ -50,7 +57,7 @@ public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>> e
         this.cacheEvents = cacheEvents;
     }
     
-    public Materializer<E, Message.ServerResponse<?>> materializer() {
+    public Materializer<E,O> materializer() {
         return materializer;
     }
 
@@ -60,6 +67,11 @@ public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>> e
 
     public WatchListeners cacheEvents() {
         return cacheEvents;
+    }
+    
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this).addValue(((Class<?>)materializer.schema().get().root().get().getDeclaration()).getSimpleName()).toString();
     }
 
     public static class NotificationListeners extends Service.Listener implements Supplier<WatchListeners> {

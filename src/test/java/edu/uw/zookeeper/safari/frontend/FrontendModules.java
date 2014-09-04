@@ -23,9 +23,7 @@ public class FrontendModules {
         protected FrontendClientModule(Injector injector,
                 Class<? extends Provider<? extends Component<?>>> delegate) {
             super(injector, delegate);
-            // TODO Auto-generated constructor stub
         }
-        
     }
 
     public static class FrontendProvider extends RegionModules.RegionMemberProvider {

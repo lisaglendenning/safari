@@ -4,7 +4,9 @@ import java.util.Iterator;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
@@ -25,13 +27,23 @@ import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.protocol.ConnectMessage;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.ProtocolConnection;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.SessionListener;
+import edu.uw.zookeeper.protocol.Message.ClientSession;
+import edu.uw.zookeeper.protocol.Operation.Response;
+import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
+import edu.uw.zookeeper.safari.control.volumes.VolumeBranchesCache;
+import edu.uw.zookeeper.safari.control.volumes.VolumeDescriptorCache;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
-import edu.uw.zookeeper.safari.storage.StorageClientService;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
+import edu.uw.zookeeper.safari.storage.snapshot.SnapshotSessionExecutors;
+import edu.uw.zookeeper.safari.storage.volumes.VolumeVersionCache;
 
 public final class BackendSessionExecutors extends AbstractIdleService implements TaskExecutor<MessageSessionOpenRequest, MessageSessionOpenResponse>, Iterable<BackendSessionExecutors.BackendSessionExecutor> {
 
@@ -44,14 +56,61 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
         protected Module() {}
 
         @Provides @Singleton
+        public Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> newConnectToShardedClientExecutor(
+                final VolumeVersionCache versions,
+                final VolumeDescriptorCache descriptors,
+                final VolumeBranchesCache branches,
+                final ScheduledExecutorService scheduler) {
+            return new Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>(){
+                @Override
+                public ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> apply(ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> input) {
+                    return ShardedClientExecutor.fromConnect(
+                            versions.volumes(),
+                            branches,
+                            descriptors.descriptors().lookup(),
+                            input,
+                            scheduler);
+                }
+            };
+        }
+        
+        @Provides @Singleton
+        public AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<?>> newShardedClientExecutorFactory(
+                final AsyncFunction<MessageSessionOpenRequest, MessageSessionOpenRequest> openToRequest,
+                final AsyncFunction<MessageSessionOpenRequest, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> openToConnect,
+                final Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> connectToClient) {
+            return new AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
+                @Override
+                public ListenableFuture<ShardedClientExecutor<? extends ProtocolConnection<? super ClientSession, ? extends Response, ?, ?, ?>>> apply(
+                        final MessageSessionOpenRequest request) throws Exception {
+                    return Futures.transform(
+                            Futures.transform(
+                                openToRequest.apply(request), 
+                                openToConnect, 
+                                SameThreadExecutor.getInstance()),
+                            connectToClient, SameThreadExecutor.getInstance());
+                }
+            };
+        } 
+        
+        @Provides @Singleton
         public BackendSessionExecutors newBackendSessionExecutors(
                 AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<?>> clientFactory,
-                StorageClientService storage,
+                SchemaClientService<StorageZNode<?>,?> storage,
                 ServiceMonitor monitor) throws Exception {
-            BackendSessionExecutors instance = BackendSessionExecutors.create(
+            final BackendSessionExecutors instance = BackendSessionExecutors.create(
                     clientFactory);
             monitor.add(instance);
-            SnapshotWatcher.listen(instance, storage, instance);
+            SnapshotSessionExecutors.listen(
+                    instance, 
+                    storage, 
+                    new Function<Long, ShardedClientExecutor<?>>() {
+                        @Override
+                        public ShardedClientExecutor<?> apply(Long input) {
+                            BackendSessionExecutor executor = instance.get(input);
+                            return (executor == null) ? null : executor.client();
+                        }
+                    });
             return instance;
         }
         

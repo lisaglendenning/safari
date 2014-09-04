@@ -11,6 +11,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
+import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
@@ -29,18 +30,19 @@ import edu.uw.zookeeper.protocol.server.ServerConnectionsHandler;
 import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ServerProtocolConnection;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.control.ControlClientService;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.peer.Peer;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 public class FrontendServerService extends ServiceListenersService {
 
-    public static com.google.inject.Module module() {
+    public static Module module() {
         return Module.create();
     }
     
-    public static class Module extends AbstractModule {
+    public static class Module extends AbstractModule implements SafariModule {
 
         public static Module create() {
             return new Module();
@@ -49,14 +51,14 @@ public class FrontendServerService extends ServiceListenersService {
         protected Module() {}
         
         @Override
-        protected void configure() {
+        public Key<? extends Service> getKey() {
+            return Key.get(FrontendServerService.class);
         }
 
         @Provides @Frontend @Singleton
         public ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> newServerConnectionsHandler(
                 @Frontend TimeValue timeOut,
-                @Frontend ServerExecutor<FrontendSessionExecutor> server,
-                FrontendServerExecutor serverService,
+                ServerExecutor<FrontendSessionExecutor> server,
                 ScheduledExecutorService scheduler,
                 ServiceMonitor monitor) {
             ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> handler = 
@@ -71,7 +73,7 @@ public class FrontendServerService extends ServiceListenersService {
                 final @Frontend ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections,
                 @Peer Identifier peer,
                 @Frontend ServerInetAddressView address,
-                ControlClientService control,
+                SchemaClientService<ControlZNode<?>,?> control,
                 ServiceMonitor monitor) throws Exception {
             handler.addListener(
                     new Service.Listener() {
@@ -94,6 +96,10 @@ public class FrontendServerService extends ServiceListenersService {
                     ImmutableList.<Service.Listener>of());
             monitor.add(instance);
             return instance;
+        }
+
+        @Override
+        protected void configure() {
         }
     }
 

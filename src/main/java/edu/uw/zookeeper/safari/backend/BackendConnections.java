@@ -1,7 +1,5 @@
 package edu.uw.zookeeper.safari.backend;
 
-import java.util.concurrent.ScheduledExecutorService;
-
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
@@ -124,41 +122,4 @@ public class BackendConnections extends AbstractModule {
                     }
         };
     }
-
-    @Provides @Singleton
-    public Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> newConnectToShardedClientExecutor(
-            final VersionedVolumeCacheService volumes,
-            final ScheduledExecutorService scheduler) {
-        return new Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>(){
-            @Override
-            public ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> apply(ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> input) {
-                return ShardedClientExecutor.fromConnect(
-                        volumes.idToVersion(),
-                        volumes.idToZxid(),
-                        volumes.idToVolume(),
-                        volumes.idToPath(),
-                        input,
-                        scheduler);
-            }
-        };
-    }
-    
-    @Provides @Singleton
-    public AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<?>> newShardedClientExecutorFactory(
-            final AsyncFunction<MessageSessionOpenRequest, MessageSessionOpenRequest> openToRequest,
-            final AsyncFunction<MessageSessionOpenRequest, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> openToConnect,
-            final Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> connectToClient) {
-        return new AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
-            @Override
-            public ListenableFuture<ShardedClientExecutor<? extends ProtocolConnection<? super ClientSession, ? extends Response, ?, ?, ?>>> apply(
-                    final MessageSessionOpenRequest request) throws Exception {
-                return Futures.transform(
-                        Futures.transform(
-                            openToRequest.apply(request), 
-                            openToConnect, 
-                            SameThreadExecutor.getInstance()),
-                        connectToClient, SameThreadExecutor.getInstance());
-            }
-        };
-    } 
 }

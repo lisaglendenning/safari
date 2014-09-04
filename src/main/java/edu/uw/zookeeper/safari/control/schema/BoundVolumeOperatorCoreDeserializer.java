@@ -9,12 +9,12 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.google.common.collect.ImmutableMap;
 
 import edu.uw.zookeeper.jackson.ListCoreDeserializer;
-import edu.uw.zookeeper.safari.volume.AssignParameters;
-import edu.uw.zookeeper.safari.volume.MergeParameters;
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
-import edu.uw.zookeeper.safari.volume.VolumeOperator;
-import edu.uw.zookeeper.safari.volume.VolumeOperatorParameters;
-import edu.uw.zookeeper.safari.volume.SplitParameters;
+import edu.uw.zookeeper.safari.schema.volumes.AssignParameters;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.MergeParameters;
+import edu.uw.zookeeper.safari.schema.volumes.SplitParameters;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeOperatorParameters;
 
 public class BoundVolumeOperatorCoreDeserializer extends ListCoreDeserializer<BoundVolumeOperator<?>> {
 

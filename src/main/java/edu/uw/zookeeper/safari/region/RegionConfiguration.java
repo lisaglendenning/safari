@@ -12,9 +12,10 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.safari.control.ControlClientService;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.schema.CreateEntity;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.Storage;
 
 public class RegionConfiguration extends AbstractModule {
@@ -32,7 +33,7 @@ public class RegionConfiguration extends AbstractModule {
     @Provides @Region @Singleton
     public Identifier getRegionIdConfiguration(
             @Storage EnsembleView<ServerInetAddressView> ensemble,
-            ControlClientService control) throws InterruptedException, ExecutionException, KeeperException {
+            SchemaClientService<ControlZNode<?>,?> control) throws InterruptedException, ExecutionException, KeeperException {
         if (!control.isRunning()) {
             control.startAsync().awaitRunning();
         }

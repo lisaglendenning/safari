@@ -7,7 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 
 @SuppressWarnings("rawtypes")
 public class BoundVolumeOperatorDeserializer extends StdDeserializer<BoundVolumeOperator> {

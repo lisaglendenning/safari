@@ -37,7 +37,6 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
     public ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections() {
         return (ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>>) connections;
     }
-
     
     @Override
     public SocketAddress listenAddress() {

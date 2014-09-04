@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.safari.control.schema;
 
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 
 public final class OperatorVolumeLogEntry implements VolumeLogEntry<BoundVolumeOperator<?>> {
 

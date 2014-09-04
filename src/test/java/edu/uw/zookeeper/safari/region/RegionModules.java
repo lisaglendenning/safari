@@ -110,7 +110,6 @@ public class RegionModules {
                 ImmutableList.<SafariModule>builder()
                     .add(edu.uw.zookeeper.safari.control.Module.create())
                     .add(edu.uw.zookeeper.safari.peer.Module.create())
-                    .add(edu.uw.zookeeper.safari.data.Module.create())
                     .add(Module.create())
                     .addAll(safariModules)
                     .build(),

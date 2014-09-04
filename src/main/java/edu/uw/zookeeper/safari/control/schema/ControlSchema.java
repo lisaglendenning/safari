@@ -31,7 +31,6 @@ import edu.uw.zookeeper.data.NameTrie;
 import edu.uw.zookeeper.data.Sequential;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.SimpleLabelTrie;
-import edu.uw.zookeeper.data.StampedValue;
 import edu.uw.zookeeper.data.ValueNode;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -44,7 +43,7 @@ import edu.uw.zookeeper.safari.Hash;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.region.LeaderEpoch;
-import edu.uw.zookeeper.safari.volume.RegionAndLeaves;
+import edu.uw.zookeeper.safari.schema.volumes.RegionAndLeaves;
 
 @ZNode(acl=Acls.Definition.ANYONE_ALL)
 public class ControlSchema extends ControlZNode<Void> {
@@ -345,13 +344,11 @@ public class ControlSchema extends ControlZNode<Void> {
                     }
                     
                     public Optional<LeaderEpoch> getLeaderEpoch() {
-                        StampedValue<?> nodeData = data();
-                        StampedValue<Records.ZNodeStatGetter> nodeStat = stat();
-                        Identifier leader = (Identifier) nodeData.get();
-                        Records.ZNodeStatGetter stat = nodeStat.get();
-                        if ((leader != null) && (stat != null)) {
-                            if (nodeData.stamp() >= stat.getMzxid()) {
-                                return Optional.of(LeaderEpoch.of(stat.getVersion(), leader));
+                        if (data().stamp() == stat().stamp()) {
+                            Identifier leader = data().get();
+                            Records.ZNodeStatGetter stat = stat().get();
+                            if ((leader != null) && (stat != null)) {
+                                return Optional.of(LeaderEpoch.valueOf(stat.getVersion(), leader));
                             }
                         }
                         return Optional.absent();
@@ -676,13 +673,42 @@ public class ControlSchema extends ControlZNode<Void> {
                                 if (b.equals(Latest.LABEL)) {
                                     return 0;
                                 } else {
+                                    try {
+                                        UnsignedLong.valueOf(b.toString());
+                                    } catch (NumberFormatException e) {
+                                        return 1;
+                                    }
                                     return -1;
                                 }
                             } else {
+                                UnsignedLong aLong;
+                                try {
+                                    aLong = UnsignedLong.valueOf(a.toString());
+                                } catch (NumberFormatException e) {
+                                    aLong = null;
+                                }
                                 if (b.equals(Latest.LABEL)) {
-                                    return 1;
+                                    return (aLong == null) ? -1 : 1;
                                 } else {
-                                    return UnsignedLong.valueOf(a.toString()).compareTo(UnsignedLong.valueOf(b.toString()));
+                                    UnsignedLong bLong;
+                                    try {
+                                        bLong = UnsignedLong.valueOf(b.toString());
+                                    } catch (NumberFormatException e) {
+                                        bLong = null;
+                                    }
+                                    if (aLong != null) {
+                                        if (bLong != null) {
+                                            return aLong.compareTo(bLong);
+                                        } else {
+                                            return 1;
+                                        }
+                                    } else {
+                                        if (bLong != null) {
+                                            return -1;
+                                        } else {
+                                            return a.toString().compareTo(b.toString());
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -763,17 +789,9 @@ public class ControlSchema extends ControlZNode<Void> {
                         public Log log() {
                             return (Log) parent().get();
                         }
-                        
-                        public Lease lease() {
-                            return (Lease) get(Lease.LABEL);
-                        }
 
                         public State state() {
                             return (State) get(State.LABEL);
-                        }
-
-                        public Xomega xomega() {
-                            return (Xomega) get(Xomega.LABEL);
                         }
                         
                         public VersionedId id() {
@@ -784,7 +802,7 @@ public class ControlSchema extends ControlZNode<Void> {
                         
                         @SuppressWarnings("unchecked")
                         public NavigableMap<ZNodeName,Entry> entries() {
-                            return (NavigableMap<ZNodeName,Entry>) (NavigableMap<?,?>) tailMap(Xomega.LABEL, false);
+                            return (NavigableMap<ZNodeName,Entry>) (NavigableMap<?,?>) tailMap(State.LABEL, false);
                         }
 
                         @Override
@@ -944,30 +962,6 @@ public class ControlSchema extends ControlZNode<Void> {
                                 }
                             }
                         }
-                        
-                        @ZNode(dataType=UnsignedLong.class)
-                        public static class Lease extends ControlZNode<UnsignedLong> {
-    
-                            @Name
-                            public static ZNodeLabel LABEL = ZNodeLabel.fromString("lease");
-
-                            public static final AbsoluteZNodePath PATH = Version.PATH.join(LABEL);
-
-                            public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
-                                return Version.pathOf(id, version).join(LABEL);
-                            }
-                            
-                            public Lease(
-                                    ValueNode<ZNodeSchema> schema,
-                                    Serializers.ByteCodec<Object> codec,
-                                    NameTrie.Pointer<? extends ControlZNode<?>> parent) {
-                                super(schema, codec, parent);
-                            }
-
-                            public Version version() {
-                                return (Version) parent().get();
-                            }
-                        }
     
                         @ZNode(dataType=RegionAndLeaves.class)
                         public static class State extends ControlZNode<RegionAndLeaves> {
@@ -986,30 +980,6 @@ public class ControlSchema extends ControlZNode<Void> {
                             }
                             
                             public State(
-                                    ValueNode<ZNodeSchema> schema,
-                                    Serializers.ByteCodec<Object> codec,
-                                    NameTrie.Pointer<? extends ControlZNode<?>> parent) {
-                                super(schema, codec, parent);
-                            }
-
-                            public Version version() {
-                                return (Version) parent().get();
-                            }
-                        }
-
-                        @ZNode(dataType=Long.class)
-                        public static class Xomega extends ControlZNode<Long> {
-                            
-                            @Name
-                            public static ZNodeLabel LABEL = ZNodeLabel.fromString("xomega");
-
-                            public static final AbsoluteZNodePath PATH = Version.PATH.join(LABEL);
-
-                            public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
-                                return Version.pathOf(id, version).join(LABEL);
-                            }
-    
-                            public Xomega(
                                     ValueNode<ZNodeSchema> schema,
                                     Serializers.ByteCodec<Object> codec,
                                     NameTrie.Pointer<? extends ControlZNode<?>> parent) {

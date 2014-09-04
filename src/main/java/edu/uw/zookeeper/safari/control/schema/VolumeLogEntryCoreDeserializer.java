@@ -9,7 +9,7 @@ import com.fasterxml.jackson.core.JsonToken;
 
 import edu.uw.zookeeper.data.RelativeZNodePath;
 import edu.uw.zookeeper.jackson.JacksonCoreDeserializer;
-import edu.uw.zookeeper.safari.volume.BoundVolumeOperator;
+import edu.uw.zookeeper.safari.schema.volumes.BoundVolumeOperator;
 
 public class VolumeLogEntryCoreDeserializer implements JacksonCoreDeserializer<VolumeLogEntry<?>> {
 

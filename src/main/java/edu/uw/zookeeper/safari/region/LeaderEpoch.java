@@ -8,14 +8,14 @@ import edu.uw.zookeeper.safari.Identifier;
 
 public final class LeaderEpoch {
 
-    public static LeaderEpoch of(int epoch, Identifier leader) {
+    public static LeaderEpoch valueOf(int epoch, Identifier leader) {
         return new LeaderEpoch(epoch, leader);
     }
 
     private final int epoch;
     private final Identifier leader;
     
-    public LeaderEpoch(int epoch, Identifier leader) {
+    protected LeaderEpoch(int epoch, Identifier leader) {
         super();
         checkArgument(epoch >= 0);
         this.epoch = epoch;

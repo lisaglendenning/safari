@@ -53,6 +53,7 @@ public abstract class MessageTypes {
         for (Class<? extends MessageBody> cls: ImmutableList.of(
                 MessageHandshake.class,
                 MessageHeartbeat.class,
+                MessageXomega.class,
                 MessageSessionOpenRequest.class,
                 MessageSessionOpenResponse.class,
                 MessageSessionRequest.class,

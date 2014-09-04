@@ -20,25 +20,27 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.safari.control.schema.ControlZNode;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V> implements Callable<Optional<V>>, Runnable {
 
-    public static <T extends Records.Request, V> RequestUntil<T,V> create(ControlClientService control, Function<? super Records.Response, Optional<V>> transformer, WatchMatcher matcher, T task, Promise<V> promise) {
-        RequestUntil<T,V> instance = new RequestUntil<T,V>(control, transformer, matcher, task, promise);
+    public static <T extends Records.Request, V> RequestUntil<T,V> create(SchemaClientService<ControlZNode<?>,?> client, Function<? super Records.Response, Optional<V>> transformer, WatchMatcher matcher, T task, Promise<V> promise) {
+        RequestUntil<T,V> instance = new RequestUntil<T,V>(client, transformer, matcher, task, promise);
         instance.run();
         return instance;
     }
     
     protected final WatchMatcher matcher;
     protected final Function<? super Records.Response, Optional<V>> transformer;
-    protected final ControlClientService control;
+    protected final SchemaClientService<ControlZNode<?>,?> client;
     protected final CallablePromiseTask<RequestUntil<T,V>,V> delegate;
     protected Optional<? extends ListenableFuture<? extends Operation.ProtocolResponse<?>>> request;
     protected Optional<WatchTask> watch;
     
-    public RequestUntil(ControlClientService control, Function<? super Records.Response, Optional<V>> transformer, WatchMatcher matcher, T task, Promise<V> promise) {
+    public RequestUntil(SchemaClientService<ControlZNode<?>,?> client, Function<? super Records.Response, Optional<V>> transformer, WatchMatcher matcher, T task, Promise<V> promise) {
         super(task, promise);
-        this.control = control;
+        this.client = client;
         this.matcher = matcher;
         this.transformer = transformer;
         this.delegate = CallablePromiseTask.create(this, this);
@@ -54,7 +56,7 @@ public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V
     @Override
     public synchronized Optional<V> call() throws Exception {
         if (!request.isPresent()) {
-            request = Optional.of(control.materializer().submit(task));
+            request = Optional.of(client.materializer().submit(task));
             request.get().addListener(this, SameThreadExecutor.getInstance());
         } else if (request.get().isDone()) {
             Operation.ProtocolResponse<?> response = request.get().get();
@@ -84,20 +86,20 @@ public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V
     protected class WatchTask implements Runnable, Callable<ListenableFuture<? extends Operation.ProtocolResponse<?>>>, WatchMatchListener  {
 
         public WatchTask() {
-            control.notifications().subscribe(this);
+            client.notifications().subscribe(this);
             addListener(this, SameThreadExecutor.getInstance());
         }
 
         @Override
         public ListenableFuture<? extends Operation.ProtocolResponse<?>> call() {
-            return control.materializer().submit(((Operations.Requests.WatchBuilder<?, ?>) Operations.Requests.fromRecord(task)).setWatch(true).build());
+            return client.materializer().submit(((Operations.Requests.WatchBuilder<?, ?>) Operations.Requests.fromRecord(task)).setWatch(true).build());
         }
         
         @Override
         public void run() {
             synchronized (RequestUntil.this) {
                 if (isDone()) {
-                    control.notifications().unsubscribe(watch.get());
+                    client.notifications().unsubscribe(watch.get());
                 }
             }
         }

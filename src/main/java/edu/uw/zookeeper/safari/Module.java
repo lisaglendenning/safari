@@ -34,14 +34,16 @@ public class Module extends ServiceApplicationModule {
         return new Module();
     }
     
-
     public static ImmutableList<? extends SafariModule> newSafariModules() {
         return ImmutableList.of(
                 edu.uw.zookeeper.safari.control.Module.create(),
-                edu.uw.zookeeper.safari.peer.Module.create(),
-                edu.uw.zookeeper.safari.data.Module.create(),
                 edu.uw.zookeeper.safari.storage.Module.create(),
+                edu.uw.zookeeper.safari.peer.Module.create(),
                 edu.uw.zookeeper.safari.region.Module.create(),
+                edu.uw.zookeeper.safari.control.volumes.Module.create(),
+                edu.uw.zookeeper.safari.storage.volumes.Module.create(),
+                edu.uw.zookeeper.safari.storage.snapshot.Module.create(),
+                edu.uw.zookeeper.safari.volumes.Module.create(),
                 edu.uw.zookeeper.safari.backend.Module.create(),
                 edu.uw.zookeeper.safari.frontend.Module.create());
     }
