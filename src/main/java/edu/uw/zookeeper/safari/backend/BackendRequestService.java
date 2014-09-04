@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.backend;
 
 import java.nio.channels.ClosedChannelException;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
@@ -10,6 +11,7 @@ import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -24,11 +26,13 @@ import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.client.CreateOrEquals;
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
@@ -61,6 +65,7 @@ import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnections;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedResponseMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -80,12 +85,37 @@ public class BackendRequestService extends ServiceListenersService {
                 @Backend ServerInetAddressView address,
                 @Backend ZxidReference zxids,
                 @Control Materializer<ControlZNode<?>,?> control,
+                final Supplier<FutureTransition<RegionRoleService>> role,
                 SchemaClientService<StorageZNode<?>,?> storage,
                 BackendSessionExecutors sessions,
                 ServerPeerConnections peers,
                 ServiceMonitor monitor) throws Exception {
             BackendRequestService instance = BackendRequestService.create(
-                    peer, address, zxids, control, storage, sessions, peers, ImmutableList.<Service.Listener>of());
+                    peer, address, zxids, control, storage, sessions, peers, 
+                    ImmutableList.<Service.Listener>of(
+                            new Service.Listener() {
+                                
+                                final EnumSet<EnsembleRole> ROLES = EnumSet.of(EnsembleRole.FOLLOWING, EnsembleRole.LEADING);
+                                
+                                @Override
+                                public void starting() {
+                                    FutureTransition<RegionRoleService> transition = role.get();
+                                    RegionRoleService player = null;
+                                    do {
+                                        if (transition.getCurrent().isPresent()) {
+                                            player =  transition.getCurrent().get();
+                                        }
+                                        if ((player == null) || !ROLES.contains(player.getRole().getRole())) {
+                                            try {
+                                                player = transition.getNext().get();
+                                            } catch (Exception e) {
+                                                throw Throwables.propagate(e);
+                                            }
+                                            transition = role.get();
+                                        }
+                                    } while (!ROLES.contains(player.getRole().getRole()));
+                                }
+                            }));
             monitor.add(instance);
             return instance;
         }

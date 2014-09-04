@@ -7,6 +7,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -26,6 +27,7 @@ import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
+import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.safari.Identifier;
@@ -55,10 +57,13 @@ public class RegionRoleService extends ServiceListenersService {
         }
 
         @Provides @Singleton
-        public RoleListener newRoleListener(
+        public CurrentRoleService newRoleListener(
                 ListenersFactory factory,
-                Automatons.EventfulAutomaton<RegionRole,LeaderEpoch> role) {
-            return RoleListener.create(factory, role);
+                Automatons.EventfulAutomaton<RegionRole,LeaderEpoch> role,
+                ServiceMonitor monitor) {
+            final CurrentRoleService instance = CurrentRoleService.create(factory, role, ImmutableList.<Service.Listener>of());
+            monitor.add(instance);
+            return instance;
         }
 
         @Provides
@@ -69,12 +74,12 @@ public class RegionRoleService extends ServiceListenersService {
         
         @Override
         protected void configure() {
-            bind(new TypeLiteral<Supplier<FutureTransition<RegionRoleService>>>(){}).to(RoleListener.class);
+            bind(new TypeLiteral<Supplier<FutureTransition<RegionRoleService>>>(){}).to(CurrentRoleService.class);
         }
 
         @Override
-        public Key<? extends Service.Listener> getKey() {
-            return Key.get(RoleListener.class);
+        public Key<? extends Service> getKey() {
+            return Key.get(CurrentRoleService.class);
         }
     }
     
@@ -109,22 +114,25 @@ public class RegionRoleService extends ServiceListenersService {
         }
     }
 
-    public static final class RoleListener extends LoggingServiceListener<RoleListener> implements Automatons.AutomatonListener<RegionRole>, Supplier<FutureTransition<RegionRoleService>> {
+    public static final class CurrentRoleService extends ServiceListenersService implements Automatons.AutomatonListener<RegionRole>, Supplier<FutureTransition<RegionRoleService>> {
         
-        public static RoleListener create(
+        public static CurrentRoleService create(
                 Function<RegionRole, ? extends RegionRoleService> factory,
-                Automatons.EventfulAutomaton<RegionRole,?> role) {
-            return new RoleListener(factory, role);
+                Automatons.EventfulAutomaton<RegionRole,?> role,
+                Iterable<? extends Service.Listener> listeners) {
+            return new CurrentRoleService(factory, role, listeners);
         }
         
         private final Automatons.EventfulAutomaton<RegionRole,?> role;
         private final TransitionActor actor;
         
-        protected RoleListener(
+        protected CurrentRoleService(
                 Function<RegionRole, ? extends RegionRoleService> factory,
-                Automatons.EventfulAutomaton<RegionRole,?> role) {
+                Automatons.EventfulAutomaton<RegionRole,?> role,
+                Iterable<? extends Service.Listener> listeners) {
+            super(listeners);
             this.role = role;
-            this.actor = new TransitionActor(factory, logger);
+            this.actor = new TransitionActor(new ListeningServiceFactory(factory), logger);
         }
         
         @Override
@@ -135,38 +143,77 @@ public class RegionRoleService extends ServiceListenersService {
         @Override
         public void handleAutomatonTransition(
             Automaton.Transition<RegionRole> transition) {
-            logger.debug("TRANSITION ({}) ({})", delegate(), transition);
+            logger.debug("TRANSITION ({}) ({})", transition, this);
             actor.send(transition);
         }
     
         @Override
-        public void starting() {
-            // replay
-            handleAutomatonTransition(Automaton.Transition.create(RegionRole.unknown(), role.state()));
-            super.starting();
-            role.subscribe(this);
-        }
-    
-        @Override
-        public void stopping(Service.State from) {
-            super.stopping(from);
-            stop();
-        }
-    
-        @Override
-        public void failed(Service.State from, Throwable failure) {
-            super.failed(from, failure);
-            stop();
-        }
-        
-        @Override
         public String toString() {
             return Objects.toStringHelper(this).toString();
         }
+
+        @Override
+        protected void startUp() throws Exception {
+            super.startUp();
+            // replay
+            handleAutomatonTransition(Automaton.Transition.create(RegionRole.unknown(), role.state()));
+            role.subscribe(this);
+        }
         
-        protected void stop() {
-            role.unsubscribe(this);
-            actor.stop();
+        protected void shutDown() throws Exception {
+            try {
+                super.shutDown();
+                Optional<RegionRoleService> role = actor.get().getCurrent();
+                if (role.isPresent() && role.get().state() == Service.State.FAILED) {
+                    throw new IllegalStateException(role.get().failureCause());
+                }
+            } finally {
+                role.unsubscribe(this);
+                actor.stop();
+            }
+        }
+        
+        protected final class ListeningServiceFactory extends LoggingServiceListener<Function<RegionRole, ? extends RegionRoleService>> implements Function<RegionRole, RegionRoleService> {
+
+            protected ListeningServiceFactory(
+                    Function<RegionRole, ? extends RegionRoleService> delegate) {
+                super(delegate, CurrentRoleService.this.logger);
+            }
+            
+            @Override
+            public RegionRoleService apply(RegionRole input) {
+                RegionRoleService result = delegate().apply(input);
+                Services.listen(this, result);
+                return result;
+            }
+
+            @Override
+            public void terminated(Service.State from) {
+                super.terminated(from);
+                checkValidTermination();
+            }
+        
+            @Override
+            public void failed(Service.State from, Throwable failure) {
+                super.failed(from, failure);
+                checkValidTermination();
+            }
+            
+            protected void checkValidTermination() {
+                synchronized (actor) {
+                    if (actor.isEmpty() && actor.get().getCurrent().isPresent()) {
+                        switch (actor.get().getCurrent().get().state()) {
+                        case FAILED:
+                        case STOPPING:
+                        case TERMINATED:
+                            Services.stop(CurrentRoleService.this);
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+                }
+            }
         }
         
         protected static final class TransitionActor extends Actors.QueuedActor<Automaton.Transition<RegionRole>> implements Supplier<FutureTransition<RegionRoleService>> {
@@ -180,6 +227,10 @@ public class RegionRoleService extends ServiceListenersService {
                 super(Queues.<Automaton.Transition<RegionRole>>newConcurrentLinkedQueue(), logger);
                 this.factory = factory;
                 this.player = FutureTransition.absent(SettableFuturePromise.<RegionRoleService>create());
+            }
+            
+            public boolean isEmpty() {
+                return mailbox.isEmpty();
             }
             
             @Override

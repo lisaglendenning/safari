@@ -518,7 +518,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
             public WatchProcessor() {
                 super(Queues.<Pair<AbsoluteZNodePath, Watch>>newConcurrentLinkedQueue(), 
                         LogManager.getLogger(WatchProcessor.class));
-                this.ephemeralsPath = getWatchMatcher().getPath().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.PATH);
+                this.ephemeralsPath = getWatchMatcher().getPath().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.LABEL);
                 this.requests = ImmutableMap.
                         <WatchType, Operations.PathBuilder<? extends Records.Request, ?>>of(WatchType.DATA, Operations.Requests.exists().setWatch(true));
             }

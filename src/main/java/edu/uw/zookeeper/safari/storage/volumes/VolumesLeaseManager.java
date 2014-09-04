@@ -23,6 +23,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
+import com.google.common.util.concurrent.Service.State;
 
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
@@ -214,6 +215,17 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
     }
     
     @Override
+    public void starting() {
+        logger.debug("STARTING ({})", delegate);
+    }
+    
+    @Override
+    public void running() {
+        getWatch().subscribe(this);
+        super.running();
+    }
+    
+    @Override
     public void stopping(Service.State from) {
         super.stopping(from);
         for (VolumeLeaseManager manager: managers.values()) {
@@ -385,16 +397,21 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
         
         protected synchronized void stop() {
             managers.remove(getVolume().getValue(), this);
-            if (future.isPresent()) {
+            if (future.isPresent() && !future.get().isDone()) {
                 future.get().cancel(false);
             }
         }
 
         protected ListenableFuture<Boolean> doLease() {
-            try {
-                return renewal.apply(getVolume());
-            } catch (Exception e) {
-                return Futures.immediateFailedFuture(e);
+            if (this == managers.get(volume.getValue())) {
+                try {
+                    return Futures.nonCancellationPropagating(
+                            renewal.apply(getVolume()));
+                } catch (Exception e) {
+                    return Futures.immediateFailedFuture(e);
+                }
+            } else {
+                return Futures.immediateCancelledFuture();
             }
         }
         
@@ -426,7 +443,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
             if (future.isPresent()) {
                 if (future.get().isDone()) {
                     if (future.get().isCancelled()) {
-                        stopping(state());
+                        stopping(State.RUNNING);
                     } else {
                         Object result = future.get().get();
                         if (result instanceof Pair) {

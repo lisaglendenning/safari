@@ -289,6 +289,8 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
                     scheduler, 
                     result,
                     storage);
+            // TODO subscribe at running (?)
+            // or fill in async part
             XalphaCreator.listen(
                     latest, 
                     // assumes that input is cached

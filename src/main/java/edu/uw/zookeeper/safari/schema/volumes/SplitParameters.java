@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.safari.schema.volumes;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
@@ -28,8 +30,8 @@ public class SplitParameters extends AssignParameters {
             @JsonProperty("region") Identifier region,
             @JsonProperty("version") UnsignedLong version) {
         super(region, version);
-        this.branch = branch;
-        this.leaf = leaf;
+        this.branch = checkNotNull(branch);
+        this.leaf = checkNotNull(leaf);
     }
 
     public final ZNodeName getBranch() {

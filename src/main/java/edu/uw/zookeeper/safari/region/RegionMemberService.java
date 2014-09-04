@@ -84,7 +84,7 @@ public class RegionMemberService extends ServiceListenersService {
                 @Region Identifier region,
                 Supplier<? extends ListenableFuture<Optional<Automaton.Transition<RegionRole>>>> proposer,
                 Automatons.EventfulAutomaton<RegionRole, LeaderEpoch> automaton,
-                RegionRoleService.RoleListener role,
+                Supplier<FutureTransition<RegionRoleService>> role,
                 SchemaClientService<ControlZNode<?>,?> control,
                 final PeerConnectionsService connections,
                 ServiceMonitor monitor) {
@@ -103,7 +103,6 @@ public class RegionMemberService extends ServiceListenersService {
                                             Services.startAndWait(connections);
                                         }
                                     }));
-            Services.listen(role, instance);
             monitor.add(instance);
             return instance;
         }

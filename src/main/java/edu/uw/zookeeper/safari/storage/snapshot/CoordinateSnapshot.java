@@ -305,7 +305,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             }
             return Optional.of(future);
         }
-        case 4:
+        case 3:
         {
             Long toXomega;
             try {
@@ -323,7 +323,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             }
             return Optional.of(future);
         }
-        case 5:
+        case 4:
         {
             try {
                 input.get(input.size()-1).get();
@@ -334,7 +334,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             }
             return Optional.of(Futures.immediateFuture(Boolean.TRUE));
         }
-        case 6:
+        case 5:
             return Optional.absent();
         default:
             throw new AssertionError();

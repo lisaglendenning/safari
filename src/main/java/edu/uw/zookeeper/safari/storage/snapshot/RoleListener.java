@@ -67,7 +67,7 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
     public void onSuccess(RegionRoleService result) {
         super.onSuccess(result);
         if (result.getRole().getRole() == EnsembleRole.LEADING) {
-            CleanSnapshot.listen(storage.materializer(), storage.cacheEvents(), result);
+            CleanSnapshot.listen(storage.materializer(), storage.cacheEvents(), result, result.logger());
             ExpireSnapshotSessions.listen(storage.materializer(), storage.cacheEvents(), result);
         }
     }

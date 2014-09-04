@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Function;
@@ -69,10 +68,10 @@ public class FrontendServerService extends ServiceListenersService {
         
         @Provides @Singleton
         public FrontendServerService getFrontendServerService(
-                final @Frontend ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> handler,
-                final @Frontend ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections,
                 @Peer Identifier peer,
                 @Frontend ServerInetAddressView address,
+                final @Frontend ServerConnectionsHandler<? extends ServerProtocolConnection<?,?>> handler,
+                final @Frontend ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections,
                 SchemaClientService<ControlZNode<?>,?> control,
                 ServiceMonitor monitor) throws Exception {
             handler.addListener(
@@ -138,11 +137,6 @@ public class FrontendServerService extends ServiceListenersService {
     protected FrontendServerService(
             Iterable<? extends Service.Listener> listeners) {
         super(listeners);
-    }
-
-    @Override
-    protected Executor executor() {
-        return SameThreadExecutor.getInstance();
     }
 
     protected static class Advertiser extends Service.Listener {

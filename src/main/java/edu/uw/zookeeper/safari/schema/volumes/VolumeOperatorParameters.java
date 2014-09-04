@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.safari.schema.volumes;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.base.Objects;
 import com.google.common.primitives.UnsignedLong;
 
@@ -9,7 +11,7 @@ public abstract class VolumeOperatorParameters {
     
     protected VolumeOperatorParameters(
             UnsignedLong version) {
-        this.version = version;
+        this.version = checkNotNull(version);
     }
     
     public final UnsignedLong getVersion() {
