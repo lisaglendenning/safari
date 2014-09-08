@@ -7,9 +7,10 @@ import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Actors;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 
 public abstract class WaitingActor<T extends ListenableFuture<?>,V> extends Actors.ExecutedPeekingQueuedActor<V> {
     
@@ -22,7 +23,7 @@ public abstract class WaitingActor<T extends ListenableFuture<?>,V> extends Acto
     
     public synchronized T wait(T future) {
         this.waiting = Optional.of(future);
-        future.addListener(this, SameThreadExecutor.getInstance());
+        future.addListener(this, MoreExecutors.directExecutor());
         return future;
     }
 

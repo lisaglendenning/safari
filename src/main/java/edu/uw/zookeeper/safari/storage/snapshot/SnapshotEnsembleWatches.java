@@ -16,7 +16,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
@@ -31,6 +31,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.WatchType;
 import edu.uw.zookeeper.client.ClientExecutor;
@@ -39,7 +40,6 @@ import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.Materializer;
@@ -130,7 +130,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                             wchc.run();
                             return wchc;
                         }
-                    }, SameThreadExecutor.getInstance());
+                    });
         final ListenableFuture<FourLetterWords.Wchc> future;
         if (input.isEmpty()) {
             future = wchc;
@@ -143,14 +143,14 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                                 throws Exception {
                             return CreateWatches.call(input, prefix, labelOf, codec, client, LogManager.getLogger(SnapshotEnsembleWatches.class));
                         }
-                    }, SameThreadExecutor.getInstance());
+                    });
         }
         return Optional.of(future);
     }
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).toString();
+        return MoreObjects.toStringHelper(this).toString();
     }
     
     protected static final class CreateWatches<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Runnable, Callable<Optional<FourLetterWords.Wchc>> {
@@ -197,7 +197,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
             this.wchc = wchc;
             this.requests = requests;
             this.delegate = CallablePromiseTask.create(this, promise);
-            addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
         }
 
         @Override
@@ -218,7 +218,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
         }
         
         @Override
-        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
             return super.toStringHelper(helper.addValue(wchc).addValue(toString(delegate)));
         }
     }
@@ -233,7 +233,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                 Promise<FourLetterWords.Wchc> delegate) {
             super(task, delegate);
             this.builder = builder;
-            addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
         }
 
         @Override
@@ -247,12 +247,17 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                         } catch (InterruptedException e) {
                             throw Throwables.propagate(e);
                         } catch (ExecutionException e) {
+                            if (e.getCause() instanceof KeeperException.NoNodeException) {
+                                continue;
+                            }
                             setException(e);
                             return;
                         }
-                        builder.putAll(entry.getKey(), entry.getValue());
+                        if (!entry.getValue().isEmpty()) {
+                            builder.putAll(entry.getKey(), entry.getValue());
+                        }
                     } else {
-                        task.peek().addListener(this, SameThreadExecutor.getInstance());
+                        task.peek().addListener(this, MoreExecutors.directExecutor());
                         return;
                     }
                 }
@@ -285,8 +290,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
             }
             return Futures.transform(
                     Futures.allAsList(futures.build()),
-                    new QueueIterator(),
-                    SameThreadExecutor.getInstance());
+                    new QueueIterator());
         }
         
         protected static final class QueueIterator implements Function<List<Queue<ValueSessionLookup<Collection<ZNodePath>>>>, PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>>> {
@@ -310,20 +314,26 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
         }
     }
 
-    public static abstract class FilteredWchc implements Function<FourLetterWords.Wchc, FourLetterWords.Wchc> {
+    public static final class FilteredWchc implements Function<FourLetterWords.Wchc, FourLetterWords.Wchc> {
 
-        protected FilteredWchc() {}
+        private final Function<Map.Entry<Long, Collection<ZNodePath>>, Collection<ZNodePath>> filter;
+        
+        public FilteredWchc(
+                Function<Map.Entry<Long, Collection<ZNodePath>>, Collection<ZNodePath>> filter) {
+            this.filter = filter;
+        }
         
         @Override
         public FourLetterWords.Wchc apply(FourLetterWords.Wchc input) {
-            ImmutableSetMultimap.Builder<Long, ZNodePath> filtered = ImmutableSetMultimap.builder();
+            ImmutableSetMultimap.Builder<Long, ZNodePath> builder = ImmutableSetMultimap.builder();
             for (Map.Entry<Long, Collection<ZNodePath>> entry: input) {
-                filtered.putAll(entry.getKey(), filter(entry));
+                Collection<ZNodePath> filtered = filter.apply(entry);
+                if (!filtered.isEmpty()) {
+                    builder.putAll(entry.getKey(), filtered);
+                }
             }
-            return FourLetterWords.Wchc.fromMultimap(filtered.build());
+            return FourLetterWords.Wchc.fromMultimap(builder.build());
         }
-        
-        protected abstract Iterable<ZNodePath> filter(Map.Entry<Long, Collection<ZNodePath>> entry);
     }
     
     public static final class SessionLookupIterator extends AbstractIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>> implements PeekingIterator<ListenableFuture<Map.Entry<Long, Collection<ZNodePath>>>> {
@@ -351,7 +361,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                 ValueSessionLookup<Collection<ZNodePath>> head = q.peek();
                 if (head != null) {
                     empty = false;
-                    head.addListener(task, SameThreadExecutor.getInstance());
+                    head.addListener(task, MoreExecutors.directExecutor());
                 }
             }
             if (empty) {
@@ -399,7 +409,7 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
             
             protected CancellationListener(ListenableFuture<V> delegate) {
                 super(delegate);
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
 
             @Override
@@ -452,11 +462,9 @@ public class SnapshotEnsembleWatches implements Function<List<ListenableFuture<F
                             FourLetterWord.WCHC, 
                             connections.get(), 
                             SettableFuturePromise.<String>create()),
-                    transformWchc,
-                    SameThreadExecutor.getInstance());
+                    transformWchc);
             return Futures.transform(wchc, 
-                    transformSessions,
-                    SameThreadExecutor.getInstance());
+                    transformSessions);
         }
         
         protected final class TransformWatchSessions implements Function<FourLetterWords.Wchc,Queue<ValueSessionLookup<Collection<ZNodePath>>>> {

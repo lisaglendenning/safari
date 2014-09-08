@@ -11,7 +11,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Automatons;
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
@@ -67,6 +67,6 @@ public final class LeaderProposer implements Supplier<ListenableFuture<Optional<
                 LoggingFutureListener.listen(logger, LeaderProposal.call(
                 region, leader.get(), epoch, materializer));
         // update role before listeners see it
-        return Futures.transform(proposal, role, SameThreadExecutor.getInstance());
+        return Futures.transform(proposal, role);
     }
 }

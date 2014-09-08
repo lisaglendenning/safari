@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -23,7 +23,7 @@ public abstract class OpenSessionMessage<V extends ConnectMessage<?>> extends Va
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this)
+        return MoreObjects.toStringHelper(this)
                 .add("identifier", Session.toString(identifier))
                 .add("message", value)
                 .toString();

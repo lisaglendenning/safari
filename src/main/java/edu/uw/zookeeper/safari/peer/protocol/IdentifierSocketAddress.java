@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import java.net.SocketAddress;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 
 import edu.uw.zookeeper.safari.Identifier;
@@ -32,7 +33,7 @@ public class IdentifierSocketAddress extends SocketAddress {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("identifier", getIdentifier()).add("address", getAddress()).toString();
+        return MoreObjects.toStringHelper(this).add("identifier", getIdentifier()).add("address", getAddress()).toString();
     }
     
     @Override

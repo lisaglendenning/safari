@@ -14,6 +14,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.PathToRequests;
@@ -21,7 +22,6 @@ import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
@@ -244,7 +244,7 @@ public final class VolumeEntryAcceptors<O extends Operation.ProtocolResponse<?>>
                         case STARTING:
                         case RUNNING:
                             if (!promise.isDone()) {
-                                Futures.addCallback(renewer.get(), this, SameThreadExecutor.getInstance());
+                                Futures.addCallback(renewer.get(), this);
                             }
                             break;
                         default:
@@ -261,7 +261,7 @@ public final class VolumeEntryAcceptors<O extends Operation.ProtocolResponse<?>>
                     onSuccess(Boolean.FALSE);
                 }
             } else {
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
 
@@ -286,7 +286,7 @@ public final class VolumeEntryAcceptors<O extends Operation.ProtocolResponse<?>>
                 ZNodePath path,
                 ListenableFuture<List<O>> future,
                 LockableZNodeCache<ControlZNode<?>,?,O> cache) {
-            return Futures.transform(future, new GetLatest<O>(path, cache), SameThreadExecutor.getInstance());
+            return Futures.transform(future, new GetLatest<O>(path, cache));
         }
         
         private final LockableZNodeCache<ControlZNode<?>,?,?> cache;
@@ -329,8 +329,7 @@ public final class VolumeEntryAcceptors<O extends Operation.ProtocolResponse<?>>
         public ListenableFuture<Boolean> get() {
             return Futures.transform(
                     acceptor.get(), 
-                    this, 
-                    SameThreadExecutor.getInstance());
+                    this);
         }
         
         @Override

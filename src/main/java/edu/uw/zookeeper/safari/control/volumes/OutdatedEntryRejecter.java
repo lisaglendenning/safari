@@ -11,12 +11,12 @@ import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.Processor;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Operations;
@@ -124,7 +124,7 @@ public class OutdatedEntryRejecter<O extends Operation.ProtocolResponse<?>> exte
                     onSuccess(result.get());
                 }
             } else {
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
     }

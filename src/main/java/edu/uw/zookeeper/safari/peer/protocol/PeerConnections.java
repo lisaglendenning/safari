@@ -15,12 +15,12 @@ import net.engio.mbassy.common.StrongConcurrentSet;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Factories;
 import edu.uw.zookeeper.common.ForwardingServiceListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
@@ -120,7 +120,7 @@ public abstract class PeerConnections<C extends PeerConnection<?,?>> extends Ser
     
     @Override
     protected Executor executor() {
-        return SameThreadExecutor.getInstance();
+        return MoreExecutors.directExecutor();
     }
     
     @Override

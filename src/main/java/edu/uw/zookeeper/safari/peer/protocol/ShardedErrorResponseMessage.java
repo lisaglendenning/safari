@@ -2,7 +2,7 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 
 import edu.uw.zookeeper.safari.SafariException;
 import edu.uw.zookeeper.safari.VersionedId;
@@ -60,7 +60,7 @@ public final class ShardedErrorResponseMessage extends ShardedResponseMessage<Sh
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).add("xid", getXid()).add("exception", getException()).toString();
+            return MoreObjects.toStringHelper(this).add("xid", getXid()).add("exception", getException()).toString();
         }
     }
 }

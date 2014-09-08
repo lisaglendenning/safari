@@ -12,7 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
@@ -231,7 +231,7 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
         }
 
         @Override
-        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
             return super.toStringHelper(helper.addValue(value));
         }
     }

@@ -3,22 +3,24 @@ package edu.uw.zookeeper.safari.frontend;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.util.concurrent.ExecutionException;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 
 public class RegionClientPeerConnection extends ForwardingListenableFuture<ClientPeerConnection<?>> implements Runnable {
@@ -62,8 +64,8 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
             LoggingFutureListener.listen(logger, promise);
             NotEquals task = new NotEquals(current, promise);
             task.run();
-            future = Futures.transform(task, connector, SameThreadExecutor.getInstance());
-            future.addListener(this, SameThreadExecutor.getInstance());
+            future = Futures.transform(task, connector);
+            future.addListener(this, MoreExecutors.directExecutor());
         } else if (future.isDone()) {
             try {
                 connection = future.get();
@@ -79,7 +81,7 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("region", region).add("connection", connection).toString();
+        return MoreObjects.toStringHelper(this).add("region", region).add("connection", connection).toString();
     }
     
     @Override
@@ -107,7 +109,7 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
         public synchronized void run() {
             if (! isDone()) {
                 try {
-                    Futures.addCallback(selector.apply(region), this, SameThreadExecutor.getInstance());
+                    Futures.addCallback(selector.apply(region), this);
                 } catch (Exception e) {
                     onFailure(e);
                 }

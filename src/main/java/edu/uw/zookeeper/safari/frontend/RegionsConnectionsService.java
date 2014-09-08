@@ -24,6 +24,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -50,7 +51,6 @@ import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.Call;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
@@ -221,7 +221,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
     
     @Override
     protected Executor executor() {
-        return SameThreadExecutor.getInstance();
+        return MoreExecutors.directExecutor();
     }
 
     public static class SelectRandom<V> implements Function<List<V>, V> {
@@ -307,8 +307,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
             // never used cached members
             return Futures.transform(
                     memberLookup.async().apply(ensemble), 
-                    selector, 
-                    SameThreadExecutor.getInstance());
+                    selector);
         }
     }
 
@@ -384,7 +383,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
             this.members = members;
             this.selector = selector;
             this.delegate = CallablePromiseTask.create(this, promise);
-            addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
         }
 
         @Override

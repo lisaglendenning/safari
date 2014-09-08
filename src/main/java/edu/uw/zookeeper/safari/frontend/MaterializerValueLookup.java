@@ -6,17 +6,17 @@ import java.util.concurrent.Callable;
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SharedLookup;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
@@ -91,7 +91,7 @@ public class MaterializerValueLookup<T,V> extends SimpleToStringListenableFuture
         this.cached = cached;
         this.input = input;
         this.delegate = CallablePromiseTask.create(this, promise);
-        addListener(this, SameThreadExecutor.getInstance());
+        addListener(this, MoreExecutors.directExecutor());
     }
 
     @Override
@@ -112,7 +112,7 @@ public class MaterializerValueLookup<T,V> extends SimpleToStringListenableFuture
     }
     
     @Override
-    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
         return super.toStringHelper(helper.addValue(input)).addValue(toString(delegate));
     }
 }

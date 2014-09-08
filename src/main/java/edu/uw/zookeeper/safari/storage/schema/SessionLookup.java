@@ -6,11 +6,11 @@ import java.util.concurrent.Callable;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.common.CallablePromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.LockableZNodeCache;
@@ -38,7 +38,7 @@ public final class SessionLookup<O extends Operation.ProtocolResponse<?>> extend
         final CallablePromiseTask<SessionLookup<O>, StorageSchema.Safari.Sessions.Session.Data> task = CallablePromiseTask.create(
                 new SessionLookup<O>(path, materializer),
                 SettableFuturePromise.<StorageSchema.Safari.Sessions.Session.Data>create());
-        task.task().addListener(task, SameThreadExecutor.getInstance());
+        task.task().addListener(task, MoreExecutors.directExecutor());
         return task;
     }
     

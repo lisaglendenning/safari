@@ -8,7 +8,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -31,8 +31,7 @@ public class AvailableIdentifier<O extends Operation.ProtocolResponse<?>,V,T ext
                         materializer,
                         Operations.Requests.sync().setPath(path).build(),
                         Operations.Requests.getChildren().setPath(path).build()), 
-                instance.new Callback(), 
-                SameThreadExecutor.getInstance());
+                instance.new Callback());
     }
     
     public static <O extends Operation.ProtocolResponse<?>,V,T extends ControlZNode<V>,U extends ControlZNode.IdentifierControlZNode,C extends ControlZNode.EntityDirectoryZNode<V,T,U>> AvailableIdentifier<O,V,T,U,C> create(

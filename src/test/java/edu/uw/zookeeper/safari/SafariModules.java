@@ -47,24 +47,52 @@ public class SafariModules {
                 FrontendModules.FrontendProvider.class);
     }
 
-    public static List<Component<?>> newSafari() {
+    public static List<Component<?>> newSingletonSafariRegions(
+            int size) {
         final Component<?> root = Modules.newRootComponent();
-        return ImmutableList.<Component<?>>builder().add(root).addAll(newSafari(root)).build();
-    }
-    
-    public static List<Component<?>> newSafari(
-            final Component<?> root) {
-        final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
-        return ImmutableList.<Component<?>>builder().add(control).addAll(newSafari(root, control)).build();
+        return ImmutableList.<Component<?>>builder().add(root).addAll(newSingletonSafariRegions(size, root)).build();
     }
 
-    public static List<Component<?>> newSafari(
+    public static List<Component<?>> newSingletonSafariRegions(
+            int size,
+            final Component<?> root) {
+        final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
+        return ImmutableList.<Component<?>>builder().add(control).addAll(newSingletonSafariRegions(size, root, control)).build();
+    }
+
+    public static List<Component<?>> newSingletonSafariRegions(
+            int size,
             final Component<?> root,
             final Component<?> control) {
-        return newSafari(root, control, "safari-%d");
+        final ImmutableList.Builder<Component<?>> components = ImmutableList.builder();
+        for (int i=1; i<=size; ++i) {
+            Named name = Names.named(String.format("storage-%d", i));
+            Component<?> storage = StorageModules.newStorageSingletonEnsemble(root, name);
+            components.add(storage);
+            name = Names.named(String.format("region-%d", i));
+            components.add(SafariModules.newSingletonSafariServer(storage, ImmutableList.of(root, control), name));
+        }
+        return components.build();
     }
     
-    public static List<Component<?>> newSafari(
+    public static List<Component<?>> newSafariRegion() {
+        final Component<?> root = Modules.newRootComponent();
+        return ImmutableList.<Component<?>>builder().add(root).addAll(newSafariRegion(root)).build();
+    }
+    
+    public static List<Component<?>> newSafariRegion(
+            final Component<?> root) {
+        final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
+        return ImmutableList.<Component<?>>builder().add(control).addAll(newSafariRegion(root, control)).build();
+    }
+
+    public static List<Component<?>> newSafariRegion(
+            final Component<?> root,
+            final Component<?> control) {
+        return newSafariRegion(root, control, "safari-%d");
+    }
+    
+    public static List<Component<?>> newSafariRegion(
             final Component<?> root,
             final Component<?> control,
             String format) {

@@ -10,7 +10,6 @@ import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.data.JoinToPath;
-import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ValueNode;
@@ -24,7 +23,7 @@ import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
  * 
  * Assumes that the child is created atomically with the parent.
  */
-public final class ImmutableZNodeGetter<U extends SafariZNode<U,?>, T extends U> implements FutureCallback<ZNodePath> {
+public final class ImmutableZNodeGetter<U extends SafariZNode<U,?>, T extends U> implements FutureCallback<U> {
     
     public static <O extends Operation.ProtocolResponse<?>, U extends SafariZNode<U,?>, T extends U> Watchers.FutureCallbackListener<?> listen(
             Class<T> type,
@@ -35,42 +34,43 @@ public final class ImmutableZNodeGetter<U extends SafariZNode<U,?>, T extends U>
                         Watchers.MaybeErrorProcessor.maybeNoNode(), 
                         Watchers.FailWatchListener.create(service));
         return DirectoryEntryListener.entryCreatedCallback(
-                Watchers.EventToPathCallback.create(instance), service);
+                Watchers.EventToPathCallback.create(
+                        Watchers.PathToNodeCallback.create(
+                                instance, 
+                                materializer.cache().cache())), 
+                service);
     }
 
-    public static <O extends Operation.ProtocolResponse<?>, V, U extends SafariZNode<U,?>, T extends U> ImmutableZNodeGetter<U,T> create(
+    protected static <O extends Operation.ProtocolResponse<?>, V, U extends SafariZNode<U,?>, T extends U> ImmutableZNodeGetter<U,T> create(
             Class<T> type,
             Materializer<U,O> materializer,
             Processor<? super List<O>, V> processor,
             FutureCallback<? super V> callback) {
         ValueNode<ZNodeSchema> schema = materializer.schema().apply(type);
         @SuppressWarnings("unchecked")
-        Watchers.PathToQueryCallback<O,V> query = Watchers.PathToQueryCallback.create(PathToQuery.forFunction(
-                materializer,
-                Functions.compose(
-                        PathToRequests.forRequests(
-                                Operations.Requests.sync(),
-                                Operations.Requests.getData()),
-                        JoinToPath.forName(
-                                schema.parent().name()))), 
-            processor, callback);
+        Watchers.PathToQueryCallback<O,V> query = Watchers.PathToQueryCallback.create(
+                PathToQuery.forFunction(
+                    materializer,
+                    Functions.compose(
+                            PathToRequests.forRequests(
+                                    Operations.Requests.sync(),
+                                    Operations.Requests.getData()),
+                            JoinToPath.forName(
+                                    schema.parent().name()))), 
+                processor, callback);
         return new ImmutableZNodeGetter<U,T>(
                 schema,
-                query,
-                materializer.cache());
+                query);
     }
     
     private final FutureCallback<ZNodePath> callback;
-    private final LockableZNodeCache<U,?,?> cache;
     private final ValueNode<ZNodeSchema> schema;
     
     protected ImmutableZNodeGetter(
             ValueNode<ZNodeSchema> schema,
-            FutureCallback<ZNodePath> callback,
-            LockableZNodeCache<U,?,?> cache) {
+            FutureCallback<ZNodePath> callback) {
         this.schema = schema;
         this.callback = callback;
-        this.cache = cache;
     }
     
     public ValueNode<ZNodeSchema> schema() {
@@ -82,11 +82,12 @@ public final class ImmutableZNodeGetter<U extends SafariZNode<U,?>, T extends U>
      */
     @SuppressWarnings("unchecked")
     @Override
-    public void onSuccess(ZNodePath result) {
-        U parent = (U) cache.cache().get(result);
-        T child = (T) parent.get(schema.parent().name());
-        if ((child == null) || (child.data().stamp() < 0L)) {
-            callback.onSuccess(result);
+    public void onSuccess(U result) {
+        if (result != null) {
+            T child = (T) result.get(schema.parent().name());
+            if ((child == null) || (child.data().stamp() < 0L)) {
+                callback.onSuccess(result.path());
+            }
         }
     }
 

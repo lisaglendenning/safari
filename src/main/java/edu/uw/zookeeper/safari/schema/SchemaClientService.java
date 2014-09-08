@@ -2,7 +2,7 @@ package edu.uw.zookeeper.safari.schema;
 
 import java.util.Set;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -71,7 +71,7 @@ public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>, O
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).addValue(((Class<?>)materializer.schema().get().root().get().getDeclaration()).getSimpleName()).toString();
+        return MoreObjects.toStringHelper(this).addValue(((Class<?>)materializer.schema().get().root().get().getDeclaration()).getSimpleName()).toString();
     }
 
     public static class NotificationListeners extends Service.Listener implements Supplier<WatchListeners> {

@@ -4,7 +4,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.primitives.UnsignedLong;
 
 import edu.uw.zookeeper.data.ZNodeName;
@@ -43,7 +43,7 @@ public class SplitParameters extends AssignParameters {
     }
 
     @Override
-    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper toString) {
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper toString) {
         return super.toStringHelper(toString).add("branch", branch).add("leaf", leaf);
     }
 }

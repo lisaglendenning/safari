@@ -3,14 +3,17 @@ package edu.uw.zookeeper.common;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.util.concurrent.ConcurrentMap;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 
 public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>>, AsyncFunction<? super K,V>> implements AsyncFunction<K,V> {
     
@@ -57,7 +60,7 @@ public class SharedLookup<K,V> extends Pair<ConcurrentMap<K, ListenableFuture<V>
             super(key, value);
 
             SharedLookup.this.first.put(first, second);
-            second.addListener(this, SameThreadExecutor.getInstance());
+            second.addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override

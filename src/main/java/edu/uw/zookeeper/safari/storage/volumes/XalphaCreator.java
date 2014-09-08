@@ -13,7 +13,7 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
@@ -24,6 +24,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.ClientExecutor;
@@ -38,7 +39,6 @@ import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
@@ -129,7 +129,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
                 versions.getWatcher().getListeners().remove(versionWatcher);
             }
         };
-        service.addListener(unsubscriber, SameThreadExecutor.getInstance());
+        service.addListener(unsubscriber, MoreExecutors.directExecutor());
         switch (service.state()) {
         case TERMINATED:
             unsubscriber.terminated(Service.State.RUNNING);
@@ -466,8 +466,8 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
                                     Lists.<ListenableFuture<?>>newLinkedList()),
                             ChainedFutures.<Long>castLast()),
                     SettableFuturePromise.<Long>create());
-            addListener(this, SameThreadExecutor.getInstance());
-            isEmpty.addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
+            isEmpty.addListener(this, MoreExecutors.directExecutor());
         }
 
         @Override
@@ -615,7 +615,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
         }
 
         @Override
-        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
             return super.toStringHelper(helper.addValue(version));
         }
         
@@ -638,7 +638,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
                 if (next.getCurrent().isPresent()) {
                     return apply(next.getCurrent().get());
                 } else {
-                    return Futures.transform(next.getNext(), this, SameThreadExecutor.getInstance());
+                    return Futures.transform(next.getNext(), this);
                 }
             }
 
@@ -654,13 +654,13 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
                     if (next.getCurrent().isPresent() && !next.getCurrent().get().equals(input)) {
                         return apply(next.getCurrent().get());
                     }
-                    return Futures.transform(next.getNext(), this, SameThreadExecutor.getInstance());
+                    return Futures.transform(next.getNext(), this);
                 }
             }
             
             @Override
             public String toString() {
-                return Objects.toStringHelper(this).addValue(first).toString();
+                return MoreObjects.toStringHelper(this).addValue(first).toString();
             }
         }
     }
@@ -748,7 +748,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
             } catch (Exception e) {
                 xomega = Futures.immediateFailedFuture(e);
             }
-            return new ComputeXalpha(Futures.transform(xomega, new LongPlusOne(), SameThreadExecutor.getInstance()));
+            return new ComputeXalpha(Futures.transform(xomega, new LongPlusOne()));
         }
         
         public static ComputeXalpha forValue(Long value) {
@@ -785,7 +785,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
             protected static <O extends Operation.ProtocolResponse<?>> CallablePromiseTask<Callback<O>, Long> create(Long xalpha, ZNodePath path, Materializer<StorageZNode<?>, O> materializer) {
                 ListenableFuture<O> future = materializer.create(path, xalpha).call();
                 CallablePromiseTask<Callback<O>, Long> delegate = CallablePromiseTask.create(new Callback<O>(xalpha, future), SettableFuturePromise.<Long>create());
-                future.addListener(delegate, SameThreadExecutor.getInstance());
+                future.addListener(delegate, MoreExecutors.directExecutor());
                 return delegate;
             }
             

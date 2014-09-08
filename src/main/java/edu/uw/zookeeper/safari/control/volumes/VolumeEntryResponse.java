@@ -3,9 +3,10 @@ package edu.uw.zookeeper.safari.control.volumes;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.Watcher;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.FutureCallback;
+
 import edu.uw.zookeeper.client.FixedQuery;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.Watchers;
@@ -25,36 +26,40 @@ import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
 /**
  * Assumes log entries are watched.
  */
-public class VolumeEntryVoted extends ToStringListenableFuture<Boolean> {
+public class VolumeEntryResponse extends ToStringListenableFuture<Boolean> {
 
-    public static VolumeEntryVoted create(
+    public static VolumeEntryResponse voted(
+            final VolumeLogEntryPath entry,
+            final Materializer<ControlZNode<?>,?> materializer,
+            final WatchListeners cacheEvents,
+            final Logger logger) {
+        return create(ControlSchema.Safari.Volumes.Volume.Log.Version.Entry.Vote.class, entry, materializer, cacheEvents, logger);
+    }
+
+    public static VolumeEntryResponse committed(
+            final VolumeLogEntryPath entry,
+            final Materializer<ControlZNode<?>,?> materializer,
+            final WatchListeners cacheEvents,
+            final Logger logger) {
+        return create(ControlSchema.Safari.Volumes.Volume.Log.Version.Entry.Commit.class, entry, materializer, cacheEvents, logger);
+    }
+    
+    protected static <T extends ControlZNode<Boolean>> VolumeEntryResponse create(
+            final Class<T> type,
             final VolumeLogEntryPath entry,
             final Materializer<ControlZNode<?>,?> materializer,
             final WatchListeners cacheEvents,
             final Logger logger) {
         final Promise<Boolean> promise = SettableFuturePromise.create();
-        ZNodePath path = entry.path();
-        EntryDeletedListener.listen(path, promise, materializer.cache(), cacheEvents, logger);
-        path = path.join(ControlSchema.Safari.Volumes.Volume.Log.Version.Entry.Vote.LABEL);
-        VoteListener.listen(path, promise, materializer.cache(), cacheEvents, logger);
-        @SuppressWarnings("unchecked")
-        final FixedQuery<?> query = FixedQuery.forIterable(
-                materializer, 
-                PathToRequests.forRequests(
-                        Operations.Requests.sync(), 
-                        Operations.Requests.getData().setWatch(true))
-                        .apply(path));
-        Watchers.Query.call(
-                Watchers.MaybeErrorProcessor.maybeNoNode(), 
-                Watchers.SetExceptionCallback.create(promise), 
-                query);
-        return new VolumeEntryVoted(entry, promise);
+        EntryDeletedListener.listen(entry.path(), promise, materializer.cache(), cacheEvents, logger);
+        VoteListener.listen(type, entry.path(), promise, materializer, cacheEvents, logger);
+        return new VolumeEntryResponse(entry, promise);
     }
 
     protected final VolumeLogEntryPath path;
     protected final Promise<Boolean> delegate;
     
-    protected VolumeEntryVoted(
+    protected VolumeEntryResponse(
             VolumeLogEntryPath path,
             Promise<Boolean> delegate) {
         this.path = path;
@@ -71,7 +76,7 @@ public class VolumeEntryVoted extends ToStringListenableFuture<Boolean> {
     }
     
     @Override
-    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
         return super.toStringHelper(helper.addValue(path));
     }
     
@@ -115,16 +120,31 @@ public class VolumeEntryVoted extends ToStringListenableFuture<Boolean> {
         }
     }
     
-    protected static final class VoteListener extends CacheListener<ControlSchema.Safari.Volumes.Volume.Log.Version.Entry.Vote> {
+    protected static final class VoteListener<T extends ControlZNode<Boolean>> extends CacheListener<T> {
 
-        public static VoteListener listen(
+        public static <T extends ControlZNode<Boolean>> VoteListener<T> listen(
+                final Class<T> type,
                 final ZNodePath path,
                 final Promise<Boolean> promise,
-                final LockableZNodeCache<ControlZNode<?>,?,?> cache,
+                final Materializer<ControlZNode<?>,?> materializer,
                 final WatchListeners cacheEvents,
                 final Logger logger) {
-            final VoteListener instance = new VoteListener(path, promise);
-            return listen(instance, cache, cacheEvents, logger);
+            final VoteListener<T> instance = listen(
+                    new VoteListener<T>(
+                    path.join(materializer.schema().apply(type).parent().name()), 
+                    promise), materializer.cache(), cacheEvents, logger);
+            @SuppressWarnings("unchecked")
+            final FixedQuery<?> query = FixedQuery.forIterable(
+                    materializer, 
+                    PathToRequests.forRequests(
+                            Operations.Requests.sync(), 
+                            Operations.Requests.getData().setWatch(true))
+                            .apply(instance.getWatchMatcher().getPath()));
+            Watchers.Query.call(
+                    Watchers.MaybeErrorProcessor.maybeNoNode(), 
+                    Watchers.SetExceptionCallback.create(instance.delegate()), 
+                    query);
+            return instance;
         }
         
         private VoteListener(
@@ -137,11 +157,11 @@ public class VolumeEntryVoted extends ToStringListenableFuture<Boolean> {
         }
 
         @Override
-        public void onSuccess(ControlSchema.Safari.Volumes.Volume.Log.Version.Entry.Vote result) {
+        public void onSuccess(T result) {
             if (!isDone()) {
-                Optional<Boolean> vote = Optional.fromNullable(((result == null) ? null : result.data().get()));
-                if (vote.isPresent()) {
-                    delegate().set(vote.get());
+                Optional<Boolean> value = Optional.fromNullable(((result == null) ? null : result.data().get()));
+                if (value.isPresent()) {
+                    delegate().set(value.get());
                 }
             }
         }

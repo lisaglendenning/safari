@@ -7,11 +7,11 @@ import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.safari.SafariException;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
@@ -42,8 +42,8 @@ public final class ToErrorMessage extends ForwardingListenableFuture<ShardedServ
         this.future = response;
         this.delegate = CallablePromiseTask.create(this, promise);
         
-        addListener(this, SameThreadExecutor.getInstance());
-        delegate.addListener(this, SameThreadExecutor.getInstance());
+        addListener(this, MoreExecutors.directExecutor());
+        delegate.addListener(this, MoreExecutors.directExecutor());
     }
 
     @Override

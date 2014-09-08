@@ -1,5 +1,6 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 
 public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
@@ -13,7 +14,7 @@ public abstract class ValueMessage<T,V> extends IdentifierMessage<T> {
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this)
+        return MoreObjects.toStringHelper(this)
                 .add("identifier", identifier)
                 .add("value", value)
                 .toString();

@@ -14,6 +14,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -32,7 +33,6 @@ import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.ServiceListenersService;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
@@ -316,7 +316,7 @@ public class RegionMemberService extends ServiceListenersService {
 
             @Override
             public void run() {
-                Futures.addCallback(proposer.get(), this, SameThreadExecutor.getInstance());
+                Futures.addCallback(proposer.get(), this);
             }
         }
         
@@ -379,7 +379,7 @@ public class RegionMemberService extends ServiceListenersService {
             @Override
             public void running() {
                 super.running();
-                future.addListener(this, SameThreadExecutor.getInstance());
+                future.addListener(this, MoreExecutors.directExecutor());
             }
             
             @Override

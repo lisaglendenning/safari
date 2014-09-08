@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
@@ -121,7 +121,7 @@ public final class VolumeEntryAcceptor implements Supplier<ListenableFuture<Opti
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).toString();
+            return MoreObjects.toStringHelper(this).toString();
         }
     }
 

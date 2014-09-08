@@ -11,7 +11,7 @@ import net.engio.mbassy.common.StrongConcurrentSet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
@@ -20,6 +20,7 @@ import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.AbstractActor;
 import edu.uw.zookeeper.common.Automaton;
@@ -35,7 +36,6 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
@@ -86,7 +86,7 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
             this.promise = promise;
             this.response = Optional.absent();
             
-            this.dispatcher.addListener(this, SameThreadExecutor.getInstance());
+            this.dispatcher.addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override
@@ -96,7 +96,7 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
                     if (dispatcher.isDone()) {
                         if (!response.isPresent()) {
                             response = Optional.of(dispatcher.get().connect(request));
-                            response.get().addListener(this, SameThreadExecutor.getInstance());
+                            response.get().addListener(this, MoreExecutors.directExecutor());
                         } else if (response.get().isDone()) {
                             Session backend = response.get().get().getMessage().toSession();
                             promise.set(newInstance(frontend, backend, dispatcher.get()));
@@ -207,7 +207,7 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("frontend", Session.toString(frontend.id())).add("backend", Session.toString(backend.id())).toString();
+        return MoreObjects.toStringHelper(this).add("frontend", Session.toString(frontend.id())).add("backend", Session.toString(backend.id())).toString();
     }
     
     @Override
@@ -302,8 +302,8 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
             if (pending.offer(task)) {
                 if (state() != State.TERMINATED) {
                     ListenableFuture<MessagePacket<MessageSessionRequest>> write = dispatcher.connection().write(message);
-                    Futures.addCallback(write, task, SameThreadExecutor.getInstance());
-                    task.addListener(this, SameThreadExecutor.getInstance());
+                    Futures.addCallback(write, task);
+                    task.addListener(this, MoreExecutors.directExecutor());
                 } else {
                     task.cancel(true);
                     pending.remove(task);

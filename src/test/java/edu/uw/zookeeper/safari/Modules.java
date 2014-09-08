@@ -8,6 +8,7 @@ import java.util.concurrent.Executor;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.inject.AbstractModule;
@@ -34,7 +35,6 @@ import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.RuntimeModule;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.net.IntraVmAsNetModule;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
@@ -113,7 +113,8 @@ public abstract class Modules {
     public static Component<?> newClientComponent(
             Component<?> parent, final EnsembleView<ServerInetAddressView> ensemble, Named name) {
         return Modules.newNamedComponent(
-                ImmutableList.of(parent.createChildComponent(parent.annotation(),
+                ImmutableList.of(
+                        parent.createChildComponent(parent.annotation(),
                         ImmutableList.of(
                                 new AbstractModule() {
                                     @Override
@@ -192,7 +193,7 @@ public abstract class Modules {
         public ServiceMonitor get() {
             return ServiceMonitor.create(
                     Optional.<Executor>absent(), 
-                    SameThreadExecutor.getInstance(), 
+                    MoreExecutors.directExecutor(), 
                     stopOnTerminate,
                     services);
         }

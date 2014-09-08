@@ -8,7 +8,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.CachedFunction;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SharedLookup;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
@@ -63,8 +63,7 @@ public class VersionToVolume implements AsyncFunction<RegionAndLeaves, AssignedV
                     final VersionedId version) throws Exception {
                 return Futures.transform(
                         toState.apply(version), 
-                        new VersionToVolume(version, paths), 
-                        SameThreadExecutor.getInstance());
+                        new VersionToVolume(version, paths));
             }
         };
     }

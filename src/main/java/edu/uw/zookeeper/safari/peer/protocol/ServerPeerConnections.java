@@ -4,10 +4,10 @@ import java.net.SocketAddress;
 import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -30,7 +30,7 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
             ScheduledExecutorService executor,
             ServerConnectionFactory<? extends Connection<? super MessagePacket, ? extends MessagePacket, ?>> connections) {
         super(identifier, timeOut, executor, connections, ImmutableList.<Service.Listener>of());
-        addListener(new Listener(), SameThreadExecutor.getInstance());
+        addListener(new Listener(), MoreExecutors.directExecutor());
     }
 
     @Override

@@ -2,7 +2,7 @@ package edu.uw.zookeeper.client;
 
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
@@ -142,10 +142,10 @@ public class WatchMatchServiceListener extends LoggingServiceListener<WatchMatch
     
     @Override
     public String toString() {
-        return toString(Objects.toStringHelper(this)).toString();
+        return toString(MoreObjects.toStringHelper(this)).toString();
     }
     
-    protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+    protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
         return helper.addValue(watcher).addValue(service);
     }
 }

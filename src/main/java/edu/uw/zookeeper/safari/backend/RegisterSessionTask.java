@@ -8,12 +8,12 @@ import com.google.common.base.Optional;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
@@ -51,8 +51,8 @@ public class RegisterSessionTask extends PromiseTask<Pair<Long, ? extends Connec
         super(task, promise);
         this.materializer = materializer;
         this.registered = Optional.absent();
-        task().second().addListener(this, SameThreadExecutor.getInstance());
-        addListener(this, SameThreadExecutor.getInstance());
+        task().second().addListener(this, MoreExecutors.directExecutor());
+        addListener(this, MoreExecutors.directExecutor());
     }
     
     @Override
@@ -73,7 +73,7 @@ public class RegisterSessionTask extends PromiseTask<Pair<Long, ? extends Connec
                     }
                     final Message.ClientRequest<?> message = ProtocolRequestMessage.of(XID, request);
                     this.registered = Optional.of(task().second().task().second().write(message));
-                    Futures.addCallback(registered.get(), this, SameThreadExecutor.getInstance());
+                    Futures.addCallback(registered.get(), this);
                 } catch (ExecutionException e) {
                     setException(e.getCause());
                 } catch (InterruptedException e) {

@@ -13,7 +13,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 
 public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFunction<? super K,V>> implements AsyncFunction<K,V> {
     
@@ -39,8 +39,7 @@ public class AddToCacheLookup<K,V> extends Pair<ConcurrentMap<K, V>, AsyncFuncti
         checkNotNull(input);
         return Futures.transform(
                 second().apply(input), 
-                new AddToCacheFunction(input), 
-                SameThreadExecutor.getInstance());
+                new AddToCacheFunction(input));
     }
     
     protected class AddToCacheFunction implements Function<V,V> {

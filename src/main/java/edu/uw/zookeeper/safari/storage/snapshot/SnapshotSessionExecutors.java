@@ -16,7 +16,7 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
@@ -27,6 +27,7 @@ import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.WatchType;
@@ -42,7 +43,6 @@ import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ListenableFutureActor;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SubmitActor;
@@ -374,7 +374,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                         Operations.Requests.exists().setWatch(true));
                 this.requests = Queues.newArrayDeque();
                 this.delegate = CallablePromiseTask.create(this, SettableFuturePromise.<SimpleLabelTrie<OptionalNode<Recreate>>>create());
-                delegate.addListener(this, SameThreadExecutor.getInstance());
+                delegate.addListener(this, MoreExecutors.directExecutor());
             }
             
             @Override
@@ -386,7 +386,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                         next.cancel(false);
                     }
                 } else {
-                    this.requests.peek().addListener(this, SameThreadExecutor.getInstance());
+                    this.requests.peek().addListener(this, MoreExecutors.directExecutor());
                 }
             }
 
@@ -448,7 +448,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
             
             @Override
             public String toString() {
-                return Objects.toStringHelper(this).addValue(ToStringListenableFuture.toString3rdParty(this)).toString();
+                return MoreObjects.toStringHelper(this).addValue(ToStringListenableFuture.toString3rdParty(this)).toString();
             }
 
             @Override
@@ -465,7 +465,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                 super(Queues.<Recreate>newConcurrentLinkedQueue(), 
                         LogManager.getLogger(SequentialProcessor.class));
                 this.trie = new SequentialTrieBuilder();
-                trie.addListener(this, SameThreadExecutor.getInstance());
+                trie.addListener(this, MoreExecutors.directExecutor());
             }
             
             public SequentialTrieBuilder trie() {
@@ -766,7 +766,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
         }
         
         @Override
-        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
             return super.toStringHelper(helper.addValue(value));
         }
     }

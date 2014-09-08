@@ -15,8 +15,6 @@ import com.google.common.util.concurrent.Service;
 import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.Processor;
-import edu.uw.zookeeper.data.AbsoluteZNodePath;
-import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ValueNode;
@@ -34,7 +32,7 @@ import edu.uw.zookeeper.safari.schema.volumes.RegionAndLeaves;
 /**
  * Watches log of resident versions. Queries on any log entry notification.
  */
-public final class ResidentLogListener implements FutureCallback<ZNodePath> {
+public final class ResidentLogListener implements FutureCallback<ControlSchema.Safari.Volumes.Volume.Log.Version.State> {
 
     public static <O extends Operation.ProtocolResponse<?>> ResidentLogListener listen(
             Predicate<? super RegionAndLeaves> isResident,
@@ -117,7 +115,10 @@ public final class ResidentLogListener implements FutureCallback<ZNodePath> {
                 service, 
                 client.cacheEvents(), 
                 Watchers.FutureCallbackListener.create(
-                        Watchers.EventToPathCallback.create(instance), 
+                        Watchers.EventToPathCallback.create(
+                                Watchers.PathToNodeCallback.create(
+                                        instance, 
+                                        client.materializer().cache().cache())), 
                         WatchMatcher.exact(
                             ControlSchema.Safari.Volumes.Volume.Log.Version.State.PATH, 
                             Watcher.Event.EventType.NodeDataChanged), 
@@ -139,31 +140,26 @@ public final class ResidentLogListener implements FutureCallback<ZNodePath> {
                         Operations.Requests.getChildren().setWatch(true)), 
                 processor, 
                 callback);
-        return new ResidentLogListener(isResident, query, materializer.cache());
+        return new ResidentLogListener(isResident, query);
     }
     
-    private final LockableZNodeCache<ControlZNode<?>,?,?> cache;
     private final Predicate<? super RegionAndLeaves> isResident;
     private final FutureCallback<ZNodePath> callback;
     
     protected ResidentLogListener(
             Predicate<? super RegionAndLeaves> isResident,
-            FutureCallback<ZNodePath> callback,
-            LockableZNodeCache<ControlZNode<?>,?,?> cache) {
-        this.cache = cache;
+            FutureCallback<ZNodePath> callback) {
         this.callback = callback;
         this.isResident = isResident;
     }
 
-    /**
-     * Assumes cache is read locked.
-     */
     @Override
-    public void onSuccess(ZNodePath result) {
-        ControlZNode<?> node = cache.cache().get(result);
-        Optional<RegionAndLeaves> state = Optional.fromNullable((RegionAndLeaves) node.data().get());
-        if (state.isPresent() && isResident.apply(state.get())) {
-            callback.onSuccess(((AbsoluteZNodePath) result).parent());
+    public void onSuccess(ControlSchema.Safari.Volumes.Volume.Log.Version.State result) {
+        if (result != null) {
+            Optional<RegionAndLeaves> state = Optional.fromNullable((RegionAndLeaves) result.data().get());
+            if (state.isPresent() && isResident.apply(state.get())) {
+                callback.onSuccess(result.parent().get().path());
+            }
         }
     }
 

@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -25,6 +26,7 @@ import com.google.common.collect.Sets;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -38,7 +40,6 @@ import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -176,7 +177,7 @@ public class VolumeVersionCache extends ServiceListenersService {
     
     @Override
     protected Executor executor() {
-        return SameThreadExecutor.getInstance();
+        return MoreExecutors.directExecutor();
     }
     
     public static abstract class Version {
@@ -205,10 +206,10 @@ public class VolumeVersionCache extends ServiceListenersService {
         
         @Override
         public String toString() {
-            return toString(Objects.toStringHelper(this)).toString();
+            return toString(MoreObjects.toStringHelper(this)).toString();
         }
         
-        public Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        public MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return helper.addValue(getVersion());
         }
     }
@@ -259,7 +260,7 @@ public class VolumeVersionCache extends ServiceListenersService {
         }
         
         @Override
-        public Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        public MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper.addValue(getXalpha()).addValue(getLease()));
         }
     }
@@ -301,7 +302,7 @@ public class VolumeVersionCache extends ServiceListenersService {
         }
         
         @Override
-        public Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        public MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper.addValue(getZxids()));
         }
     }
@@ -602,7 +603,7 @@ public class VolumeVersionCache extends ServiceListenersService {
                     }
                     CachedVolume.this.run();
                 } else {
-                    addListener(this, SameThreadExecutor.getInstance());
+                    addListener(this, MoreExecutors.directExecutor());
                 }
             }
         }

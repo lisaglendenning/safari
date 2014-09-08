@@ -11,27 +11,26 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.ForwardingListenableFuture;
-import com.google.common.util.concurrent.ForwardingListenableFuture.SimpleForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
+import edu.uw.zookeeper.common.ForwardingPromise.SimpleForwardingPromise;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeLabel;
@@ -59,15 +58,14 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<VolumeOperation<?>> create(
             VolumesSchemaRequests<O>.VolumeSchemaRequests volume,
             VolumeOperator operator,
-            List<?> arguments,
-            Promise<VolumeOperation<?>> promise) {
+            List<?> arguments) {
         return ChainedFutures.run(
                 ChainedFutures.process(
                         ChainedFutures.chain(
                                 new PrepareVolumeOperation<O>(volume, operator, arguments),
                                 Lists.<ListenableFuture<?>>newLinkedList()),
                         ChainedFutures.<VolumeOperation<?>>castLast()), 
-                promise);
+                SettableFuturePromise.<VolumeOperation<?>>create());
     }
     
     protected final Logger logger;
@@ -180,7 +178,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                         BoundVolumeOperator.valueOf(operator, parameters))));
     }
     
-    public static final class LookupLatestVersion<O extends Operation.ProtocolResponse<?>> extends SimpleForwardingListenableFuture<List<O>> implements Callable<Optional<UnsignedLong>> {
+    public static final class LookupLatestVersion<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Callable<Optional<UnsignedLong>> {
 
         public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<UnsignedLong> create(
                 VolumesSchemaRequests<O>.VolumeSchemaRequests volume) {
@@ -188,10 +186,9 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                     volume.volumes().getMaterializer(),
                     volume.latest().get());
             CallablePromiseTask<LookupLatestVersion<O>,UnsignedLong> task = 
-                    CallablePromiseTask.create(
+                    CallablePromiseTask.listen(
                             new LookupLatestVersion<O>(volume, requests), 
                             SettableFuturePromise.<UnsignedLong>create());
-            task.task().addListener(task, SameThreadExecutor.getInstance());
             return task;
         }
         
@@ -228,8 +225,8 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         }
         
         @Override
-        public String toString() {
-            return Objects.toStringHelper(this).add("volume", volume.getVolume()).toString();
+        protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper toString) {
+            return super.toStringHelper(toString.addValue(volume.getVolume()));
         }
     }
     
@@ -255,7 +252,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         @SuppressWarnings("unchecked")
         @Override
         public Optional<? extends ListenableFuture<?>> apply(
-                List<ListenableFuture<?>> input) {
+                List<ListenableFuture<?>> input) throws Exception {
             Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.get(input.size()-1));
             if (last.isPresent() && (last.get() instanceof LookupPrefixes)) {
                 return Optional.absent();
@@ -284,9 +281,14 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
             
             return Optional.of(LookupPrefixes.create(VolumeDescriptor.valueOf(volume.getVolume(), path.get()), volume.volumes()));
         }
+        
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this).addValue(volume.getVolume()).toString();
+        }
     }
 
-    public static final class LookupPrefixes extends ToStringListenableFuture<Optional<VersionedId>> implements Runnable {
+    public static final class LookupPrefixes extends SimpleForwardingPromise<Optional<VersionedId>> implements Runnable {
         
         public static ListenableFuture<Optional<VersionedId>> create(
                 VolumeDescriptor volume,
@@ -298,14 +300,13 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         
         protected final Logger logger;
         protected final List<Callback> lookups;
-        protected final Promise<Optional<VersionedId>> promise;
         
         protected LookupPrefixes(
                 VolumeDescriptor volume,
                 VolumesSchemaRequests<?> schema,
                 Promise<Optional<VersionedId>> promise) {
+            super(promise);
             this.logger = LogManager.getLogger(this);
-            this.promise = promise;
             ImmutableList.Builder<Callback> lookups = ImmutableList.builder();
             ZNodePath prefix = ZNodePath.root();
             for (Iterator<ZNodeLabel> labels = volume.getPath().iterator();
@@ -321,7 +322,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                                         schema))));
             }
             this.lookups = lookups.build();
-            Futures.successfulAsList(this.lookups).addListener(this, SameThreadExecutor.getInstance());
+            Futures.successfulAsList(this.lookups).addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override
@@ -333,16 +334,11 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                     }
                 }
                 // all lookups failed
-                promise.set(Optional.<VersionedId>absent());
+                set(Optional.<VersionedId>absent());
             }
         }
-    
-        @Override
-        protected ListenableFuture<Optional<VersionedId>> delegate() {
-            return promise;
-        }
         
-        protected static class Callback extends ForwardingListenableFuture.SimpleForwardingListenableFuture<Optional<VersionedId>> implements Runnable {
+        protected static class Callback extends SimpleToStringListenableFuture<Optional<VersionedId>> implements Runnable {
     
             public static Callback create(
                     Promise<Optional<VersionedId>> promise,
@@ -357,8 +353,8 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                     ListenableFuture<Optional<VersionedId>> future) {
                 super(future);
                 this.promise = promise;
-                addListener(this, SameThreadExecutor.getInstance());
-                promise.addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
+                promise.addListener(this, MoreExecutors.directExecutor());
             }
             
             @Override
@@ -417,7 +413,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         @SuppressWarnings("unchecked")
         @Override
         public Optional<? extends ListenableFuture<?>> apply(
-                List<ListenableFuture<?>> input) {
+                List<ListenableFuture<?>> input) throws Exception {
             if (input.isEmpty()) {
                 ListenableFuture<?> future;
                 try {
@@ -431,14 +427,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                 return Optional.of(future);
             }
             
-            Optional<Identifier> entity;
-            try {
-                entity = (Optional<Identifier>) input.get(0).get();
-            } catch (InterruptedException e) {
-                throw Throwables.propagate(e);
-            } catch (ExecutionException e) {
-                return Optional.absent();
-            }
+            Optional<Identifier> entity = (Optional<Identifier>) input.get(0).get();
             
             if (input.size() == 1) {
                 final ListenableFuture<?> future;
@@ -454,14 +443,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                 return Optional.of(future);
             }
             
-            Object last;
-            try {
-                last = input.get(input.size()-1).get();
-            } catch (InterruptedException e) {
-                throw new AssertionError(e);
-            } catch (ExecutionException e) {
-                return Optional.absent();
-            }
+            Object last = input.get(input.size()-1).get();
             
             if (last instanceof Optional) {
                 return Optional.absent();
@@ -478,7 +460,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).add("prefix", prefix).add("child", child).toString();
+            return MoreObjects.toStringHelper(this).add("prefix", prefix).add("child", child).toString();
         }
         
         protected static class Callback implements AsyncFunction<List<? extends Operation.ProtocolResponse<?>>, Optional<VersionedId>> {
@@ -531,8 +513,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                         SubmittedRequests.submit(
                                 schema.volume().volumes().getMaterializer(), 
                                 schema.state().get()),
-                        this,
-                        SameThreadExecutor.getInstance());
+                        this);
             }
         }
     }

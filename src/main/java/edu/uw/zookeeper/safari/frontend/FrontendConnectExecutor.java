@@ -12,7 +12,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -92,7 +92,7 @@ public class FrontendConnectExecutor implements TaskExecutor<ConnectMessage.Requ
             FrontendSessionExecutor executor = executors.get(Long.valueOf(task.getSessionId()));
             if (executor != null) {
                 Futures.addCallback(executor.backends().connect(), 
-                        this, SameThreadExecutor.getInstance());
+                        this);
             } else {
                 // FIXME
                 throw new UnsupportedOperationException();

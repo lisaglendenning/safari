@@ -20,6 +20,7 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -33,7 +34,6 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.client.CreateOrEquals;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.FutureTransition;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -194,7 +194,7 @@ public class BackendRequestService extends ServiceListenersService {
                 return new ServerPeerConnectionDispatcher(connection);
             }
         }, peers);
-        addListener(listener, SameThreadExecutor.getInstance());
+        addListener(listener, MoreExecutors.directExecutor());
     }
 
     protected static class Advertiser extends Service.Listener {
@@ -348,7 +348,7 @@ public class BackendRequestService extends ServiceListenersService {
             
             public ListenableFuture<MessagePacket> submit(MessagePacket message) {
                 ListenableFuture<MessagePacket> future = connection.write(message);
-                Futures.addCallback(future, this, SameThreadExecutor.getInstance());
+                Futures.addCallback(future, this);
                 return future;
             }
             
@@ -372,7 +372,7 @@ public class BackendRequestService extends ServiceListenersService {
                     ListenableFuture<MessageSessionOpenResponse> future) {
                 super(future);
                 this.request = request;
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
 
             @Override
@@ -439,7 +439,7 @@ public class BackendRequestService extends ServiceListenersService {
                         ToErrorMessage.submit(
                                 executor().client(), 
                                 request);
-                Futures.addCallback(future, this, SameThreadExecutor.getInstance());
+                Futures.addCallback(future, this);
                 return future;
             }
 

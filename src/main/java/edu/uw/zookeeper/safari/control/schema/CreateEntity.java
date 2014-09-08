@@ -12,7 +12,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -41,8 +41,7 @@ public class CreateEntity<O extends Operation.ProtocolResponse<?>,V,T extends Co
                         PathToRequests.forRequests(
                                 Operations.Requests.sync(),
                                 Operations.Requests.getChildren()).apply(path)), 
-                instance.new Callback(), 
-                SameThreadExecutor.getInstance());
+                instance.new Callback());
     }
 
     public static <O extends Operation.ProtocolResponse<?>,V,T extends ControlZNode<V>, U extends ControlZNode.IdentifierControlZNode,C extends ControlZNode.EntityDirectoryZNode<V,T,U>>
@@ -116,8 +115,7 @@ public class CreateEntity<O extends Operation.ProtocolResponse<?>,V,T extends Co
                 SubmittedRequests.submit(
                     materializer(), 
                     requests),
-                new Callback(),
-                SameThreadExecutor.getInstance());
+                new Callback());
     }
     
     protected class Callback implements AsyncFunction<List<O>, Identifier> {

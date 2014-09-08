@@ -18,12 +18,12 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.Configuration;
+import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.FourLetterRequest;
 import edu.uw.zookeeper.protocol.FourLetterResponse;
-import edu.uw.zookeeper.server.FourLetterRequestProcessor;
 import edu.uw.zookeeper.protocol.server.ServerExecutor;
 import edu.uw.zookeeper.protocol.server.ZxidEpochIncrementer;
 import edu.uw.zookeeper.protocol.server.ZxidGenerator;
@@ -67,7 +67,13 @@ public class FrontendServerExecutor extends AbstractModule implements SafariModu
     @Provides @Frontend @Singleton
     public TaskExecutor<FourLetterRequest, FourLetterResponse> anonymousExecutor() {
         return ProcessorTaskExecutor.of(
-                FourLetterRequestProcessor.newInstance());
+                new Processor<FourLetterRequest, FourLetterResponse>() {
+                    @Override
+                    public FourLetterResponse apply(
+                            FourLetterRequest input) {
+                        return FourLetterResponse.fromString(input.first().toString() + "\n");
+                    }
+                });
     }
     
     @Provides @Singleton

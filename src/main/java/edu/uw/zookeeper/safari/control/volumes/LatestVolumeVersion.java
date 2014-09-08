@@ -11,6 +11,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -22,7 +23,6 @@ import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.WatchListeners;
@@ -76,7 +76,7 @@ public final class LatestVolumeVersion extends LoggingServiceListener<Service> i
         DeletedCacheListener.listen(cache, versions, service, cacheEvents, logger);
         LatestCacheListener.listen(cache, versions, service, cacheEvents, logger);
         final LatestVolumeVersion listener = new LatestVolumeVersion(versions, service, logger);
-        service.addListener(listener, SameThreadExecutor.getInstance());
+        service.addListener(listener, MoreExecutors.directExecutor());
         return listener;
     }
     
@@ -92,19 +92,22 @@ public final class LatestVolumeVersion extends LoggingServiceListener<Service> i
 
     @Override
     public FutureTransition<UnsignedLong> apply(Identifier input) {
-        if (delegate.isRunning()) {
-            FutureTransition<UnsignedLong> value = versions.get(input);
-            if (value == null) {
-                value = FutureTransition.absent(SettableFuturePromise.<UnsignedLong>create());
-                FutureTransition<UnsignedLong> existing = versions.putIfAbsent(input, value);
-                if (existing != null) {
-                    value = existing;
-                }
-            }
-            return value;
-        } else {
+        switch (delegate().state()) {
+        case FAILED:
+        case TERMINATED:
             return FutureTransition.absent(Futures.<UnsignedLong>immediateCancelledFuture());
+        default:
+            break;
         }
+        FutureTransition<UnsignedLong> value = versions.get(input);
+        if (value == null) {
+            value = FutureTransition.absent(SettableFuturePromise.<UnsignedLong>create());
+            FutureTransition<UnsignedLong> existing = versions.putIfAbsent(input, value);
+            if (existing != null) {
+                value = existing;
+            }
+        }
+        return value;
     }
     
     @Override

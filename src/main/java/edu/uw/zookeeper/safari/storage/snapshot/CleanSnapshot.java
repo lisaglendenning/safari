@@ -16,7 +16,7 @@ import com.google.common.util.concurrent.Service;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.client.Watchers.FutureCallbackListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -146,10 +146,8 @@ public final class CleanSnapshot<O extends Operation.ProtocolResponse<?>> implem
             Futures.addCallback(
                     Futures.transform(
                             client.submit(result), 
-                            this, 
-                            SameThreadExecutor.getInstance()),
-                    callback,
-                    SameThreadExecutor.getInstance());
+                            this),
+                    callback);
         }
 
         @Override

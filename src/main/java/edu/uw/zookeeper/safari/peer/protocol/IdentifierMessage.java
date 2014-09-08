@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.peer.protocol;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 
 public abstract class IdentifierMessage<T> implements MessageBody {
@@ -14,7 +15,7 @@ public abstract class IdentifierMessage<T> implements MessageBody {
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this)
+        return MoreObjects.toStringHelper(this)
                 .add("identifier", identifier)
                 .toString();
     }

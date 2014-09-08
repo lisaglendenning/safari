@@ -17,7 +17,7 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Materializer;
@@ -68,7 +68,7 @@ public class BackendConnections extends AbstractModule {
                         ZxidTracker.listener(zxids, input);
                         return input;
                     }
-                }, SameThreadExecutor.getInstance());
+                });
     }
     
     @Provides @Singleton
@@ -86,7 +86,7 @@ public class BackendConnections extends AbstractModule {
                     public MessageSessionOpenRequest apply(ConnectMessage.Request message) {
                         return MessageSessionOpenRequest.of(request.getIdentifier(), message);
                     }
-                }, SameThreadExecutor.getInstance());
+                });
             }
         };
     }
@@ -111,14 +111,13 @@ public class BackendConnections extends AbstractModule {
                                                     Pair.create(
                                                             request.getIdentifier(), connect),
                                                         SettableFuturePromise.<Void>create()),
-                                                Functions.<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>constant(connect), 
-                                                SameThreadExecutor.getInstance());
+                                                Functions.<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>constant(connect));
                                         LoggingFutureListener.listen(
                                                         LogManager.getLogger(BackendConnections.class), 
                                                         task);
                                         return task;
                                     }
-                                }, SameThreadExecutor.getInstance());
+                                });
                     }
         };
     }

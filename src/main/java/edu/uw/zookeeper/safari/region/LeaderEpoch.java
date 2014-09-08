@@ -32,7 +32,7 @@ public final class LeaderEpoch {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("epoch", epoch).add("leader", leader).toString();
+        return new StringBuilder().append('(').append(epoch).append(',').append(leader).append(')').toString();
     }
     
     @Override

@@ -11,7 +11,6 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.CallablePromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.protocol.Operation;
@@ -78,10 +77,9 @@ public final class VolumeOperationRequests<O extends Operation.ProtocolResponse<
         default:
             throw new AssertionError();
         }
-        CallablePromiseTask<? extends AbstractVolumeOperationRequests<?>,List<Records.MultiOpRequest>> task = CallablePromiseTask.create(
+        CallablePromiseTask<? extends AbstractVolumeOperationRequests<?>,List<Records.MultiOpRequest>> task = CallablePromiseTask.listen(
                 operation, 
                 SettableFuturePromise.<List<Records.MultiOpRequest>>create());
-        task.task().addListener(task, SameThreadExecutor.getInstance());
         return task;
     }
     
@@ -103,17 +101,16 @@ public final class VolumeOperationRequests<O extends Operation.ProtocolResponse<
         protected final ListenableFuture<AssignedVolumeOperator> operator;
         
         protected AbstractVolumeOperationRequests(
-                VolumeOperation<? extends T> operation) {
-            this.operation = operation;        
-            ListenableFuture<AssignedVolumeOperator> operator;
-            try {
-                operator = Futures.transform(
-                        states().apply(operation.getVolume()), 
-                        TO_OPERATOR,
-                        SameThreadExecutor.getInstance());
-            } catch (Exception e) {
-                operator = Futures.immediateFailedFuture(e);
-            }
+                VolumeOperation<? extends T> operation) throws Exception {
+            this(operation, Futures.transform(
+                    states().apply(operation.getVolume()), 
+                    TO_OPERATOR));
+        }
+        
+        protected AbstractVolumeOperationRequests(
+                VolumeOperation<? extends T> operation,
+                ListenableFuture<AssignedVolumeOperator> operator) {
+            this.operation = operation;
             this.operator = operator;
         }
         
@@ -135,7 +132,7 @@ public final class VolumeOperationRequests<O extends Operation.ProtocolResponse<
     protected final class TransferOperationRequests extends AbstractVolumeOperationRequests<AssignParameters> {
 
         public TransferOperationRequests(
-                VolumeOperation<? extends AssignParameters> operation) {
+                VolumeOperation<? extends AssignParameters> operation) throws Exception {
             super(operation);
         }
         
@@ -156,45 +153,38 @@ public final class VolumeOperationRequests<O extends Operation.ProtocolResponse<
 
     protected final class MergeOperationRequests extends AbstractVolumeOperationRequests<MergeParameters> {
 
-        private final ListenableFuture<? extends VolumeVersion<?>> parent;
+        private final ListenableFuture<? extends VolumeVersion<?>> child;
         
         public MergeOperationRequests(
-                VolumeOperation<MergeParameters> operation) {
-            super(operation);
-            ListenableFuture<? extends VolumeVersion<?>> parent;
-            try {
-                parent = states.apply(operation.getOperator().getParameters().getParent());
-            } catch (Exception e) {
-                parent = Futures.immediateFailedFuture(e);
-            }
-            this.parent = parent;
+                VolumeOperation<MergeParameters> operation) throws Exception {
+            super(operation, Futures.transform(
+                    states.apply(operation.getOperator().getParameters().getParent()), TO_OPERATOR));
+            this.child = states.apply(operation.getVolume());
         }
         
-        public ListenableFuture<? extends VolumeVersion<?>> parent() {
-            return parent;
+        public ListenableFuture<? extends VolumeVersion<?>> child() {
+            return child;
         }
         
         @Override
         public Optional<List<Records.MultiOpRequest>> call() throws Exception {
-            if (operator().isDone()) {
+            if (operator().isDone() && child().isDone()) {
                 AssignedVolumeOperator operator = operator().get();
-                if (parent().isDone()) {
-                    AssignedVolumeBranches parent = (AssignedVolumeBranches) parent().get();
-                    final RegionAndBranches union = operator.union(
-                            parent.getDescriptor(), 
-                            parent.getState().getValue().getBranches());
-                    return Optional.<List<Records.MultiOpRequest>>of(
-                            ImmutableList.<Records.MultiOpRequest>builder()
-                            .addAll(schema
-                                    .volume(operation().getVolume().getValue())
-                                    .version(operation().getOperator().getParameters().getVersion())
-                                    .create(Optional.<RegionAndLeaves>absent()))
-                            .addAll(schema
-                                    .volume(operation().getOperator().getParameters().getParent().getValue())
-                                    .version(operation().getOperator().getParameters().getVersion())
-                                    .create(Optional.of(RegionAndLeaves.copyOf(union))))
-                            .build());
-                }
+                AssignedVolumeBranches child = (AssignedVolumeBranches) child().get();
+                final RegionAndBranches union = operator.union(
+                        child.getDescriptor(), 
+                        child.getState().getValue().getBranches());
+                return Optional.<List<Records.MultiOpRequest>>of(
+                        ImmutableList.<Records.MultiOpRequest>builder()
+                        .addAll(schema
+                                .volume(operation().getVolume().getValue())
+                                .version(operation().getOperator().getParameters().getVersion())
+                                .create(Optional.<RegionAndLeaves>absent()))
+                        .addAll(schema
+                                .volume(operation().getOperator().getParameters().getParent().getValue())
+                                .version(operation().getOperator().getParameters().getVersion())
+                                .create(Optional.of(RegionAndLeaves.copyOf(union))))
+                        .build());
             }
             return Optional.absent();
         }
@@ -202,14 +192,14 @@ public final class VolumeOperationRequests<O extends Operation.ProtocolResponse<
         @SuppressWarnings("unchecked")
         @Override
         protected ListenableFuture<List<Object>> delegate() {
-            return Futures.<Object>allAsList(operator(), parent());
+            return Futures.<Object>allAsList(operator(), child());
         }
     }
 
     protected final class SplitOperationRequests extends AbstractVolumeOperationRequests<SplitParameters> {
 
         public SplitOperationRequests(
-                VolumeOperation<SplitParameters> operation) {
+                VolumeOperation<SplitParameters> operation) throws Exception {
             super(operation);
         }
         

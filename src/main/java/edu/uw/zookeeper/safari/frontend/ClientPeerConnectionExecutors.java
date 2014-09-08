@@ -10,7 +10,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -20,6 +20,7 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Actor;
 import edu.uw.zookeeper.common.CachedFunction;
@@ -28,7 +29,6 @@ import edu.uw.zookeeper.common.ForwardingPromise;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SharedLookup;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -106,7 +106,7 @@ public class ClientPeerConnectionExecutors {
                                        ListenableFuture<ClientPeerConnectionDispatcher> dispatcher = dispatchers.apply(region);
                                        ListenableFuture<ClientPeerConnectionExecutor> future = ClientPeerConnectionExecutor.connect(
                                                frontend, request, dispatcher);
-                                       return Futures.transform(future, ClientPeerConnectionExecutors.this.new Callback(), SameThreadExecutor.getInstance());
+                                       return Futures.transform(future, ClientPeerConnectionExecutors.this.new Callback());
                                    }
                                }),
                        logger));
@@ -134,7 +134,7 @@ public class ClientPeerConnectionExecutors {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("frontend", Session.toString(frontend.first().id())).toString();
+        return MoreObjects.toStringHelper(this).add("frontend", Session.toString(frontend.first().id())).toString();
     }
     
     protected class Callback implements Function<ClientPeerConnectionExecutor, ClientPeerConnectionExecutor> {
@@ -206,7 +206,7 @@ public class ClientPeerConnectionExecutors {
                     futures.put(region, future);
                 }
                 for (Identifier region: difference) {
-                    futures.get(region).addListener(this, SameThreadExecutor.getInstance());
+                    futures.get(region).addListener(this, MoreExecutors.directExecutor());
                 }
             }
         }

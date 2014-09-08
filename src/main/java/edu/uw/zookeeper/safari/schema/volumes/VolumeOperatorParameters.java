@@ -2,7 +2,7 @@ package edu.uw.zookeeper.safari.schema.volumes;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.primitives.UnsignedLong;
 
 public abstract class VolumeOperatorParameters {
@@ -20,10 +20,10 @@ public abstract class VolumeOperatorParameters {
     
     @Override
     public String toString() {
-        return toStringHelper(Objects.toStringHelper(this)).toString();
+        return toStringHelper(MoreObjects.toStringHelper(this)).toString();
     }
     
-    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper toString) {
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper toString) {
         return toString.add("version", version);
     }
 }

@@ -1,7 +1,7 @@
 package edu.uw.zookeeper.data;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 
 import edu.uw.zookeeper.data.ZNodePath;
 
@@ -21,6 +21,6 @@ public final class ParentOfPath implements Function<ZNodePath, ZNodePath> {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).toString();
+        return MoreObjects.toStringHelper(this).toString();
     }
 }

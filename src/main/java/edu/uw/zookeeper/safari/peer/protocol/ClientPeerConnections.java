@@ -12,6 +12,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.ServerInetAddressView;
@@ -21,7 +22,6 @@ import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.CallablePromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SharedLookup;
 import edu.uw.zookeeper.common.TimeValue;
@@ -132,8 +132,8 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             super(address, promise);
             this.delegate = CallablePromiseTask.create(this, this);
             this.future = Optional.absent();
-            address.addListener(this, SameThreadExecutor.getInstance());
-            addListener(this, SameThreadExecutor.getInstance());
+            address.addListener(this, MoreExecutors.directExecutor());
+            addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override
@@ -168,7 +168,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
                     if (!future.isPresent()) {
                         ServerInetAddressView peer = task().get();
                         future = Optional.of(connections().connect(peer.get()));
-                        Futures.addCallback(future.get(), this, SameThreadExecutor.getInstance());
+                        Futures.addCallback(future.get(), this);
                     }
                 }
             }
@@ -206,7 +206,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             super(task, promise);
             this.connection = connection;
             
-            Futures.addCallback(connection, this, SameThreadExecutor.getInstance());
+            Futures.addCallback(connection, this);
         }
         
         @Override

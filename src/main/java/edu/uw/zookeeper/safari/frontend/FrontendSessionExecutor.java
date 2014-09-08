@@ -18,7 +18,7 @@ import org.apache.zookeeper.Watcher;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
@@ -30,6 +30,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Provider;
 
 import edu.uw.zookeeper.WatchType;
@@ -65,7 +66,6 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.backend.OutdatedVersionException;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.frontend.ClientPeerConnectionDispatchers.ClientPeerConnectionDispatcher;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedErrorResponseMessage;
@@ -292,7 +292,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 Promise<Message.ServerResponse<?>> promise) {
             super(task, promise);
             
-            task.second().addListener(this, SameThreadExecutor.getInstance());
+            task.second().addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override
@@ -324,7 +324,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
 
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this).toString();
+            return MoreObjects.toStringHelper(this).addValue(FrontendSessionExecutor.this).toString();
         }
 
         @Override
@@ -714,7 +714,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
+            return MoreObjects.toStringHelper(this).addValue(FrontendSessionExecutor.this.toString()).toString();
         }
 
         @Override
@@ -837,7 +837,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     } else {
                         responses.putAll(updates);
                         for (ListenableFuture<?> future: updates.values()) {
-                            future.addListener(this, SameThreadExecutor.getInstance());
+                            future.addListener(this, MoreExecutors.directExecutor());
                         }
                     }
                 } else {
@@ -847,7 +847,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     }
                     responses.putAll(updates);
                     for (ListenableFuture<?> future: updates.values()) {
-                        future.addListener(this, SameThreadExecutor.getInstance());
+                        future.addListener(this, MoreExecutors.directExecutor());
                     }
                 }
                 return Optional.absent();
@@ -870,8 +870,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 super(future);
                 this.task = task;
                 this.delegate = CallablePromiseTask.create(this, task.task().second());
-                delegate.addListener(this, SameThreadExecutor.getInstance());
-                addListener(this, SameThreadExecutor.getInstance());
+                delegate.addListener(this, MoreExecutors.directExecutor());
+                addListener(this, MoreExecutors.directExecutor());
             }
             
             public FrontendRequestTask task() {
@@ -910,7 +910,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             }
             
             @Override
-            protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+            protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
                 return super.toStringHelper(helper.addValue(task)).addValue(toString(delegate));
             }
             
@@ -919,7 +919,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 
                 public Callback(ListenableFuture<?> future) {
                     this.future = future;
-                    future.addListener(this, SameThreadExecutor.getInstance());
+                    future.addListener(this, MoreExecutors.directExecutor());
                 }
                 
                 @Override

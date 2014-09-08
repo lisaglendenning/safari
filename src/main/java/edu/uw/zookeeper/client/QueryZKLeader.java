@@ -14,11 +14,11 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.CallablePromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
@@ -41,8 +41,7 @@ public class QueryZKLeader extends ForwardingListenableFuture<List<Boolean>> imp
                                 SettableFuturePromise.<String>create()),
                         Functions.compose(
                                 new MntrServerStateIsLeader(), 
-                                new GetMntrServerState()),
-                        SameThreadExecutor.getInstance()), 
+                                new GetMntrServerState())), 
                     server);
         }
         ImmutableMap<ListenableFuture<Boolean>, ServerInetAddressView> queries = futures.build();
@@ -50,7 +49,7 @@ public class QueryZKLeader extends ForwardingListenableFuture<List<Boolean>> imp
                 new QueryZKLeader(queries), 
                 SettableFuturePromise.<Optional<ServerInetAddressView>>create());
         for (ListenableFuture<Boolean> future: queries.keySet()) {
-            future.addListener(task, SameThreadExecutor.getInstance());
+            future.addListener(task, MoreExecutors.directExecutor());
         }
         return task;
     }

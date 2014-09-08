@@ -7,6 +7,7 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -49,6 +50,7 @@ import edu.uw.zookeeper.safari.region.RegionRole;
 import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
+import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeState;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 import edu.uw.zookeeper.safari.storage.Storage;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
@@ -70,11 +72,11 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
         @Provides @Singleton
         public ListenerFactory newListenerFactory(
                 @Region Identifier region,
-                @Region AsyncFunction<VersionedId, Boolean> isResident,
+                @Region Predicate<AssignedVolumeState> isAssigned,
                 @Control Materializer<ControlZNode<?>,Message.ServerResponse<?>> control,
                 @Storage Materializer<StorageZNode<?>,Message.ServerResponse<?>> storage,
                 RegionRoleService.ListenersFactory listeners) {
-            ListenerFactory instance = ListenerFactory.create(region, isResident, control, storage);
+            ListenerFactory instance = ListenerFactory.create(region, isAssigned, control, storage);
             listeners.get().add(instance);
             return instance;
         }
@@ -123,10 +125,10 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
         
         public static <O extends Operation.ProtocolResponse<?>>  ListenerFactory create(
                 final Identifier region, 
-                final AsyncFunction<VersionedId, Boolean> isResident,
+                final Predicate<AssignedVolumeState> isAssigned,
                 final Materializer<ControlZNode<?>,O> control,
                 final Materializer<StorageZNode<?>,O> storage) {
-            final Supplier<LeaderListener> leader = LeaderListener.supplier(region, isResident, control, storage);
+            final Supplier<LeaderListener> leader = LeaderListener.supplier(region, isAssigned, control, storage);
             return new ListenerFactory(
                     ImmutableMap.of(
                             EnsembleRole.LEADING, 
@@ -160,7 +162,7 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
 
         public static <O extends Operation.ProtocolResponse<?>> Supplier<LeaderListener> supplier(
                 final Identifier region, 
-                final AsyncFunction<VersionedId, Boolean> isResident,
+                final Predicate<AssignedVolumeState> isAssigned,
                 final Materializer<ControlZNode<?>,O> control,
                 final Materializer<StorageZNode<?>,O> storage) {
             final BootstrapRootVolume<?> root = BootstrapRootVolume.create(
@@ -173,7 +175,7 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
                     Boolean bootstrapped = root.call();
                     if (!bootstrapped.booleanValue()) {
                         ScanLatestResidentLogs.call(
-                                    isResident, 
+                                    isAssigned, 
                                     control).get();
                     }
                     return bootstrapped;

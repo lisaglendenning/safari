@@ -13,6 +13,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -23,7 +24,6 @@ import com.google.inject.TypeLiteral;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.WatchListeners;
@@ -76,7 +76,7 @@ public final class VolumeBranchesCache extends LoggingServiceListener<Service> i
         final Logger logger = LogManager.getLogger(VolumeBranchesCache.class);
         final StateCacheListener callback = StateCacheListener.listen(idToPath, cache, branches, service, cacheEvents, logger);
         final VolumeBranchesCache instance = new VolumeBranchesCache(branches, cache, callback, service, logger);
-        service.addListener(instance, SameThreadExecutor.getInstance());
+        service.addListener(instance, MoreExecutors.directExecutor());
         return instance;
     }
 
@@ -99,27 +99,32 @@ public final class VolumeBranchesCache extends LoggingServiceListener<Service> i
     @Override
     public ListenableFuture<VolumeVersion<?>> apply(VersionedId input)
             throws Exception {
-        if (delegate.isRunning()) {
-            Promise<VolumeVersion<?>> value = branches.get(input);
-            if (value == null) {
-                value = SettableFuturePromise.create();
-                Promise<VolumeVersion<?>> existing = branches.putIfAbsent(input, value);
-                if (existing == null) {
-                    cache.lock().readLock().lock();
-                    try {
-                        ZNodePath path = ControlSchema.Safari.Volumes.Volume.Log.Version.State.pathOf(input.getValue(), input.getVersion());
-                        callback.onSuccess(path);
-                    } finally {
-                        cache.lock().readLock().unlock();
-                    }
-                } else {
-                    value = existing;
-                }
-            }
-            return value;
-        } else {
+        switch (delegate().state()) {
+        case FAILED:
+        case STOPPING:
+        case TERMINATED:
             return Futures.immediateCancelledFuture();
+        default:
+            break;
         }
+        
+        Promise<VolumeVersion<?>> value = branches.get(input);
+        if (value == null) {
+            value = SettableFuturePromise.create();
+            Promise<VolumeVersion<?>> existing = branches.putIfAbsent(input, value);
+            if (existing == null) {
+                cache.lock().readLock().lock();
+                try {
+                    ZNodePath path = ControlSchema.Safari.Volumes.Volume.Log.Version.State.pathOf(input.getValue(), input.getVersion());
+                    callback.onSuccess(path);
+                } finally {
+                    cache.lock().readLock().unlock();
+                }
+            } else {
+                value = existing;
+            }
+        }
+        return value;
     }
     
     @Override

@@ -14,7 +14,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.common.FutureTransition;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.safari.Identifier;
@@ -73,8 +73,7 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
                         throws Exception {
                     return Futures.transform(
                             versions.apply(input), 
-                            isResident, 
-                            SameThreadExecutor.getInstance());
+                            isResident);
                 }
             };
         }

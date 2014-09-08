@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.frontend;
 
 import org.apache.logging.log4j.LogManager;
 
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -11,7 +12,6 @@ import edu.uw.zookeeper.ConfigurableTimeout;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.RuntimeModule;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.NetServerModule;
 import edu.uw.zookeeper.net.ServerConnectionFactory;
@@ -58,7 +58,7 @@ public class FrontendConnections extends AbstractModule {
                     public void running() {
                         LogManager.getLogger(Frontend.class).info("Listening on {}", address);
                     }
-                }, SameThreadExecutor.getInstance());
+                }, MoreExecutors.directExecutor());
         return connections;
     }
 }

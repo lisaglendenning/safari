@@ -20,7 +20,7 @@ import edu.uw.zookeeper.data.SimpleNameTrie;
 import edu.uw.zookeeper.data.ValueNode;
 import edu.uw.zookeeper.data.ZNodeSchema;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 
 public class PrefixCreator<V extends Operation.ProtocolResponse<?>> implements Callable<List<ListenableFuture<V>>> {
 
@@ -63,7 +63,7 @@ public class PrefixCreator<V extends Operation.ProtocolResponse<?>> implements C
             if (! next.path().isRoot()) {
                 future = Futures.transform(
                         future, 
-                        new CreateIfAbsent(next), SameThreadExecutor.getInstance());
+                        new CreateIfAbsent(next));
             }
             futures.add(future);
         }
@@ -90,7 +90,7 @@ public class PrefixCreator<V extends Operation.ProtocolResponse<?>> implements C
         public ListenableFuture<V> apply(V result) throws Exception {
             Optional<Operation.Error> error = Operations.maybeError(result.record(), result.toString(), KeeperException.Code.NONODE);
             if (error.isPresent()) {
-                return Futures.transform(materializer.create(schema.path()).call(), new PrefixCreator.NodeMayExist<V>(), SameThreadExecutor.getInstance());
+                return Futures.transform(materializer.create(schema.path()).call(), new PrefixCreator.NodeMayExist<V>());
             } else {
                 return Futures.immediateFuture(result);
             }

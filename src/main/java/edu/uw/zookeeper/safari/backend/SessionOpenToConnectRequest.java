@@ -9,7 +9,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -53,8 +53,7 @@ public class SessionOpenToConnectRequest implements AsyncFunction<MessageSession
                                     materializer));
                 return Futures.transform(
                         lookup, 
-                        new SessionLookupCallback(message), 
-                        SameThreadExecutor.getInstance());
+                        new SessionLookupCallback(message));
             } else {
                 value = ConnectMessage.Request.NewRequest.newInstance(
                         TimeValue.milliseconds(message.getTimeOut()), 

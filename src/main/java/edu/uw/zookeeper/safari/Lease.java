@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari;
 
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 
 
@@ -49,7 +50,7 @@ public final class Lease {
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("start", start).add("duration", duration).toString();
+        return MoreObjects.toStringHelper(this).add("start", start).add("duration", duration).toString();
     }
 
     @Override

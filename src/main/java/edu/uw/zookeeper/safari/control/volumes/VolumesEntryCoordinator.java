@@ -9,7 +9,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
@@ -17,6 +17,7 @@ import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
@@ -24,7 +25,6 @@ import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
@@ -159,7 +159,7 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
                     }
                 }
             } else {
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
     }
@@ -276,8 +276,8 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
                                 Lists.<ListenableFuture<?>>newArrayListWithCapacity(3)), 
                         ChainedFutures.<Boolean>castLast()), 
                     SettableFuturePromise.<Boolean>create());
-            addListener(this, SameThreadExecutor.getInstance());
-            coordinator.addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
+            coordinator.addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override
@@ -322,7 +322,7 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
         }
         
         @Override
-        protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
             return super.toStringHelper(helper.addValue(coordinator));
         }
     }

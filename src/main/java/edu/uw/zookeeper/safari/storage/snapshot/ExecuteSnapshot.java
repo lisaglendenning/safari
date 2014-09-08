@@ -20,7 +20,7 @@ import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
@@ -38,6 +38,7 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
@@ -59,7 +60,6 @@ import edu.uw.zookeeper.common.ListenableFutureActor;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SubmitActor;
 import edu.uw.zookeeper.common.TaskExecutor;
@@ -101,8 +101,6 @@ import edu.uw.zookeeper.safari.backend.PrefixTranslator;
 import edu.uw.zookeeper.safari.storage.schema.SessionLookup;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.storage.snapshot.SnapshotEnsembleWatches.FilteredWchc;
-import edu.uw.zookeeper.safari.storage.snapshot.SnapshotEnsembleWatches.StringToWchc;
 
 
 public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements ChainedProcessor<ExecuteSnapshot.Action<?>> {
@@ -281,12 +279,13 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                                     public Long apply(ConnectMessage.Response input) {
                                         return Long.valueOf(input.getSessionId());
                                     }
-                                }, SameThreadExecutor.getInstance()),
+                                }),
                         materializer,
                         toClient,
                         storage,
                         anonymous,
-                        new FromRootWchc(fromRoot)));
+                        new SnapshotEnsembleWatches.FilteredWchc(
+                                new FromRootWchc(fromRoot))));
         } else if (last.get() instanceof PrepareSnapshotEnsembleWatches) {
             try {
                 return Optional.of((CallSnapshotEnsembleWatches)
@@ -302,8 +301,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             if (previous instanceof PrepareSnapshotEnsembleWatches) {
                 final ListenableFuture<Long> future = Futures.transform(
                         walker.walk(fromRoot), 
-                        new GetOptional<Long>(), 
-                        SameThreadExecutor.getInstance());
+                        new GetOptional<Long>());
                 return Optional.of(CreateSnapshot.call(future));
             } else if (previous instanceof CreateSnapshot) {
                 return Optional.absent();
@@ -325,10 +323,10 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("from", fromVolume).add("to", toVolume).toString();
+        return MoreObjects.toStringHelper(this).add("from", fromVolume).add("to", toVolume).toString();
     }
     
-    public static final class FromRootWchc extends FilteredWchc {
+    public static final class FromRootWchc implements Function<Map.Entry<Long, Collection<ZNodePath>>, Collection<ZNodePath>> {
 
         private final ZNodePath root;
         
@@ -337,7 +335,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
         
         @Override
-        protected Iterable<ZNodePath> filter(Map.Entry<Long, Collection<ZNodePath>> entry) {
+        public Collection<ZNodePath> apply(Map.Entry<Long, Collection<ZNodePath>> entry) {
             ImmutableList.Builder<ZNodePath> filtered = ImmutableList.builder();
             for (ZNodePath path: entry.getValue()) {
                 if (path.startsWith(root)) {
@@ -348,7 +346,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
     }
     
-    public static final class WithoutSessionsWchc extends FilteredWchc {
+    public static final class WithoutSessionsWchc implements Function<Map.Entry<Long, Collection<ZNodePath>>, Collection<ZNodePath>> {
 
         private final ImmutableSet<Long> sessions;
         
@@ -357,12 +355,10 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
         
         @Override
-        protected Iterable<ZNodePath> filter(Map.Entry<Long, Collection<ZNodePath>> entry) {
-            if (!sessions.contains(entry.getKey())) {
-                return entry.getValue();
-            } else {
-                return ImmutableSet.of();
-            }
+        public Collection<ZNodePath> apply(Map.Entry<Long, Collection<ZNodePath>> entry) {
+            return sessions.contains(entry.getKey()) ? 
+                    ImmutableSet.<ZNodePath>of() : 
+                        entry.getValue();
         }
     }
     
@@ -415,10 +411,9 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                 for (ZNodePath path: paths) {
                     deletes.add(DeleteSubtree.deleteChildren(path, client));
                 }
-                CallablePromiseTask<Deleted,Boolean> task = CallablePromiseTask.create(
+                CallablePromiseTask<Deleted,Boolean> task = CallablePromiseTask.listen(
                         new Deleted(Futures.allAsList(deletes.build())), 
                         SettableFuturePromise.<Boolean>create());
-                task.task().addListener(task, SameThreadExecutor.getInstance());
                 return task;
             }
             
@@ -477,7 +472,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                 CallablePromiseTask<Created<O>,Boolean> task = CallablePromiseTask.create(new Created<O>(
                         SubmittedRequests.submit(client, creates.build())), 
                         SettableFuturePromise.<Boolean>create());
-                task.task().addListener(task, SameThreadExecutor.getInstance());
+                task.task().addListener(task, MoreExecutors.directExecutor());
                 return task;
             }
             
@@ -513,16 +508,16 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                 final EnsembleView<ServerInetAddressView> ensemble,
                 final ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous,
                 final Function<FourLetterWords.Wchc, FourLetterWords.Wchc> transformer) {
-            final StringToWchc stringToWchc = new StringToWchc();
+            final SnapshotEnsembleWatches.StringToWchc stringToWchc = new SnapshotEnsembleWatches.StringToWchc();
             final ListenableFuture<Function<FourLetterWords.Wchc, FourLetterWords.Wchc>> localTransformer = 
                     Futures.transform(
                             session, 
                             new Function<Long,Function<FourLetterWords.Wchc, FourLetterWords.Wchc>>() {
                                 @Override
                                 public Function<FourLetterWords.Wchc, FourLetterWords.Wchc> apply(Long input) {
-                                    return new WithoutSessionsWchc(ImmutableSet.of(input));
+                                    return new SnapshotEnsembleWatches.FilteredWchc(new WithoutSessionsWchc(ImmutableSet.of(input)));
                                 }
-                            }, SameThreadExecutor.getInstance());
+                            });
             final Callable<Optional<SnapshotEnsembleWatches>> call = new Callable<Optional<SnapshotEnsembleWatches>>() {
                 @Override
                 public Optional<SnapshotEnsembleWatches> call()
@@ -539,14 +534,14 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                                 return anonymous.connect(address);
                             }
                         };
-                        final Function<String, FourLetterWords.Wchc> transformWchc = Functions.compose(address.equals(server) ? Functions.compose(transformer, localTransformer.get()) : transformer, stringToWchc);
+                        final Function<String, FourLetterWords.Wchc> transformWchc = Functions.compose(server.get().equals(address) ? Functions.compose(transformer, localTransformer.get()) : transformer, stringToWchc);
                         servers.add(SnapshotEnsembleWatches.QueryServerWatches.create(materializer, transformWchc, connection));
                     }
                     return Optional.of(SnapshotEnsembleWatches.forServers(prefix, labelOf, materializer.codec(), client, servers.build()));
                 }
             };
             CallablePromiseTask<?, SnapshotEnsembleWatches> task = CallablePromiseTask.create(call, SettableFuturePromise.<SnapshotEnsembleWatches>create());
-            localTransformer.addListener(task, SameThreadExecutor.getInstance());
+            localTransformer.addListener(task, MoreExecutors.directExecutor());
             return new PrepareSnapshotEnsembleWatches(task);
         }
         
@@ -636,7 +631,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                                 children.iterator(),
                                 TreeWalker.ChildToPath.forParent(path));
             } else {
-                return Iterators.emptyIterator();
+                return ImmutableSet.<AbsoluteZNodePath>of().iterator();
             }
         }
     }
@@ -709,7 +704,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                         }), this);
             this.changes = new FromListener();
             
-            addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
         }
 
         public synchronized TreeWalker<ListenableFuture<Long>> walk(ZNodePath root) {
@@ -821,7 +816,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                 this.zxid = zxid;
                 this.future = future;
                 ++pending;
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
 
             @Override
@@ -953,7 +948,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             public FromListener() {
                 this.changes = Sets.newHashSet();
                 fromClient.subscribe(this);
-                WalkerProcessor.this.addListener(this, SameThreadExecutor.getInstance());
+                WalkerProcessor.this.addListener(this, MoreExecutors.directExecutor());
             }
             
             public boolean isEmpty() {
@@ -1006,7 +1001,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                     }
                     if (change != null) {
                         changes.add(change.get());
-                        change.get().addListener(change.get(), SameThreadExecutor.getInstance());
+                        change.get().addListener(change.get(), MoreExecutors.directExecutor());
                     }
                 }
             }
@@ -1302,7 +1297,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).addValue(super.toString()).addValue(trie).toString();
+            return MoreObjects.toStringHelper(this).addValue(super.toString()).addValue(trie).toString();
         }
 
         @Override
@@ -1330,7 +1325,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             public static SequenceIterator forName(ZNodeName name) {
                 final Iterator<ZNodeLabel> labels;
                 if (name instanceof EmptyZNodeLabel) {
-                    labels = Iterators.emptyIterator();
+                    labels = ImmutableSet.<ZNodeLabel>of().iterator();
                 } else if (name instanceof ZNodeLabel) {
                     labels = Iterators.singletonIterator((ZNodeLabel) name);
                 } else {

@@ -13,17 +13,21 @@ import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.common.util.concurrent.Service.State;
+import com.typesafe.config.ConfigFactory;
+import com.typesafe.config.ConfigUtil;
 
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
@@ -35,7 +39,6 @@ import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
@@ -71,7 +74,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
         return listen(
                 Functions.constant(
                         UnsignedLong.valueOf(
-                                ConfigurableLeaseDuration.fromConfiguration(
+                                ConfigurableLeaseDuration.get(
                                         configuration)
                                     .value(TimeUnit.MILLISECONDS))),
                 renewal,
@@ -109,12 +112,21 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
     @Configurable(arg="lease", path="volume", key="lease", value="60 seconds", help="time")
     public static abstract class ConfigurableLeaseDuration {
 
-        public static TimeValue fromConfiguration(Configuration configuration) {
-            Configurable configurable = ConfigurableLeaseDuration.class.getAnnotation(Configurable.class);
+        public static Configurable getConfigurable() {
+            return ConfigurableLeaseDuration.class.getAnnotation(Configurable.class);
+        }
+        
+        public static TimeValue get(Configuration configuration) {
+            Configurable configurable = getConfigurable();
             return TimeValue.fromString(
                     configuration.withConfigurable(configurable)
                         .getConfigOrEmpty(configurable.path())
                             .getString(configurable.key()));
+        }
+
+        public static Configuration set(Configuration configuration, TimeValue value) {
+            Configurable configurable = getConfigurable();
+            return configuration.withConfig(ConfigFactory.parseMap(ImmutableMap.<String,Object>builder().put(ConfigUtil.joinPath(configurable.path(), configurable.key()), value.toString()).build()));
         }
         
         protected ConfigurableLeaseDuration() {}
@@ -363,7 +375,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
                 }
                 if (next.isPresent()) {
                     future = next;
-                    future.get().addListener(this, SameThreadExecutor.getInstance());
+                    future.get().addListener(this, MoreExecutors.directExecutor());
                 }
                 break;
             }
@@ -392,7 +404,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).add("volume", getVolume()).toString();
+            return MoreObjects.toStringHelper(this).add("volume", getVolume()).toString();
         }
         
         protected synchronized void stop() {
@@ -494,8 +506,8 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
                     SubmittedRequests<Records.Request,?> requests) {
                 this.requests = requests;
                 this.promise = CallablePromiseTask.create(this, SettableFuturePromise.<Pair<Integer,Lease>>create());
-                addListener(this, SameThreadExecutor.getInstance());
-                this.requests.addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
+                this.requests.addListener(this, MoreExecutors.directExecutor());
             }
             
             @Override

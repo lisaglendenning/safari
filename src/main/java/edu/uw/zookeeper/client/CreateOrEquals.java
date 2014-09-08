@@ -20,7 +20,7 @@ import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 
 public class CreateOrEquals<V> implements ChainedProcessor<ListenableFuture<? extends Optional<V>>> {
     
@@ -69,8 +69,7 @@ public class CreateOrEquals<V> implements ChainedProcessor<ListenableFuture<? ex
                                     // successful create
                                     return Futures.immediateFuture(Optional.<V>absent());
                                 }
-                            },
-                            SameThreadExecutor.getInstance()));
+                            }));
         }
         case 1:
         {
@@ -109,8 +108,7 @@ public class CreateOrEquals<V> implements ChainedProcessor<ListenableFuture<? ex
                                     }
                                     return Futures.immediateFuture(result);
                                 }
-                            },
-                            SameThreadExecutor.getInstance()));
+                            }));
         }
         case 2:
             return Optional.absent();

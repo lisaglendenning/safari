@@ -18,6 +18,7 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.TypeLiteral;
@@ -29,15 +30,18 @@ import edu.uw.zookeeper.client.QueryZKLeader;
 import edu.uw.zookeeper.client.ServerViewFactory;
 import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.client.SubmittedRequests;
+import edu.uw.zookeeper.common.AbstractPair;
+import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
+import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
@@ -53,6 +57,7 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.protocol.SessionListener;
+import edu.uw.zookeeper.protocol.client.AbstractConnectionClientExecutor;
 import edu.uw.zookeeper.protocol.client.AnonymousClientConnection;
 import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
@@ -110,7 +115,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                 @Override
                 public ListenableFuture<Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>> get() {
                     return Futures.transform(
-                            storage.get(),
+                            ConnectedCallback.create(storage.get()),
                             new Function<OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>,Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>>(){
                                 @Override
                                 public Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(
@@ -126,17 +131,25 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                         public ListenableFuture<Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>> apply(
                                 final ServerInetAddressView server) throws Exception {
                             return Futures.transform(
-                                    connections.connect(server.get()), 
-                                    new Function<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>, Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>>() {
+                                    Futures.transform(
+                                            connections.connect(server.get()), 
+                                            new AsyncFunction<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>,OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>(){
+                                                @Override
+                                                public ListenableFuture<OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?> input) {
+                                                    return ConnectedCallback.create(
+                                                            Futures.<OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>immediateFuture(
+                                                                OperationClientExecutor.newInstance(
+                                                                ConnectMessage.Request.NewRequest.newInstance(timeOut, 0L), 
+                                                                input, 
+                                                                scheduler)));
+                                                }                                                
+                                            }),
+                                    new Function<OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>>() {
                                         @Override
-                                        public Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?> input) {
-                                            return Pair.create(server, 
-                                                    OperationClientExecutor.newInstance(
-                                                    ConnectMessage.Request.NewRequest.newInstance(timeOut, 0L), 
-                                                    input, 
-                                                    scheduler));
+                                        public Pair<ServerInetAddressView, ? extends OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(OperationClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> input) {
+                                            return Pair.create(server, input);
                                         }
-                                    }, SameThreadExecutor.getInstance());
+                                    });
                         }
                 };
             return VolumeOperationExecutor.create(
@@ -154,10 +167,8 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                                 return Futures.transform(
                                         Futures.transform(
                                             regionToEnsemble.apply(input),
-                                            ensembleToLeader,
-                                            SameThreadExecutor.getInstance()),
-                                        clients,
-                                        SameThreadExecutor.getInstance());
+                                            ensembleToLeader),
+                                        clients);
                             }
                         }
                     },
@@ -234,6 +245,44 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
         return task;
     }
     
+    public static final class ConnectedCallback<V extends AbstractConnectionClientExecutor<?,?,?,?,?>> extends SimpleToStringListenableFuture<V> implements Callable<Optional<V>>, Runnable {
+
+        public static <V extends AbstractConnectionClientExecutor<?,?,?,?,?>> ListenableFuture<V> create(ListenableFuture<V> delegate) {
+            ConnectedCallback<V> callback = new ConnectedCallback<V>(delegate);
+            return callback.task;
+        }
+        
+        private final CallablePromiseTask<?,V> task;
+        
+        protected ConnectedCallback(ListenableFuture<V> delegate) {
+            super(delegate);
+            this.task = CallablePromiseTask.create(this, SettableFuturePromise.<V>create());
+            addListener(this, MoreExecutors.directExecutor());
+        }
+
+        @Override
+        public Optional<V> call() throws Exception {
+            if (isDone()) {
+                V value = get();
+                if (value.session().isDone()) {
+                    if (value.session().get() instanceof ConnectMessage.Response.Valid) {
+                        return Optional.of(value);
+                    } else {
+                        throw new KeeperException.SessionExpiredException();
+                    }
+                } else {
+                    value.session().addListener(this, MoreExecutors.directExecutor());
+                }
+            }
+            return Optional.absent();
+        }
+
+        @Override
+        public void run() {
+            task.run();
+        }
+    }
+    
     public static final class EnsembleToLeader implements  AsyncFunction<EnsembleView<ServerInetAddressView>,ServerInetAddressView> {
         
         public static EnsembleToLeader create(
@@ -254,7 +303,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                 throws Exception {
             return Futures.transform(
                     QueryZKLeader.call(ensemble, anonymous),
-                    new Callback(ensemble), SameThreadExecutor.getInstance());
+                    new Callback(ensemble));
         }
         
         protected final class Callback implements AsyncFunction<Optional<ServerInetAddressView>,ServerInetAddressView> {
@@ -307,8 +356,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                             materializer, 
                             Operations.Requests.sync().setPath(path).build(), 
                             Operations.Requests.getData().setPath(path).build()),
-                        new Callback(path),
-                        SameThreadExecutor.getInstance());
+                        new Callback(path));
             }
         }
 
@@ -399,8 +447,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                     }
                     return Futures.transform(
                             Futures.allAsList(futures.build()),
-                            toEnsemble,
-                            SameThreadExecutor.getInstance());
+                            toEnsemble);
                 }
             };
         }
@@ -416,8 +463,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                             materializer, 
                             Operations.Requests.sync().setPath(path).build(), 
                             Operations.Requests.getChildren().setPath(path).build()),
-                        new Callback(path),
-                        SameThreadExecutor.getInstance());
+                        new Callback(path));
             } else {
                 return toEnsemble.apply(members);
             }
@@ -509,8 +555,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                             materializer, 
                             Operations.Requests.sync().setPath(path).build(), 
                             Operations.Requests.getData().setPath(path).build()),
-                        new Callback(path),
-                        SameThreadExecutor.getInstance());
+                        new Callback(path));
         }
         
         protected final class Callback implements AsyncFunction<List<? extends Operation.ProtocolResponse<?>>,Identifier> {
@@ -592,8 +637,8 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                     }
                 }
             } else {
-                request.addListener(this, SameThreadExecutor.getInstance());
-                addListener(this, SameThreadExecutor.getInstance());
+                request.addListener(this, MoreExecutors.directExecutor());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
         
@@ -651,7 +696,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
         }
     }
     
-    protected final class RegionLookups extends OperationStep<List<Object>> {
+    protected final class RegionLookups extends OperationStep<List<Object>> implements Function<Pair<ServerInetAddressView, ? extends T>, Pair<ServerInetAddressView, ? extends T>> {
 
         private final List<ZNodePath> paths;
         private final ListenableFuture<EnsembleView<ServerInetAddressView>> fromEnsemble;
@@ -669,11 +714,18 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
             this.paths = paths;
             this.fromEnsemble = regionToEnsemble.apply(fromRegion);
             this.fromMaterializer = regionToMaterializer.apply(fromRegion);
-            this.fromClient = regionToClient.apply(fromRegion);
-            this.toClient = fromRegion.equals(toRegion) ? fromClient : regionToClient.apply(toRegion);
+            this.fromClient = Futures.transform(regionToClient.apply(fromRegion), this);
+            this.toClient = fromRegion.equals(toRegion) ? fromClient : Futures.transform(regionToClient.apply(toRegion), this);
             this.future = Futures.successfulAsList(
                     ImmutableList.<ListenableFuture<?>>of(
                             fromEnsemble, fromMaterializer, fromClient, toClient));
+        }
+
+        @Override
+        public Pair<ServerInetAddressView, ? extends T> apply(
+                Pair<ServerInetAddressView, ? extends T> input) {
+            new DisconnectWhenDone(input.second()).run();
+            return input;
         }
 
         @Override
@@ -690,6 +742,24 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
         @Override
         protected ListenableFuture<List<Object>> delegate() {
             return future;
+        }
+        
+        protected class DisconnectWhenDone extends AbstractPair<ListenableFuture<?>,ConnectionClientExecutor<?,?,?,?>> implements Runnable {
+
+            protected DisconnectWhenDone(
+                    ConnectionClientExecutor<?, ?, ?, ?> second) {
+                super(request, second);
+            }
+
+            @Override
+            public void run() {
+                if (first.isDone()) {
+                    AbstractConnectionClientExecutor.Disconnect.create(second);
+                } else {
+                    first.addListener(this, MoreExecutors.directExecutor());
+                }
+            }
+            
         }
     }
 
@@ -768,8 +838,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                                         VolumesSchemaRequests.create(control)
                                         .volume(leaf)
                                         .create(path))),
-                        this,
-                        SameThreadExecutor.getInstance());
+                        this);
             }
             
             @Override
@@ -790,8 +859,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                         fromMaterializer.create(
                                 StorageSchema.Safari.Volumes.Volume.Log.Version.pathOf(request.task().getOperation().getVolume().getValue(), request.task().getOperation().getOperator().getParameters().getVersion()))
                                 .call(),
-                        this, 
-                        SameThreadExecutor.getInstance());
+                        this);
             }
             
             @Override
@@ -841,8 +909,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                         SubmittedRequests.submit(
                                 toClient.second(), 
                                 requests.build()), 
-                        this, 
-                        SameThreadExecutor.getInstance());
+                        this);
             }
             
             @Override
@@ -973,8 +1040,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                         SubmittedRequests.submit(
                                 control, 
                                 schema.get()),
-                        this,
-                        SameThreadExecutor.getInstance());
+                        this);
             }
 
             @Override
@@ -997,8 +1063,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                                                 control, 
                                                 new IMultiRequest(
                                                         schema.getVolume().delete())),
-                                        this, 
-                                        SameThreadExecutor.getInstance());
+                                        this);
                             }
                         } finally {
                             control.cache().lock().readLock().unlock();
@@ -1019,8 +1084,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                             Operations.Requests.delete().setPath(
                                     StorageSchema.Safari.Volumes.Volume.Log.Version.pathOf(request.task().getOperation().getVolume().getValue(), request.task().getOperation().getOperator().getParameters().getVersion()))
                                     .build()),
-                        this,
-                        SameThreadExecutor.getInstance());
+                        this);
             }
 
             @Override
@@ -1061,8 +1125,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                                     Operations.Requests.sync(), 
                                     Operations.Requests.getChildren())
                                     .apply(StorageSchema.Safari.Volumes.Volume.Log.pathOf(toVolume))), 
-                        this, 
-                        SameThreadExecutor.getInstance());       
+                        this);       
             }
             
             @Override
@@ -1098,8 +1161,7 @@ public final class VolumeOperationExecutor<O extends Operation.ProtocolResponse<
                                         SubmittedRequests.submit(
                                                 toClient, 
                                                 new IMultiRequest(requests.build())), 
-                                        this, 
-                                        SameThreadExecutor.getInstance());
+                                        this);
                             }
                         }         
                     }

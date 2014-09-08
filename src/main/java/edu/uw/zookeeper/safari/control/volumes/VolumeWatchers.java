@@ -89,6 +89,7 @@ public class VolumeWatchers extends AbstractModule implements SafariModule {
     @SuppressWarnings("unchecked")
     @Provides @Singleton
     public static DirectoryEntryListener<ControlZNode<?>,ControlSchema.Safari.Volumes.Volume> getVolumeListener(
+            DirectoryEntryListener<ControlZNode<?>,ControlSchema.Safari.Volumes.Volume.Log.Version> versions,
             SchemaClientService<ControlZNode<?>,?> client,
             DirectoryWatcherService<ControlSchema.Safari.Volumes> service) {
         final DirectoryEntryListener<ControlZNode<?>,ControlSchema.Safari.Volumes.Volume> instance = DirectoryEntryListener.create(

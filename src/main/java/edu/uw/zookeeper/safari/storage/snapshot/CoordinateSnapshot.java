@@ -9,7 +9,7 @@ import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
@@ -29,13 +29,13 @@ import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
+import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
@@ -116,7 +116,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
                     return GetXomega.create(operation.getVolume(), fromMaterializer);
                 }
             };
-            final AsyncFunction<Long, KeeperException.Code> createXomega = CreateXomega.creator(operation.getVolume(), fromMaterializer);
+            final AsyncFunction<Long, KeeperException.Code> createXomega = CreateXomega.creator(operation.getVolume(), fromMaterializer.codec(), fromMaterializer);
             final Callable<ListenableFuture<Long>> doSnapshot = new Callable<ListenableFuture<Long>>() {
                 @Override
                 public ListenableFuture<Long> call() throws Exception {
@@ -144,7 +144,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
                 @Override
                 public ListenableFuture<List<AbsoluteZNodePath>> call() throws Exception {
                     return DeleteSubtree.deleteChildren(
-                            StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume).join(fromBranch), 
+                            StorageSchema.Safari.Volumes.Volume.Root.pathOf(fromVolume).join(fromBranch), 
                             fromClient.second());
                 }
             };
@@ -156,7 +156,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             };
             final AsyncFunction<? super Long, List<AbsoluteZNodePath>> complete;
             if (operation.getOperator().getOperator() == VolumeOperator.MERGE) {
-                final CreateXomega.Create creator = CreateXomega.creator(((MergeParameters) operation.getOperator().getParameters()).getParent(), fromMaterializer);
+                final CreateXomega.Create creator = CreateXomega.creator(((MergeParameters) operation.getOperator().getParameters()).getParent(), fromMaterializer.codec(), toClient.second());
                 complete = new AsyncFunction<Long, List<AbsoluteZNodePath>>() {
                     @Override
                     public ListenableFuture<List<AbsoluteZNodePath>> apply(Long input) throws Exception {
@@ -176,7 +176,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
                                         }
                                         return deleteVolume.call();
                                     }
-                                }, SameThreadExecutor.getInstance());
+                                });
                     }
                 };
             } else {
@@ -229,8 +229,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             ExecuteSnapshot.DeleteExistingSnapshot delete) {
         return Futures.transform(
                 delete, 
-                Functions.constant(Boolean.FALSE),
-                SameThreadExecutor.getInstance());
+                Functions.constant(Boolean.FALSE));
     }
 
     private final Callable<ExecuteSnapshot.DeleteExistingSnapshot> undoSnapshot;
@@ -343,7 +342,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).toString();
+        return MoreObjects.toStringHelper(this).toString();
     }
 
     protected static final class CallSnapshot extends SimpleToStringListenableFuture<Long> {
@@ -503,10 +502,9 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
                         PathToRequests.forRequests(
                                 Operations.Requests.sync(),
                                 Operations.Requests.getData()).apply(path));
-                CallablePromiseTask<Call<O>,Optional<Long>> task = CallablePromiseTask.create(
+                CallablePromiseTask<Call<O>,Optional<Long>> task = CallablePromiseTask.listen(
                         new Call<O>(cached, query), 
                         SettableFuturePromise.<Optional<Long>>create());
-                task.task().addListener(task, SameThreadExecutor.getInstance());
                 return task;
             }
             
@@ -545,8 +543,9 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
 
         public static Create creator(
                 final VersionedId volume,
-                final Materializer<StorageZNode<?>,?> materializer) {
-            return Create.create(volume, materializer);
+                final Serializers.ByteSerializer<Object> serializer,
+                final ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> client) {
+            return Create.create(volume, serializer, client);
         }
         
         protected CreateXomega(ListenableFuture<KeeperException.Code> future) {
@@ -557,26 +556,31 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
 
             public static Create create(
                     final VersionedId volume,
-                    final Materializer<StorageZNode<?>,?> materializer) {
+                    final Serializers.ByteSerializer<Object> serializer,
+                    final ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> client) {
                 return new Create(
                         StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega.pathOf(volume.getValue(), volume.getVersion()), 
-                        materializer);
+                        serializer, 
+                        client);
             }
             
             private final ZNodePath path;
-            private final Materializer<StorageZNode<?>,?> materializer;
+            private final Serializers.ByteSerializer<Object> serializer;
+            private final ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> client;
 
             protected Create(
                     ZNodePath path,
-                    Materializer<StorageZNode<?>,?> materializer) {
+                    Serializers.ByteSerializer<Object> serializer,
+                    ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> client) {
                 this.path = path;
-                this.materializer = materializer;
+                this.serializer = serializer;
+                this.client = client;
             }
             
             @Override
             public ListenableFuture<KeeperException.Code> apply(final Long input) throws Exception {
                 return Futures.transform(
-                        materializer.create(path, input).call(),
+                        client.submit(Operations.Requests.serialized(Operations.Requests.create().setPath(path), serializer, input).build()),
                         new Function<Operation.ProtocolResponse<?>, KeeperException.Code>() {
                             @Override
                             public KeeperException.Code apply(Operation.ProtocolResponse<?> response) {
@@ -586,7 +590,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
                                     return KeeperException.Code.OK;
                                 }
                             }
-                        }, SameThreadExecutor.getInstance());
+                        });
             }   
         }
     }
@@ -604,8 +608,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
                             SubmittedRequest.submit(
                                     client, 
                                     Operations.Requests.create().setPath(path).setData(codec.toBytes(Boolean.TRUE)).build()),
-                            CALLBACK,
-                            SameThreadExecutor.getInstance()));
+                            CALLBACK));
         }
         
         protected CommitSnapshot(ListenableFuture<Long> future) {

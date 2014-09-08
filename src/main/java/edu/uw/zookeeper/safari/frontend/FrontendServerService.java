@@ -18,7 +18,6 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.client.CreateOrEquals;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -74,25 +73,32 @@ public class FrontendServerService extends ServiceListenersService {
                 final @Frontend ServerConnectionFactory<? extends ServerProtocolConnection<?,?>> connections,
                 SchemaClientService<ControlZNode<?>,?> control,
                 ServiceMonitor monitor) throws Exception {
-            handler.addListener(
-                    new Service.Listener() {
-                        @SuppressWarnings("unchecked")
-                        @Override
-                        public void running() {
-                            connections.subscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
-                        }
-                        
-                        @SuppressWarnings("unchecked")
-                        @Override
-                        public void stopping(State from) {
-                            connections.unsubscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
-                        }
-                    }, SameThreadExecutor.getInstance());
             FrontendServerService instance = FrontendServerService.create(
                     peer,
                     address,
                     control.materializer(),
-                    ImmutableList.<Service.Listener>of());
+                    ImmutableList.<Service.Listener>of(
+                            new Service.Listener() {
+                                @SuppressWarnings("unchecked")
+                                @Override
+                                public void starting() {
+                                    handler.awaitRunning();
+                                    connections.awaitRunning();
+                                    connections.subscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
+                                }
+                                
+                                @SuppressWarnings("unchecked")
+                                @Override
+                                public void terminated(Service.State from) {
+                                    connections.unsubscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
+                                }
+                                
+                                @SuppressWarnings("unchecked")
+                                @Override
+                                public void failed(Service.State from, Throwable failure) {
+                                    connections.unsubscribe((ConnectionsListener<? super ServerProtocolConnection<?,?>>) handler);
+                                }
+                            }));
             monitor.add(instance);
             return instance;
         }

@@ -10,10 +10,10 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.CallablePromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.ZNodeName;
@@ -111,8 +111,8 @@ public abstract class VolumeBranchListener<T,V extends VolumeVersion<?>> extends
             if (isDone()) {
                 delegate.run();
             } else {
-                delegate.addListener(this, SameThreadExecutor.getInstance());
-                addListener(this, SameThreadExecutor.getInstance());
+                delegate.addListener(this, MoreExecutors.directExecutor());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
     }

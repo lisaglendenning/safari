@@ -13,12 +13,12 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.Connection;
@@ -101,7 +101,7 @@ public abstract class PeerConnection<T extends Connection<? super MessagePacket,
         public TimeOutListener() {
             this.timeOuts = ImmutableList.<ListenableFuture<Void>>of(heartbeat, timeOut);
             for (ListenableFuture<Void> future: timeOuts) {
-                future.addListener(this, SameThreadExecutor.getInstance());
+                future.addListener(this, MoreExecutors.directExecutor());
             }
         }
         

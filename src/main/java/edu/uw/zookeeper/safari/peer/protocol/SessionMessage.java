@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.safari.peer.protocol;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 
 import edu.uw.zookeeper.protocol.Session;
 
@@ -12,19 +12,19 @@ public abstract class SessionMessage<V> extends ValueMessage<Long, V> {
         super(identifier, value);
     }
     
+    public Long getIdentifier() {
+        return identifier;
+    }
+
     public V getMessage() {
         return value;
     }
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this)
+        return MoreObjects.toStringHelper(this)
                 .add("identifier", Session.toString(identifier))
                 .add("message", value)
                 .toString();
-    }
-    
-    public Long getIdentifier() {
-        return identifier;
     }
 }

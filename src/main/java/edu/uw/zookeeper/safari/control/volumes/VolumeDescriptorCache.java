@@ -14,6 +14,7 @@ import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -24,7 +25,6 @@ import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.CachedFunction;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -118,7 +118,7 @@ public final class VolumeDescriptorCache extends ServiceListenersService {
     
     @Override
     protected Executor executor() {
-        return SameThreadExecutor.getInstance();
+        return MoreExecutors.directExecutor();
     }
 
     @Override
@@ -207,7 +207,7 @@ public final class VolumeDescriptorCache extends ServiceListenersService {
                     Promise<ZNodePath> promise) {
                 this.id = id;
                 this.promise = promise;
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
             
             @Override

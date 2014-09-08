@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.safari.schema.volumes;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableSet;
 
 import edu.uw.zookeeper.safari.Identifier;
@@ -23,6 +23,6 @@ public abstract class AssignedVolumeState {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("region", getRegion()).add("leaves", getLeaves()).toString();
+        return MoreObjects.toStringHelper(this).add("region", getRegion()).add("leaves", getLeaves()).toString();
     }
 }

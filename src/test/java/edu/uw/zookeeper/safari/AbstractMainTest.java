@@ -32,7 +32,8 @@ public abstract class AbstractMainTest {
             final Iterable<? extends Component<?>> components, 
             final long pause) throws Exception {
         pauseWithService(
-                monitored(components, Modules.StoppingServiceMonitorProvider.class), 
+                monitored(components, 
+                        Modules.StoppingServiceMonitorProvider.class), 
                 pause);
     }
     

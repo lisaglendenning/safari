@@ -10,7 +10,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
@@ -19,13 +19,13 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
@@ -143,7 +143,7 @@ public abstract class Watchers {
             if (isDone()) {
                 watch.unsubscribe(listener);
             } else {
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
     }
@@ -235,7 +235,7 @@ public abstract class Watchers {
         }
         
         @Override
-        protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper.addValue(callback));
         }
     }
@@ -319,7 +319,7 @@ public abstract class Watchers {
         }
         
         @Override
-        protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper.addValue(callback));
         }
     }
@@ -362,7 +362,7 @@ public abstract class Watchers {
         }
         
         @Override
-        protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper.addValue(runnable));
         }
     }
@@ -451,7 +451,7 @@ public abstract class Watchers {
         }
         
         @Override
-        protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper.addValue(runnable));
         }
     }
@@ -493,7 +493,7 @@ public abstract class Watchers {
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).addValue(query).toString();
+            return MoreObjects.toStringHelper(this).addValue(query).toString();
         }
     }
     
@@ -609,7 +609,7 @@ public abstract class Watchers {
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).addValue(queries).toString();
+            return MoreObjects.toStringHelper(this).addValue(queries).toString();
         }
     }
     
@@ -645,7 +645,7 @@ public abstract class Watchers {
         
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).addValue(query).toString();
+            return MoreObjects.toStringHelper(this).addValue(query).toString();
         }
     }
     
@@ -699,7 +699,7 @@ public abstract class Watchers {
             }
         }
 
-        protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+        protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
             return super.toString(helper).addValue(listeners);
         }
     }
@@ -1010,7 +1010,7 @@ public abstract class Watchers {
                 }
                 callback.onSuccess(result);
             } else {
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
         }
     }

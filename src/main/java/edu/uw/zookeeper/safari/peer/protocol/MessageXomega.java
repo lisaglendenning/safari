@@ -14,7 +14,7 @@ public class MessageXomega extends AbstractPair<VersionedId, Long> implements Me
     }
 
     @JsonCreator
-    public MessageXomega(@JsonProperty("version") VersionedId version, Long xomega) {
+    public MessageXomega(@JsonProperty("version") VersionedId version, @JsonProperty("xomega") Long xomega) {
         super(version, xomega);
     }
     

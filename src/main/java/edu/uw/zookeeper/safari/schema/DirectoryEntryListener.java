@@ -6,7 +6,7 @@ import java.util.Iterator;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.Watcher;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.FutureCallback;
@@ -162,7 +162,7 @@ public class DirectoryEntryListener<U extends SafariZNode<U,?>, T extends U> ext
     }
 
     @Override
-    protected Objects.ToStringHelper toString(Objects.ToStringHelper helper) {
+    protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper helper) {
         return super.toString(helper.addValue(((Class<?>) schema.get().getDeclaration()).getName()));
     }
     

@@ -8,7 +8,7 @@ import java.util.concurrent.ExecutionException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
@@ -18,6 +18,7 @@ import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
@@ -26,7 +27,6 @@ import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
@@ -38,7 +38,7 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
-import edu.uw.zookeeper.safari.control.volumes.VolumeEntryVoted;
+import edu.uw.zookeeper.safari.control.volumes.VolumeEntryResponse;
 import edu.uw.zookeeper.safari.control.volumes.VolumeOperationDirective;
 import edu.uw.zookeeper.safari.control.volumes.VolumeOperationProposer;
 import edu.uw.zookeeper.safari.control.volumes.VolumesSchemaRequests;
@@ -89,13 +89,14 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                         service);
             }
         };
-        final Call call = new Call(
+        final Apply call = new Apply(
                 operation, 
                 proposer, 
                 executor, 
                 VolumeOperationRequests.create(
                         VolumesSchemaRequests.create(
-                                control.materializer()), states));
+                                control.materializer()), states),
+                LogManager.getLogger(VolumeOperationCoordinator.class));
         final ListenableFuture<Boolean> future = ChainedFutures.run(
                 ChainedFutures.process(
                     ChainedFutures.chain(
@@ -106,10 +107,10 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
         return new VolumeOperationCoordinator(call, future);
     }
 
-    protected final Call call;
+    protected final Apply call;
     
     protected VolumeOperationCoordinator(
-            Call call, ListenableFuture<Boolean> delegate) {
+            Apply call, ListenableFuture<Boolean> delegate) {
         super(delegate);
         this.call = call;
     }
@@ -119,22 +120,25 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
     }
     
     @Override
-    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
         return super.toStringHelper(helper.addValue(operation()));
     }
 
-    protected static final class Call implements ChainedProcessor<VolumeOperationCoordinator.Action<?>> {
+    protected static final class Apply implements ChainedProcessor<VolumeOperationCoordinator.Action<?>> {
 
+        protected final Logger logger;
         protected final VolumeOperation<?> operation;
         protected final Supplier<Propose> proposer;
         protected final TaskExecutor<VolumeOperationDirective,Boolean> executor;
         protected final VolumeOperationRequests<?> requests;
         
-        public Call(
+        public Apply(
                 VolumeOperation<?> operation,
                 Supplier<Propose> proposer,
                 TaskExecutor<VolumeOperationDirective,Boolean> executor,
-                VolumeOperationRequests<?> requests) {
+                VolumeOperationRequests<?> requests,
+                Logger logger) {
+            this.logger = logger;
             this.operation = operation;
             this.proposer = proposer;
             this.executor = executor;
@@ -168,9 +172,15 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
             }
         }
         
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this).addValue(operation).toString();
+        }
+        
         protected Propose propose() {
+            logger.info("PROPOSING {}", operation);
             return LoggingFutureListener.listen(
-                            LogManager.getLogger(VolumeOperationCoordinator.class),
+                            logger,
                             proposer.get());
         }
         
@@ -187,10 +197,12 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                 }
             }
             assert (first != null);
+            VolumeOperationDirective directive = VolumeOperationDirective.create(first, operation, commit);
+            logger.info("EXECUTING {}", directive);
             return LoggingFutureListener.listen(
-                    LogManager.getLogger(VolumeOperationCoordinator.class),
+                    logger,
                     Execute.create(
-                            VolumeOperationDirective.create(first, operation, commit),
+                            directive,
                             executor));
         }
         
@@ -201,8 +213,15 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
             for (Pair<VolumeLogEntryPath, Boolean> vote: votes) {
                 entries.add(vote.first());
             }
+            if (logger.isInfoEnabled()) {
+                if (commit.booleanValue()) {
+                    logger.info("COMMITING {}", operation);
+                } else {
+                    logger.info("ABORTING {}", operation);
+                }
+            }
             return LoggingFutureListener.listen(
-                    LogManager.getLogger(VolumeOperationCoordinator.class),
+                    logger,
                     Commit.create(operation, entries.build(), commit, requests));
         }
     }
@@ -242,8 +261,7 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                     Logger logger) {
                 return Futures.transform(
                         entries,
-                        new Callback(client, service, logger),
-                        SameThreadExecutor.getInstance());
+                        new Callback(client, service, logger));
             }
             
             protected final SchemaClientService<ControlZNode<?>,?> client;
@@ -262,14 +280,14 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
             @Override
             public ListenableFuture<ImmutableList<Pair<VolumeLogEntryPath,Boolean>>> apply(
                     Pair<VolumeLogEntryPath,Optional<VolumeLogEntryPath>> input) throws Exception {
-                final ImmutableList.Builder<VolumeEntryVoted> futures = ImmutableList.builder();
+                final ImmutableList.Builder<VolumeEntryResponse> futures = ImmutableList.builder();
                 for (VolumeLogEntryPath path: input.second().isPresent() ? 
                         ImmutableList.of(input.first(), input.second().get()) : 
                             ImmutableList.of(input.first())) {
-                    VolumeEntryVoted future = 
+                    VolumeEntryResponse future = 
                             LoggingFutureListener.listen(
                                     logger,
-                                    VolumeEntryVoted.create(
+                                    VolumeEntryResponse.voted(
                                         path, 
                                         client.materializer(),
                                         client.cacheEvents(),
@@ -283,23 +301,23 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
         protected static final class Votes implements Callable<Optional<ImmutableList<Pair<VolumeLogEntryPath,Boolean>>>> {
 
             public static ListenableFuture<ImmutableList<Pair<VolumeLogEntryPath,Boolean>>> create(
-                    ImmutableList<VolumeEntryVoted> votes) {
+                    ImmutableList<VolumeEntryResponse> votes) {
                 final Votes instance = new Votes(votes);
                 final CallablePromiseTask<Votes, ImmutableList<Pair<VolumeLogEntryPath, Boolean>>> task = CallablePromiseTask.create(
                         instance, 
                         SettableFuturePromise.<ImmutableList<Pair<VolumeLogEntryPath, Boolean>>>create());
                 instance.listen(task);
-                Futures.allAsList(votes).addListener(task, SameThreadExecutor.getInstance());
+                Futures.allAsList(votes).addListener(task, MoreExecutors.directExecutor());
                 return task;
             }
             
-            protected final ImmutableList<VolumeEntryVoted> votes;
+            protected final ImmutableList<VolumeEntryResponse> votes;
            
-            public Votes(ImmutableList<VolumeEntryVoted> votes) {
+            public Votes(ImmutableList<VolumeEntryResponse> votes) {
                 this.votes = votes;
             }
             
-            public ImmutableList<VolumeEntryVoted> votes() {
+            public ImmutableList<VolumeEntryResponse> votes() {
                 return votes;
             }
             
@@ -311,7 +329,7 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
             public Optional<ImmutableList<Pair<VolumeLogEntryPath, Boolean>>> call()
                     throws Exception {
                 ImmutableList.Builder<Pair<VolumeLogEntryPath, Boolean>> results = ImmutableList.builder();
-                for (VolumeEntryVoted vote: votes) {
+                for (VolumeEntryResponse vote: votes) {
                     if (!vote.isDone()) {
                         return Optional.absent();
                     } else {
@@ -327,14 +345,14 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                 
                 public Cancellation(ListenableFuture<?> future) {
                     this.future = future;
-                    future.addListener(this, SameThreadExecutor.getInstance());
+                    future.addListener(this, MoreExecutors.directExecutor());
                 }
                 
                 @Override
                 public void run() {
                     if (future.isDone()) {
                         if (future.isCancelled()) {
-                            for (VolumeEntryVoted vote: votes()) {
+                            for (VolumeEntryResponse vote: votes()) {
                                 vote.cancel(false);
                             }
                         }
@@ -379,8 +397,7 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
             }
             return new Commit(Futures.transform(
                     requests, 
-                    new Submit(operation, entries, commit, schema.schema()),
-                    SameThreadExecutor.getInstance()));
+                    new Submit(operation, entries, commit, schema.schema())));
         }
         
         protected Commit(
@@ -441,8 +458,7 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                                 Operations.unlessMultiError((IMultiResponse) Iterables.getOnlyElement(input).record());
                                 return Futures.immediateFuture(commit);
                             }
-                        },
-                        SameThreadExecutor.getInstance());
+                        });
             }
         }
     }

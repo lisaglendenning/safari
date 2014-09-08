@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.safari.schema;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.client.Watchers;
@@ -42,6 +42,6 @@ public class DirectoryWatcherService<T extends SafariZNode<?,?>> extends Service
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).addValue(((Class<?>) schema.get().getDeclaration()).getName()).toString();
+        return MoreObjects.toStringHelper(this).addValue(((Class<?>) schema.get().getDeclaration()).getName()).toString();
     }
 }

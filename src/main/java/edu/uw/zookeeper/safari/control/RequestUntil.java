@@ -7,12 +7,12 @@ import org.apache.zookeeper.KeeperException;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchMatchListener;
@@ -57,7 +57,7 @@ public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V
     public synchronized Optional<V> call() throws Exception {
         if (!request.isPresent()) {
             request = Optional.of(client.materializer().submit(task));
-            request.get().addListener(this, SameThreadExecutor.getInstance());
+            request.get().addListener(this, MoreExecutors.directExecutor());
         } else if (request.get().isDone()) {
             Operation.ProtocolResponse<?> response = request.get().get();
             Optional<Operation.Error> error = Operations.maybeError(response.record(), KeeperException.Code.NONODE);
@@ -66,7 +66,7 @@ public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V
                     watch = Optional.of(new WatchTask());
                 }
                 request = Optional.of(watch.get().call());
-                request.get().addListener(this, SameThreadExecutor.getInstance());
+                request.get().addListener(this, MoreExecutors.directExecutor());
             } else {
                 Optional<V> result = transformer.apply(response.record());
                 if (result.isPresent()) {
@@ -76,7 +76,7 @@ public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V
                         watch = Optional.of(new WatchTask());
                     }
                     request = Optional.of(watch.get().call());
-                    request.get().addListener(this, SameThreadExecutor.getInstance());
+                    request.get().addListener(this, MoreExecutors.directExecutor());
                 }
             }
         }
@@ -87,7 +87,7 @@ public class RequestUntil<T extends Records.Request, V> extends PromiseTask<T, V
 
         public WatchTask() {
             client.notifications().subscribe(this);
-            addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
         }
 
         @Override

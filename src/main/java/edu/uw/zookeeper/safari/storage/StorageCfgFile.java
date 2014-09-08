@@ -4,7 +4,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.util.Properties;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.inject.AbstractModule;
@@ -87,6 +87,6 @@ public class StorageCfgFile implements Supplier<Optional<Properties>> {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).addValue(value).toString();
+        return MoreObjects.toStringHelper(this).addValue(value).toString();
     }
 }

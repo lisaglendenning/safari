@@ -14,6 +14,7 @@ import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -22,7 +23,6 @@ import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
@@ -86,9 +86,8 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
                     return Futures.transform(
                             Futures.transform(
                                 openToRequest.apply(request), 
-                                openToConnect, 
-                                SameThreadExecutor.getInstance()),
-                            connectToClient, SameThreadExecutor.getInstance());
+                                openToConnect),
+                            connectToClient);
                 }
             };
         } 
@@ -188,7 +187,7 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
             this.request = request;
             this.future = future;
             this.delegate = CallablePromiseTask.create(this, promise);
-            future.addListener(this, SameThreadExecutor.getInstance());
+            future.addListener(this, MoreExecutors.directExecutor());
         }
 
         @Override

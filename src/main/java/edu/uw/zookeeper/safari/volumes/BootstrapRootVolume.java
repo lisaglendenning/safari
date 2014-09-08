@@ -16,7 +16,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -109,8 +109,7 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
                 VolumesSchemaRequests<O> schema) {
             return Futures.transform(
                     SubmittedRequests.submit(schema.getMaterializer(), schema.children()), 
-                    new BootstrapRootVolume.LookupRootVolume<O>(schema.getMaterializer().cache()), 
-                    SameThreadExecutor.getInstance());
+                    new BootstrapRootVolume.LookupRootVolume<O>(schema.getMaterializer().cache()));
         }
         
         private final LockableZNodeCache<ControlZNode<?>,?,O> cache;
@@ -156,8 +155,7 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
             multi.add(requests.latest().create());
             return Futures.transform(
                     schema.getMaterializer().submit(new IMultiRequest(multi.build())), 
-                    new CreateRootVolume(),
-                    SameThreadExecutor.getInstance());
+                    new CreateRootVolume());
         }
         
         protected CreateRootVolume() {
@@ -181,8 +179,7 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
                 final Identifier id) {
             return Futures.transform(
                     SubmittedRequests.submit(schema.getMaterializer(), schema.volume(id).latest().get()), 
-                    new BootstrapRootVolume.GetLatestVersion<O>(id, schema.getMaterializer().cache()),
-                    SameThreadExecutor.getInstance());
+                    new BootstrapRootVolume.GetLatestVersion<O>(id, schema.getMaterializer().cache()));
         }
 
         private final Identifier id;
@@ -223,8 +220,7 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
             Materializer<ControlZNode<?>,O> materializer = schema.version().volume().volumes().getMaterializer();
             return Futures.transform(
                     SubmittedRequests.submit(materializer, schema.get()), 
-                    new BootstrapRootVolume.GetState<O>(schema.getPath(), materializer.cache()),
-                    SameThreadExecutor.getInstance());
+                    new BootstrapRootVolume.GetState<O>(schema.getPath(), materializer.cache()));
         }
 
         private final ZNodePath path;
@@ -278,8 +274,7 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
             }
             return Futures.transform(
                     Futures.allAsList(futures.build()), 
-                    new BootstrapRootVolume.CreateStorageVolume<O>(versionPath, materializer), 
-                    SameThreadExecutor.getInstance());
+                    new BootstrapRootVolume.CreateStorageVolume<O>(versionPath, materializer));
         }
         
         protected final ZNodePath path;

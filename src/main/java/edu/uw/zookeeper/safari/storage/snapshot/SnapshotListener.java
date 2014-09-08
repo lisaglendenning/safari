@@ -10,6 +10,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -20,7 +21,6 @@ import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Operations;
@@ -143,7 +143,7 @@ public final class SnapshotListener extends ServiceListenersService {
     
     @Override
     protected Executor executor() {
-        return SameThreadExecutor.getInstance();
+        return MoreExecutors.directExecutor();
     }
     
     protected static final class SnapshotCommitQuery implements Function<ZNodePath, List<? extends Records.Request>> {

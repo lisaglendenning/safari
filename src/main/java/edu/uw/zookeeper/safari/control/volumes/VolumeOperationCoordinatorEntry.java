@@ -1,11 +1,11 @@
 package edu.uw.zookeeper.safari.control.volumes;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Materializer;
@@ -31,8 +31,7 @@ public final class VolumeOperationCoordinatorEntry extends SimpleToStringListena
                         VolumesSchemaRequests.create(materializer)
                         .version(operation.getVolume())
                         .logOperator(operation.getOperator())),
-                    new ResponseToPath(operation.getVolume()),
-                    SameThreadExecutor.getInstance());
+                    new ResponseToPath(operation.getVolume()));
         return create(operation, future);
     }
 
@@ -62,7 +61,7 @@ public final class VolumeOperationCoordinatorEntry extends SimpleToStringListena
     }
     
     @Override
-    protected Objects.ToStringHelper toStringHelper(Objects.ToStringHelper helper) {
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
         return super.toStringHelper(helper.addValue(operation));
     }
 

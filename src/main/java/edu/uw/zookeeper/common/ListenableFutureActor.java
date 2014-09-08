@@ -5,9 +5,9 @@ import java.util.Queue;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Actors;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.TaskExecutor;
 
 public abstract class ListenableFutureActor<I,V,T extends ListenableFuture<V>> extends Actors.PeekingQueuedActor<T> implements TaskExecutor<I,V> {
@@ -28,7 +28,7 @@ public abstract class ListenableFutureActor<I,V,T extends ListenableFuture<V>> e
     protected boolean doSend(T message) {
         final boolean sent = super.doSend(message);
         if (sent) {
-            message.addListener(this, SameThreadExecutor.getInstance());
+            message.addListener(this, MoreExecutors.directExecutor());
         }
         return sent;
     }

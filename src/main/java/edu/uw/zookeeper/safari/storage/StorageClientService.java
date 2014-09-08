@@ -12,13 +12,13 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
+import edu.uw.zookeeper.protocol.client.AbstractConnectionClientExecutor;
 import edu.uw.zookeeper.protocol.client.OperationClientExecutor;
 import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
@@ -62,7 +62,7 @@ public class StorageClientService extends AbstractModule implements SafariModule
                             @Override
                             public void stopping(Service.State from) {
                                 try {
-                                    ConnectionClientExecutorService.disconnect(client);
+                                    AbstractConnectionClientExecutor.disconnect(client);
                                 } catch (Exception e) {
                                     throw Throwables.propagate(e);
                                 }

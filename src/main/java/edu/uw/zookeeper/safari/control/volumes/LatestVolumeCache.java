@@ -24,6 +24,7 @@ import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
@@ -49,7 +50,6 @@ import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.VersionedId;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
@@ -84,6 +84,18 @@ public final class LatestVolumeCache extends ServiceListenersService {
                     ImmutableList.<Service.Listener>of());
             monitor.add(instance);
             return instance;
+        }
+        
+        @Provides @Volumes
+        public AsyncFunction<Identifier, VolumeVersion<?>> getIdToVolume(
+                LatestVolumeCache volumes) {
+            return volumes.idToVolume();
+        }
+        
+        @Provides @Volumes
+        public AsyncFunction<ZNodePath, AssignedVolumeBranches> getPathToVolume(
+                LatestVolumeCache volumes) {
+            return volumes.pathToVolume();
         }
 
         @Override
@@ -204,7 +216,7 @@ public final class LatestVolumeCache extends ServiceListenersService {
     
     @Override
     protected Executor executor() {
-        return SameThreadExecutor.getInstance();
+        return MoreExecutors.directExecutor();
     }
 
     @Override
@@ -416,7 +428,7 @@ public final class LatestVolumeCache extends ServiceListenersService {
                     Identifier volume,
                     Promise<VolumeVersion<?>> delegate) {
                 super(volume, delegate);
-                addListener(this, SameThreadExecutor.getInstance());
+                addListener(this, MoreExecutors.directExecutor());
             }
     
             @Override
@@ -464,7 +476,7 @@ public final class LatestVolumeCache extends ServiceListenersService {
             if (!listeners.containsKey(k)) {
                 VolumeBranchCallback callback = new VolumeBranchCallback(k, VolumeBranchListener.forState(k, state, idToPath));
                 if (listeners.putIfAbsent(k, callback) == null) {
-                    callback.get().addListener(callback, SameThreadExecutor.getInstance());
+                    callback.get().addListener(callback, MoreExecutors.directExecutor());
                 }
             }
         }

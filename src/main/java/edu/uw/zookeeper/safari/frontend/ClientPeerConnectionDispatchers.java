@@ -14,6 +14,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CachedFunction;
@@ -28,7 +29,6 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
@@ -75,7 +75,7 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
                 Pair<Identifier,? extends ListenableFuture<? extends ClientPeerConnection<?>>> task,
                 Promise<ClientPeerConnectionDispatcher> delegate) {
             super(task, delegate);
-            task.second().addListener(CallablePromiseTask.create(this, this), SameThreadExecutor.getInstance());
+            task.second().addListener(CallablePromiseTask.create(this, this), MoreExecutors.directExecutor());
         }
         
         @Override
@@ -241,9 +241,9 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
                                 if (connects.putIfAbsent(task.getIdentifier(), this) == null) {
                                     try {
                                         write = Optional.of(connection.write(MessagePacket.of(task)));
-                                        write.get().addListener(this, SameThreadExecutor.getInstance());
+                                        write.get().addListener(this, MoreExecutors.directExecutor());
                                     } finally {
-                                        this.addListener(this, SameThreadExecutor.getInstance());
+                                        this.addListener(this, MoreExecutors.directExecutor());
                                     }
                                 } else {
                                     throw new UnsupportedOperationException();

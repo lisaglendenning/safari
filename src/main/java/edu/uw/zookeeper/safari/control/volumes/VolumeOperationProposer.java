@@ -15,7 +15,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.RelativeZNodePath;
@@ -37,8 +37,8 @@ public class VolumeOperationProposer<O extends Operation.ProtocolResponse<?>> im
             Materializer<ControlZNode<?>,O> materializer) {
         return Futures.transform(
                 proposal, 
-                new VolumeOperationProposer<O>(proposal.operation(), materializer),
-                SameThreadExecutor.getInstance());
+                new VolumeOperationProposer<O>(proposal.operation(), 
+                        materializer));
     }
     
     protected final Materializer<ControlZNode<?>,O> materializer;
@@ -67,7 +67,7 @@ public class VolumeOperationProposer<O extends Operation.ProtocolResponse<?>> im
                             Optional<VolumeLogEntryPath> input) {
                         return Pair.create(proposal, input);
                     }
-                }, SameThreadExecutor.getInstance());
+                });
     }
 
     public static final class VolumeOperationEntryLinks<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<List<O>,VolumeLogEntryPath> {
@@ -89,7 +89,7 @@ public class VolumeOperationProposer<O extends Operation.ProtocolResponse<?>> im
                                 VolumeLogEntryPath input) {
                             return Optional.of(input);
                         }
-                    }, SameThreadExecutor.getInstance());
+                    });
         }
         
         public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<VolumeLogEntryPath> create(
@@ -105,8 +105,7 @@ public class VolumeOperationProposer<O extends Operation.ProtocolResponse<?>> im
                             schema.children()),
                     new VolumeOperationEntryLinks<O>(
                             link,
-                            schema),
-                    SameThreadExecutor.getInstance());
+                            schema));
         }
         
         private final RelativeZNodePath link;
@@ -163,8 +162,7 @@ public class VolumeOperationProposer<O extends Operation.ProtocolResponse<?>> im
                     SubmittedRequests.submit(
                             materializer, 
                             requests),
-                    this,
-                    SameThreadExecutor.getInstance());
+                    this);
         }
     }
 }

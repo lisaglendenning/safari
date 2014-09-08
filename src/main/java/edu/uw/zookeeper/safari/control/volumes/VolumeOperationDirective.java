@@ -2,7 +2,7 @@ package edu.uw.zookeeper.safari.control.volumes;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperation;
@@ -42,7 +42,7 @@ public final class VolumeOperationDirective {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("entry", entry).add("operation", operation).add("commit", commit).toString();
+        return MoreObjects.toStringHelper(this).add("entry", entry).add("operation", operation).add("commit", commit).toString();
     }
     
     @Override

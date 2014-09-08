@@ -20,7 +20,7 @@ import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Operations;
@@ -203,8 +203,7 @@ public class SimpleVolumeOperator {
                             return Futures.immediateFuture(
                                     AssignedVolumeBranches.valueOf(volume, VersionedValue.valueOf(version, state)));
                         }
-            },
-            SameThreadExecutor.getInstance());
+                    });
         }
     }
     
@@ -234,8 +233,10 @@ public class SimpleVolumeOperator {
             final ImmutableList.Builder<Records.MultiOpRequest> requests = ImmutableList.builder();
             final RegionAndBranches union = AssignedVolumeOperator.create(
                     parent.getState().getValue().getRegion(),
-                    VolumeBranchesOperator.create(VolumeDescriptor.valueOf(volume, path), branches.getValue())).union(
-                            parent.getDescriptor(), parent.getState().getValue().getBranches());
+                    VolumeBranchesOperator.create(
+                            parent.getDescriptor(), parent.getState().getValue().getBranches()))
+                            .union(VolumeDescriptor.valueOf(volume, path),
+                                    branches.getValue());
             requests.addAll(builder.volume(parent.getDescriptor().getId()).version(version).create(Optional.of(RegionAndLeaves.copyOf(union))));
             requests.addAll(builder.volume(volume).version(version).create(Optional.<RegionAndLeaves>absent()));
             return Futures.transform(
@@ -249,8 +250,7 @@ public class SimpleVolumeOperator {
                             return Futures.immediateFuture(
                                     EmptyVolume.valueOf(VolumeDescriptor.valueOf(volume, path), version));
                         }
-            },
-            SameThreadExecutor.getInstance());
+                    });
         }
     }
 }

@@ -11,12 +11,14 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
@@ -33,8 +35,6 @@ import edu.uw.zookeeper.client.cli.Invokes;
 import edu.uw.zookeeper.client.cli.Shell;
 import edu.uw.zookeeper.client.cli.TokenType;
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
@@ -213,11 +213,14 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
     protected PrintCallback<VolumeLogEntryPath> propose(
             final Identifier volume, final VolumeOperator operator, final List<?> arguments) {
         final ListenableFuture<VolumeOperation<?>> operation =
-                PrepareVolumeOperation.create(
-                        VolumesSchemaRequests.create(getMaterializer()).volume(volume), 
-                        operator, arguments,
-                        SettableFuturePromise.<VolumeOperation<?>>create());
-        LoggingFutureListener.listen(logger, operation);
+                LoggingFutureListener.listen(
+                        logger, 
+                        PrepareVolumeOperation.create(
+                            VolumesSchemaRequests
+                                .create(getMaterializer())
+                                .volume(volume), 
+                            operator, 
+                            arguments));
         return new PrintCallback<VolumeLogEntryPath>(
                 new Function<VolumeLogEntryPath, String>() {
                     @Override
@@ -239,7 +242,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
                                     VolumeOperation<?> input) throws Exception {
                                 return VolumeOperationCoordinatorEntry.newEntry(input, getMaterializer());
                             }
-                }));
+                        }));
     }
     
     protected class PrintCallback<V> extends ForwardingListenableFuture<V> implements Runnable {
@@ -252,7 +255,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
                 ListenableFuture<V> future) {
             this.format = format;
             this.future = future;
-            addListener(this, SameThreadExecutor.getInstance());
+            addListener(this, MoreExecutors.directExecutor());
         }
         
         @Override
@@ -262,8 +265,8 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
                     try {
                         shell.println(format.apply(get()));
                     } catch (InterruptedException e) {
-                        throw new AssertionError(e);
-                    } catch (ExecutionException e) {
+                        throw Throwables.propagate(e);
+                    } catch (Exception e) {
                         shell.printThrowable(e);
                     }
                     shell.flush();

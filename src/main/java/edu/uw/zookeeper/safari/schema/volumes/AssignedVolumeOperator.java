@@ -1,6 +1,6 @@
 package edu.uw.zookeeper.safari.schema.volumes;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableBiMap;
 
 import edu.uw.zookeeper.data.ZNodeName;
@@ -41,12 +41,12 @@ public class AssignedVolumeOperator {
         return VolumeBranchesOperator.ParentAndChild.create(RegionAndBranches.valueOf(region(), difference.getParent()), RegionAndBranches.valueOf(region(), difference.getChild()));
     }
     
-    public RegionAndBranches union(VolumeDescriptor parent, ImmutableBiMap<ZNodeName, Identifier> siblings) {
-        return RegionAndBranches.valueOf(region(), operator().union(parent, siblings));
+    public RegionAndBranches union(VolumeDescriptor child, ImmutableBiMap<ZNodeName, Identifier> grandchildren) {
+        return RegionAndBranches.valueOf(region(), operator().union(child, grandchildren));
     }
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("region", region()).add("operator", operator()).toString();
+        return MoreObjects.toStringHelper(this).add("region", region()).add("operator", operator()).toString();
     }
 }

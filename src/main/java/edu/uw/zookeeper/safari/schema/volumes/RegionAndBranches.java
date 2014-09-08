@@ -4,6 +4,7 @@ import static com.google.common.base.Preconditions.*;
 
 import java.util.Map;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableMap;
@@ -45,7 +46,7 @@ public final class RegionAndBranches extends AssignedVolumeState {
 
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("region", getRegion()).add("branches", getBranches()).toString();
+        return MoreObjects.toStringHelper(this).add("region", getRegion()).add("branches", getBranches()).toString();
     }
     
     @Override

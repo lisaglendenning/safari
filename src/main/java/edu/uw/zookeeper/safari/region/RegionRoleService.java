@@ -6,12 +6,13 @@ import java.util.List;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Queues;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;
@@ -25,7 +26,6 @@ import edu.uw.zookeeper.common.Automatons;
 import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.SameThreadExecutor;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
@@ -149,7 +149,7 @@ public class RegionRoleService extends ServiceListenersService {
     
         @Override
         public String toString() {
-            return Objects.toStringHelper(this).toString();
+            return MoreObjects.toStringHelper(this).toString();
         }
 
         @Override
@@ -266,7 +266,7 @@ public class RegionRoleService extends ServiceListenersService {
                                         run();
                                     }
                                 }, 
-                                SameThreadExecutor.getInstance());
+                                MoreExecutors.directExecutor());
                         switch (current.state()) {
                         case TERMINATED:
                         case FAILED:
@@ -331,6 +331,6 @@ public class RegionRoleService extends ServiceListenersService {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).addValue(getRole()).toString();
+        return MoreObjects.toStringHelper(this).addValue(getRole()).toString();
     }
 }

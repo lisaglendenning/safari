@@ -8,10 +8,11 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.LoggingServiceListener;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 
 public class AbstractRoleListener<T> extends LoggingServiceListener<T> implements Runnable, FutureCallback<RegionRoleService> {
 
@@ -66,7 +67,7 @@ public class AbstractRoleListener<T> extends LoggingServiceListener<T> implement
         if (role != null) {
             onSuccess(role);
         }
-        this.role.get().getNext().addListener(this, SameThreadExecutor.getInstance());
+        this.role.get().getNext().addListener(this, MoreExecutors.directExecutor());
     }
     
     @Override

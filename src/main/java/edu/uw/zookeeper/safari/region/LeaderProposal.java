@@ -19,7 +19,7 @@ import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.ISetDataRequest;
 import edu.uw.zookeeper.safari.Identifier;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 
@@ -76,7 +76,7 @@ public final class LeaderProposal<O extends Operation.ProtocolResponse<?>> imple
         // create2 isn't in the stable release
         // so we'll have to issue multiple requests to get the version anyway
         futures.add(materializer.sync(path).call()).add(materializer.getData(path).call());
-        return Futures.transform(Futures.allAsList(futures.build()), this, SameThreadExecutor.getInstance());
+        return Futures.transform(Futures.allAsList(futures.build()), this);
     }
 
     @Override

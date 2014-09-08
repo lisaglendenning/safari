@@ -4,7 +4,7 @@ import java.util.Map;
 
 import javax.annotation.Nullable;
 
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.Maps;
 
 import edu.uw.zookeeper.data.AbstractNameTrie;
@@ -59,7 +59,7 @@ public final class OverlayNode<V> extends DefaultsNode.AbstractDefaultsNode<Over
 
     @Override
     public String toString() {
-        return Objects.toStringHelper("")
+        return MoreObjects.toStringHelper("")
                 .add("path", path())
                 .add("children", keySet())
                 .add("value", value)

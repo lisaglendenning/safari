@@ -59,7 +59,7 @@ public final class VolumeDescriptor {
     
     @Override
     public String toString() {
-        return Objects.toStringHelper(this).add("id", id).add("path", path).toString();
+        return new StringBuilder().append(id).append('@').append(path).toString();
     }
 
     @Override

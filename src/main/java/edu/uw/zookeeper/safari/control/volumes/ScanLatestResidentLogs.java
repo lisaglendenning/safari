@@ -6,6 +6,7 @@ import java.util.concurrent.Callable;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Optional;
+import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -15,13 +16,10 @@ import com.google.common.util.concurrent.ListenableFuture;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
-import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-import edu.uw.zookeeper.common.Pair;
-import edu.uw.zookeeper.common.SameThreadExecutor;
+
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -31,14 +29,15 @@ import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
+import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeState;
 
 public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> implements ChainedProcessor<ListenableFuture<?>> {
     
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> call(
-            AsyncFunction<VersionedId, Boolean> isResident,
+            Predicate<? super AssignedVolumeState> isAssigned,
             Materializer<ControlZNode<?>,O> materializer) {
         final ScanLatestResidentLogs<O> instance = new ScanLatestResidentLogs<O>(
-                isResident, 
+                isAssigned, 
                 VolumesSchemaRequests.create(materializer));
         return ChainedFutures.run(
                 ChainedFutures.process(
@@ -50,12 +49,12 @@ public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> imp
     }
     
     private final VolumesSchemaRequests<O> schema;
-    private final AsyncFunction<VersionedId, Boolean> isResident;
+    private final Predicate<? super AssignedVolumeState> isAssigned;
     
     protected ScanLatestResidentLogs(
-            AsyncFunction<VersionedId, Boolean> isResident,
+            Predicate<? super AssignedVolumeState> isAssigned,
             VolumesSchemaRequests<O> schema) {
-        this.isResident = isResident;
+        this.isAssigned = isAssigned;
         this.schema = schema;
     }
     
@@ -70,19 +69,16 @@ public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> imp
             for (Operation.ProtocolResponse<?> response: ((GetVolumes<?>) last).get()) {
                 Operations.unlessError(response.record());
             }
-            return Optional.of(GetLatest.call(schema));
-        } else if (last instanceof GetLatest) {
-            for (Operation.ProtocolResponse<?> response: ((GetLatest<?>) last).get()) {
-                Operations.maybeError(response.record(), KeeperException.Code.NONODE);
+            return Optional.of(GetLatestAssignedVersions.call(schema, isAssigned));
+        } else if (last instanceof GetLatestAssignedVersions) {
+            ImmutableList.Builder<VersionedId> versions = ImmutableList.builder();
+            for (Optional<VersionedId> version: ((GetLatestAssignedVersions<?>) last).get()) {
+                if (version.isPresent()) {
+                    versions.add(version.get());
+                }
             }
-            return Optional.of(
-                    GetResidentVersions.call(
-                            schema.getMaterializer(), 
-                            isResident));
-        } else if (last instanceof GetResidentVersions) {
-            List<VersionedId> versions = ((GetResidentVersions) last).get();
             return Optional.of(GetEntries.call(
-                    versions, schema.getMaterializer()));
+                    versions.build(), schema.getMaterializer()));
         } else if (last instanceof GetEntries) {
             for (Operation.ProtocolResponse<?> response: ((GetEntries<?>) last).get()) {
                 Operations.maybeError(response.record(), KeeperException.Code.NONODE);
@@ -107,101 +103,93 @@ public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> imp
         }
     }
     
-    protected static final class GetLatest<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> {
+    protected static final class GetLatestAssignedVersions<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<Optional<VersionedId>>> {
 
-        public static <O extends Operation.ProtocolResponse<?>> GetLatest<O> call(
-                VolumesSchemaRequests<O> schema) {
-            ImmutableList.Builder<Records.Request> builder = ImmutableList.builder();
+        public static <O extends Operation.ProtocolResponse<?>> GetLatestAssignedVersions<O> call(
+                VolumesSchemaRequests<O> schema,
+                Predicate<? super AssignedVolumeState> isAssigned) {
+            ImmutableList.Builder<ListenableFuture<Optional<VersionedId>>> futures = ImmutableList.builder();
             schema.getMaterializer().cache().lock().readLock().lock();
             try {
                 ControlSchema.Safari.Volumes volumes = ControlSchema.Safari.Volumes.fromTrie(schema.getMaterializer().cache().cache());
                 for (ControlZNode<?> node: volumes.values()) {
                     Identifier id = ((ControlSchema.Safari.Volumes.Volume) node).name();
-                    builder.addAll(schema.volume(id).latest().get());
+                    futures.add(GetLatestAssignedVersion.create(schema.volume(id), isAssigned));
                 }
             } finally {
                 schema.getMaterializer().cache().lock().readLock().unlock();
             }
-            return new GetLatest<O>(
-                    SubmittedRequests.submit(
-                            schema.getMaterializer(), 
-                            builder.build()));
+            return new GetLatestAssignedVersions<O>(Futures.allAsList(futures.build()));
         }
         
-        protected GetLatest(ListenableFuture<List<O>> delegate) {
-            super(delegate);
-        }
-    }
-    
-    protected static final class GetResidentVersions extends SimpleToStringListenableFuture<List<VersionedId>> {
-
-        public static <O extends Operation.ProtocolResponse<?>> GetResidentVersions call(
-                Materializer<ControlZNode<?>,O> materializer,
-                AsyncFunction<VersionedId, Boolean> isResident) {
-            List<VersionedId> versions = Lists.newLinkedList();
-            materializer.cache().lock().readLock().lock();
-            try {
-                ControlSchema.Safari.Volumes volumes = ControlSchema.Safari.Volumes.fromTrie(materializer.cache().cache());
-                for (ControlZNode<?> node: volumes.values()) {
-                    ControlSchema.Safari.Volumes.Volume volume = (ControlSchema.Safari.Volumes.Volume) node;
-                    if ((volume.getLog() != null) && (volume.getLog().latest() != null)) {
-                        versions.add(VersionedId.valueOf(volume.getLog().latest().data().get(), volume.name()));
-                    }
-                }
-            } finally {
-                materializer.cache().lock().readLock().unlock();
-            }
-            ListenableFuture<List<VersionedId>> future;
-            try {
-                ImmutableList.Builder<Pair<VersionedId,ListenableFuture<Boolean>>> futures = ImmutableList.builder();
-                for (VersionedId version: versions) {
-                    futures.add(Pair.create(version, isResident.apply(version)));
-                }
-                CallablePromiseTask<Call,List<VersionedId>> task = CallablePromiseTask.create(
-                        new Call(futures.build()),
-                        SettableFuturePromise.<List<VersionedId>>create());
-                task.task().addListener(task, SameThreadExecutor.getInstance());
-                future = task;
-            } catch (Exception e) {
-                future = Futures.immediateFailedFuture(e);
-            }
-            return new GetResidentVersions(future);
-        }
-        
-        protected GetResidentVersions(ListenableFuture<List<VersionedId>> delegate) {
+        protected GetLatestAssignedVersions(ListenableFuture<List<Optional<VersionedId>>> delegate) {
             super(delegate);
         }
         
-        protected static final class Call extends ToStringListenableFuture<List<Boolean>> implements Callable<Optional<List<VersionedId>>> {
-
-            private final ImmutableList<Pair<VersionedId, ListenableFuture<Boolean>>> futures;
+        protected final static class GetLatestAssignedVersion<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<List<O>, Optional<VersionedId>>, Callable<ListenableFuture<Optional<VersionedId>>> {
             
-            protected Call(ImmutableList<Pair<VersionedId, ListenableFuture<Boolean>>> futures) {
-                this.futures = futures;
+            public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Optional<VersionedId>> create(
+                    VolumesSchemaRequests<O>.VolumeSchemaRequests schema,
+                    Predicate<? super AssignedVolumeState> isAssigned) {
+                return new GetLatestAssignedVersion<O>(schema, isAssigned).call();
+            }
+            
+            private final VolumesSchemaRequests<O>.VolumeSchemaRequests schema;
+            private final Predicate<? super AssignedVolumeState> isAssigned;
+            
+            public GetLatestAssignedVersion(
+                    VolumesSchemaRequests<O>.VolumeSchemaRequests schema,
+                    Predicate<? super AssignedVolumeState> isAssigned) {
+                this.schema = schema;
+                this.isAssigned = isAssigned;
             }
             
             @Override
-            public Optional<List<VersionedId>> call() throws Exception {
-                ImmutableList.Builder<VersionedId> builder = ImmutableList.builder();
-                for (Pair<VersionedId, ListenableFuture<Boolean>> future: futures) {
-                    if (!future.second().isDone()) {
-                        return Optional.absent();
-                    }
-                    if (future.second().get().booleanValue()) {
-                        builder.add(future.first());
-                    }
+            public ListenableFuture<Optional<VersionedId>> call() {
+                try {
+                    return Futures.transform(
+                            SubmittedRequests.submit(
+                                schema.volumes().getMaterializer(), 
+                                schema.latest().get()), 
+                            this);
+                } catch (Exception e) {
+                    return Futures.immediateFailedFuture(e);
                 }
-                return Optional.<List<VersionedId>>of(builder.build());
             }
 
             @Override
-            protected ListenableFuture<List<Boolean>> delegate() {
-                List<ListenableFuture<Boolean>> futures = Lists.newLinkedList();
-                for (Pair<VersionedId, ListenableFuture<Boolean>> future: this.futures) {
-                    futures.add(future.second());
+            public ListenableFuture<Optional<VersionedId>> apply(List<O> input)
+                    throws Exception {
+                Optional<Operation.Error> error = Optional.absent();
+                for (O response: input) {
+                    error = Operations.maybeError(response.record(), KeeperException.Code.NONODE);
                 }
-                return Futures.allAsList(futures);
+                if (!error.isPresent()) {
+                    schema.volumes().getMaterializer().cache().lock().readLock().lock();
+                    try {
+                        ControlSchema.Safari.Volumes.Volume.Log.Latest latest = (ControlSchema.Safari.Volumes.Volume.Log.Latest) schema.volumes().getMaterializer().cache().cache().get(schema.latest().getPath());
+                        if ((latest != null) && (latest.data().get() != null)) {
+                            ControlSchema.Safari.Volumes.Volume.Log.Version version = latest.log().version(latest.data().get());
+                            if ((version != null) && (version.state() != null) && (version.state().data().get() != null)) {
+                                return Futures.immediateFuture(
+                                        isAssigned.apply(version.state().data().get()) ? 
+                                        Optional.of(version.id()) : 
+                                            Optional.<VersionedId>absent());
+                            } else {
+                                return Futures.transform(
+                                        SubmittedRequests.submit(
+                                                schema.volumes().getMaterializer(), 
+                                                schema.version(latest.data().get()).state().get()), 
+                                        this);
+                            }
+                        }
+                    } finally {
+                        schema.volumes().getMaterializer().cache().lock().readLock().unlock();
+                    }
+                }
+                return Futures.immediateFuture(Optional.<VersionedId>absent());
             }
+            
         }
     }
     
