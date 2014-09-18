@@ -33,7 +33,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Provider;
 
-import edu.uw.zookeeper.WatchType;
 import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.common.Automatons;
 import edu.uw.zookeeper.common.Actors.ExecutedPeekingQueuedActor;
@@ -424,7 +423,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                         }
                     }
                     if (node.isPresent() && (node.get().getVersion().getVersion().longValue() < shard.getVersion().longValue())) {
-                        if (node.get().getType() != WatchType.CHILD) {
+                        if (node.get().getType() != Watcher.WatcherType.Children) {
                             final ListenableFuture<Long> xomegaFuture = versionToXomega.apply(node.get().getVersion());
                             if (!xomegaFuture.isDone()) {
                                 return Optional.of(xomegaFuture);
@@ -434,7 +433,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                                 handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeDataChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
                             }
                         }
-                        if (node.isPresent() && (node.get().getType() != WatchType.DATA)) {
+                        if (node.isPresent() && (node.get().getType() != Watcher.WatcherType.Data)) {
                             handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeChildrenChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
                         }
                     }
@@ -442,18 +441,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 latest.put(shard.getValue(), shard.getVersion());
             }
             
-            WatchType type = null;
+            Watcher.WatcherType type = null;
             switch (request.opcode()) {
             case GET_DATA:
             case EXISTS:
                 if (((Records.WatchGetter) request).getWatch()) {
-                    type = WatchType.DATA;
+                    type = Watcher.WatcherType.Data;
                 }
                 break;
             case GET_CHILDREN:
             case GET_CHILDREN2:
                 if (((Records.WatchGetter) request).getWatch()) {
-                    type = WatchType.CHILD;
+                    type = Watcher.WatcherType.Children;
                 }
                 break;
             default:
@@ -462,9 +461,9 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             if (type != null) {
                 OptionalNode<Watch> node = OptionalNode.putIfAbsent(watches, ZNodePath.fromString(((Records.PathGetter) request).getPath()));
                 if (node.isPresent()) {
-                    if ((node.get().getType() != type) && (node.get().getType() != WatchType.CHILD_AND_DATA)) {
+                    if ((node.get().getType() != type) && (node.get().getType() != Watcher.WatcherType.Any)) {
                         // keep the older versioning
-                        node.set(new Watch(WatchType.CHILD_AND_DATA, node.get().getVersion(), node.get().getZxid()));
+                        node.set(new Watch(Watcher.WatcherType.Any, node.get().getVersion(), node.get().getZxid()));
                     }
                 } else {
                     node.set(new Watch(type, shard, response.zxid()));
@@ -488,19 +487,21 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
             if (!deliver) {
                 OptionalNode<Watch> node = watches.get(event.getPath());
                 if ((node != null) && node.isPresent()) {
-                    final WatchType type = node.get().getType();
+                    final Watcher.WatcherType type = node.get().getType();
                     switch (eventType) {
                     case NodeChildrenChanged:
                     {
                         switch (type) {
-                        case CHILD:
+                        case Children:
                             node.unset();
                             break;
-                        case CHILD_AND_DATA:
-                            node.set(new Watch(WatchType.DATA, node.get().getVersion(), node.get().getZxid()));
+                        case Any:
+                            node.set(new Watch(Watcher.WatcherType.Data, node.get().getVersion(), node.get().getZxid()));
+                            break;
+                        case Data:
                             break;
                         default:
-                            break;
+                            throw new AssertionError();
                         }
                         break;
                     }
@@ -508,35 +509,37 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     case NodeDataChanged:
                     {
                         switch (type) {
-                        case DATA:
+                        case Data:
                             node.unset();
                             break;
-                        case CHILD_AND_DATA:
-                            node.set(new Watch(WatchType.CHILD, node.get().getVersion(), node.get().getZxid()));
+                        case Any:
+                            node.set(new Watch(Watcher.WatcherType.Children, node.get().getVersion(), node.get().getZxid()));
+                            break;
+                        case Children:
                             break;
                         default:
-                            break;
+                            throw new AssertionError();
                         }
                         break;
                     }
                     case NodeDeleted:
                     {
                         switch (type) {
-                        case DATA:
-                        case CHILD:
+                        case Data:
+                        case Children:
                             node.unset();
                             break;
-                        case CHILD_AND_DATA:
+                        case Any:
                             // data watch is triggered first
-                            node.set(new Watch(WatchType.CHILD, node.get().getVersion(), node.get().getZxid()));
+                            node.set(new Watch(Watcher.WatcherType.Children, node.get().getVersion(), node.get().getZxid()));
                             break;
                         default:
-                            break;
+                            throw new AssertionError();
                         }
                         break;
                     }
                     default:
-                        throw new AssertionError();
+                        break;
                     }
                     if (!node.isPresent() || (node.get().getType() != type)) {
                         deliver = true;
@@ -559,18 +562,18 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
     
     protected static final class Watch {
         
-        private final WatchType type;
+        private final Watcher.WatcherType type;
         private final VersionedId version;
         private final long zxid;
         
-        public Watch(WatchType type, VersionedId version, long zxid) {
+        public Watch(Watcher.WatcherType type, VersionedId version, long zxid) {
             super();
             this.type = type;
             this.version = version;
             this.zxid = zxid;
         }
 
-        public WatchType getType() {
+        public Watcher.WatcherType getType() {
             return type;
         }
 

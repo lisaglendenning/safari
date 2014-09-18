@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.safari.control.volumes;
 
-import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
@@ -12,8 +11,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
@@ -55,11 +53,11 @@ public final class VolumeEntryAcceptor implements Supplier<ListenableFuture<Opti
     }
 
     private final VersionedId version;
-    private final ChainedProcessor<VolumeEntryAcceptor.Action<?>> apply;
+    private final ChainedFutures.ChainedProcessor<VolumeEntryAcceptor.Action<?>, FutureChain<Action<?>>> apply;
     
     protected VolumeEntryAcceptor(
             VersionedId version,
-            ChainedProcessor<VolumeEntryAcceptor.Action<?>> apply) {
+            ChainedFutures.ChainedProcessor<VolumeEntryAcceptor.Action<?>, FutureChain<Action<?>>> apply) {
         this.version = version;
         this.apply = apply;
     }
@@ -71,15 +69,13 @@ public final class VolumeEntryAcceptor implements Supplier<ListenableFuture<Opti
     @Override
     public ListenableFuture<Optional<? extends Sequential<String, ?>>> get() {
         return ChainedFutures.run(
-                ChainedFutures.process(
-                        ChainedFutures.chain(
+                ChainedFutures.<Optional<? extends Sequential<String,?>>>castLast(
+                        ChainedFutures.apply(
                                 apply, 
-                                Lists.<Action<?>>newLinkedList()),
-                        ChainedFutures.<Optional<? extends Sequential<String,?>>>castLast()), 
-                SettableFuturePromise.<Optional<? extends Sequential<String,?>>>create());
+                                ChainedFutures.deque(Lists.<Action<?>>newLinkedList()))));
     }
     
-    protected static final class Apply implements ChainedProcessor<VolumeEntryAcceptor.Action<?>> {
+    protected static final class Apply implements ChainedFutures.ChainedProcessor<VolumeEntryAcceptor.Action<?>, FutureChain<Action<?>>> {
 
         public static Apply create(
                 Callable<? extends Optional<? extends ListenableFuture<?>>> voter,
@@ -98,9 +94,9 @@ public final class VolumeEntryAcceptor implements Supplier<ListenableFuture<Opti
         }
         
         @Override
-        public Optional<? extends Action<?>> apply(List<Action<?>> input) throws Exception {
+        public Optional<? extends Action<?>> apply(FutureChain<Action<?>> input) throws Exception {
             // check the last action
-            Optional<? extends Action<?>> last = input.isEmpty() ? Optional.<Action<?>>absent() : Optional.of(input.get(input.size()-1));
+            Optional<? extends Action<?>> last = input.isEmpty() ? Optional.<Action<?>>absent() : Optional.of(input.getLast());
             if (last.isPresent()) {
                 if (last.get() instanceof Committed) {
                     return Optional.absent();

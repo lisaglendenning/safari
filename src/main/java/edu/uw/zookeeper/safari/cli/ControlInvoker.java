@@ -188,7 +188,7 @@ public class ControlInvoker extends AbstractIdleService implements Invoker<Contr
                         shell.getEnvironment().get(ClientExecutorInvoker.CLIENT_KEY).getConnectionClientExecutor());
         shell.getEnvironment().put(MATERIALIZER_KEY, materializer);
 
-        Futures.allAsList(PrefixCreator.forMaterializer(materializer).call()).get();
+        PrefixCreator.call(materializer).get();
     }
 
     @Override

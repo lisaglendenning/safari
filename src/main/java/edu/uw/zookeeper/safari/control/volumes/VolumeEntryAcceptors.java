@@ -16,6 +16,11 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
@@ -32,12 +37,45 @@ import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 public final class VolumeEntryAcceptors<O extends Operation.ProtocolResponse<?>> extends LoggingServiceListener<Service> implements AsyncFunction<VersionedId, Boolean> {
 
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+
+        protected Module() {}
+        
+        @Provides @Singleton
+        public VolumeEntryAcceptors<?> getVolumeEntryAcceptors(
+                final SchemaClientService<ControlZNode<?>,?> client,
+                RegionRoleService service) {
+            return VolumeEntryAcceptors.listen(
+                    client.materializer(),
+                    client.cacheEvents(), 
+                    service);
+        }
+
+        @Override
+        public Key<? extends Service.Listener> getKey() {
+            return Key.get(VolumeEntryAcceptors.class);
+        }
+
+        @Override
+        protected void configure() {
+            bind(VolumeEntryAcceptors.class).to(new TypeLiteral<VolumeEntryAcceptors<?>>(){});
+            bind(new TypeLiteral<AsyncFunction<VersionedId, Boolean>>(){}).annotatedWith(Volumes.class).to(new TypeLiteral<VolumeEntryAcceptors<?>>(){});
+        }
+    }
+    
     public static <O extends Operation.ProtocolResponse<?>> VolumeEntryAcceptors<O> listen(
             final Materializer<ControlZNode<?>,O> materializer,
             final WatchListeners cacheEvents,

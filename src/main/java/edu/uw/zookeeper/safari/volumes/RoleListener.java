@@ -3,9 +3,11 @@ package edu.uw.zookeeper.safari.volumes;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ScheduledExecutorService;
+
+import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
@@ -18,16 +20,15 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
+import com.google.inject.Injector;
 import com.google.inject.Key;
-import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.EnsembleRole;
-import edu.uw.zookeeper.common.Configuration;
 import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.LoggingServiceListener;
-import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.ZNodeName;
@@ -41,25 +42,18 @@ import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.volumes.ScanLatestResidentLogs;
 import edu.uw.zookeeper.safari.control.volumes.VolumeEntryAcceptors;
-import edu.uw.zookeeper.safari.control.volumes.VolumeOperationCoordinator;
-import edu.uw.zookeeper.safari.control.volumes.VolumeOperationCoordinatorEntry;
 import edu.uw.zookeeper.safari.control.volumes.VolumesEntryCoordinator;
-import edu.uw.zookeeper.safari.region.AbstractRoleListener;
+import edu.uw.zookeeper.safari.region.InjectingRoleListener;
 import edu.uw.zookeeper.safari.region.Region;
 import edu.uw.zookeeper.safari.region.RegionRole;
 import edu.uw.zookeeper.safari.region.RegionRoleService;
-import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
-import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeState;
-import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 import edu.uw.zookeeper.safari.storage.Storage;
-import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.storage.volumes.VolumeVersionCache;
 import edu.uw.zookeeper.safari.storage.volumes.VolumesLeaseManager;
 import edu.uw.zookeeper.safari.storage.volumes.XalphaCreator;
 
-public final class RoleListener extends AbstractRoleListener<RoleListener> {
+public final class RoleListener implements Function<RegionRoleService, List<? extends com.google.inject.Module>> {
 
     public static Module module() {
         return new Module();
@@ -82,42 +76,25 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
         }
         
         @Provides @Singleton
-        public RoleListener newRoleListener(
-                final @edu.uw.zookeeper.safari.control.volumes.Volumes Function<Identifier, FutureTransition<UnsignedLong>> latest,
-                final VolumeVersionCache.CachedVolumes volumes,
-                final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions,
-                final @edu.uw.zookeeper.safari.control.volumes.Volumes AsyncFunction<VersionedId, VolumeVersion<?>> branches,
-                final @Region AsyncFunction<VersionedId, Boolean> isResident,
-                final Provider<VolumeOperationExecutor<?,?>> operations,
-                final SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control,
-                final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage,
+        public InjectingRoleListener<RoleListener> newRoleListener(
+                ListenerFactory listeners,
                 final Supplier<FutureTransition<RegionRoleService>> role,
-                final Configuration configuration,
-                final ScheduledExecutorService scheduler,
-                final ListenerFactory listeners,
+                final Injector injector,
                 final @Region Service service) {
             return RoleListener.listen(
-                    isResident, 
-                    latest, 
-                    branches, 
-                    volumes, 
-                    versions, 
-                    operations, 
-                    control, 
-                    storage, 
-                    configuration, 
-                    scheduler, 
-                    role, 
+                    injector,
+                    role,
                     service);
         }
 
         @Override
-        public Key<? extends Service.Listener> getKey() {
-            return Key.get(RoleListener.class);
+        public Key<?> getKey() {
+            return Key.get(InjectingRoleListener.class, Volumes.class);
         }
 
         @Override
         protected void configure() {
+            bind(Key.get(InjectingRoleListener.class, Volumes.class)).to(Key.get(new TypeLiteral<InjectingRoleListener<RoleListener>>(){}));
         }
     }
     
@@ -206,122 +183,88 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
             }
         }
     }
-    
-    public static RoleListener listen(
-            AsyncFunction<VersionedId, Boolean> isResident,
-            Function<Identifier, FutureTransition<UnsignedLong>> latest,
-            AsyncFunction<VersionedId, VolumeVersion<?>> branches,
-            VolumeVersionCache.CachedVolumes volumes,
-            DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions,
-            Provider<VolumeOperationExecutor<?,?>> operations,
-            SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control,
-            SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage,
-            Configuration configuration,
-            ScheduledExecutorService scheduler,
+
+    public static InjectingRoleListener<RoleListener> listen(
+            Injector injector,
             Supplier<FutureTransition<RegionRoleService>> role,
             Service service) {
-        return Services.listen(new RoleListener(
-                isResident, latest, branches, volumes, versions, operations, control, storage, configuration, scheduler, role), service);
+        final RoleListener instance = new RoleListener();
+        return InjectingRoleListener.listen(
+                injector, 
+                instance, 
+                role, 
+                instance, 
+                LogManager.getLogger(instance),
+                service);
     }
-
-    private final Function<Identifier, FutureTransition<UnsignedLong>> latest;
-    private final VolumeVersionCache.CachedVolumes volumes;
-    private final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions;
-    private final AsyncFunction<VersionedId, Boolean> isResident;
-    private final AsyncFunction<VersionedId, VolumeVersion<?>> branches;
-    private final Provider<VolumeOperationExecutor<?,?>> operations;
-    private final SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control;
-    private final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage;
-    private final Configuration configuration;
-    private final ScheduledExecutorService scheduler;
     
-    protected RoleListener(
-            AsyncFunction<VersionedId, Boolean> isResident,
-            Function<Identifier, FutureTransition<UnsignedLong>> latest,
-            AsyncFunction<VersionedId, VolumeVersion<?>> branches,
-            VolumeVersionCache.CachedVolumes volumes,
-            DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions,
-            Provider<VolumeOperationExecutor<?,?>> operations,
-            SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control,
-            SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage,
-            Configuration configuration,
-            ScheduledExecutorService scheduler,
-            Supplier<FutureTransition<RegionRoleService>> role) {
-        super(role);
-        this.control = control;
-        this.storage = storage;
-        this.configuration = configuration;
-        this.scheduler = scheduler;
-        this.versions = versions;
-        this.volumes = volumes;
-        this.latest = latest;
-        this.branches = branches;
-        this.operations = operations;
-        this.isResident = isResident;
-    }
+    protected RoleListener() {}
 
     @Override
-    public void onSuccess(final RegionRoleService result) {
-        super.onSuccess(result);
-        if (result.getRole().getRole() == EnsembleRole.LEADING) {
-            final VolumeOperationExecutor<?,?> operations = Services.listen(this.operations.get(), result);
-            VolumesEntryCoordinator.listen(
-                    isResident, 
-                    new AsyncFunction<VolumeOperationCoordinatorEntry, Boolean>() {
+    public List<? extends com.google.inject.Module> apply(final RegionRoleService input) {
+        switch (input.getRole().getRole()) {
+        case LEADING:
+            return ImmutableList.of(
+                    InjectingRoleListener.RegionRoleServiceModule.create(input),
+                    VolumeOperationExecutor.module(),
+                    VolumesEntryCoordinator.module(),
+                    VolumeEntryAcceptors.module(),
+                    new AbstractModule() {
                         @Override
-                        public ListenableFuture<Boolean> apply(
-                                VolumeOperationCoordinatorEntry input)
-                                throws Exception {
-                            return VolumeOperationCoordinator.forEntry(
-                                            input, 
-                                            operations,
-                                            branches, 
-                                            result, 
-                                            control);
+                        protected void configure() {
+                            bind(Key.get(new TypeLiteral<AsyncFunction<VersionedId, Boolean>>(){}, edu.uw.zookeeper.safari.storage.volumes.Volumes.class)).to(Key.get(new TypeLiteral<AsyncFunction<VersionedId, Boolean>>(){}, edu.uw.zookeeper.safari.control.volumes.Volumes.class));
                         }
-                    },  
-                    control, 
-                    result);
-            VolumesLeaseManager.listen(
-                    configuration, 
-                    VolumeEntryAcceptors.listen(
-                            control.materializer(), 
-                            control.cacheEvents(), 
-                            result),
-                    scheduler, 
-                    result,
-                    storage);
+                    },
+                    VolumesLeaseManager.module(),
+                    new XalphaCreatorModule(),
+                    XalphaCreator.module());
+        default:
+            return ImmutableList.of();
+        }
+    }
+    
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this).toString();
+    }
+    
+    protected static class XalphaCreatorModule extends AbstractModule {
+        
+        protected XalphaCreatorModule() {
+        }
+        
+        @Provides @Singleton @edu.uw.zookeeper.safari.storage.volumes.Volumes
+        public AsyncFunction<VersionedId, Optional<VersionedId>> get(
+                final @Control Materializer<ControlZNode<?>,?> control) {
             // TODO subscribe at running (?)
-            // or fill in async part
-            XalphaCreator.listen(
-                    latest, 
-                    // assumes that input is cached
-                    new AsyncFunction<VersionedId, Optional<VersionedId>>() {
-                        final LockableZNodeCache<ControlZNode<?>,?,?> cache = control.materializer().cache();
-                        @Override
-                        public ListenableFuture<Optional<VersionedId>> apply(
-                                final VersionedId input) throws Exception {
-                            Optional<VersionedId> result;
-                            cache.lock().readLock().lock();
-                            try {
-                                ControlSchema.Safari.Volumes.Volume.Log.Version node = 
-                                        ControlSchema.Safari.Volumes.Volume.Log.Version.fromTrie(cache.cache(), input.getValue(), input.getVersion());
-                                Map.Entry<ZNodeName, ControlSchema.Safari.Volumes.Volume.Log.Version> lower = node.log().versions().lowerEntry(node.parent().name());
-                                if (lower == null) {
-                                    result = Optional.absent();
-                                } else {
-                                    result = Optional.of(lower.getValue().id());
-                                }
-                            } finally {
-                                cache.lock().readLock().unlock();
-                            }
-                            return Futures.immediateFuture(result);
+            // or fill in async part // assumes that input is cached
+            return new AsyncFunction<VersionedId, Optional<VersionedId>>() {
+                final LockableZNodeCache<ControlZNode<?>,?,?> cache = control.cache();
+                @Override
+                public ListenableFuture<Optional<VersionedId>> apply(
+                        final VersionedId input) throws Exception {
+                    Optional<VersionedId> result;
+                    cache.lock().readLock().lock();
+                    try {
+                        ControlSchema.Safari.Volumes.Volume.Log.Version node = 
+                                ControlSchema.Safari.Volumes.Volume.Log.Version.fromTrie(cache.cache(), input.getValue(), input.getVersion());
+                        Map.Entry<ZNodeName, ControlSchema.Safari.Volumes.Volume.Log.Version> lower = node.log().versions().lowerEntry(node.parent().name());
+                        if (lower == null) {
+                            result = Optional.absent();
+                        } else {
+                            result = Optional.of(lower.getValue().id());
                         }
-                    }, 
-                    volumes, 
-                    storage, 
-                    result, 
-                    versions);
+                    } finally {
+                        cache.lock().readLock().unlock();
+                    }
+                    return Futures.immediateFuture(result);
+                }
+            };
+        }
+
+        @Override
+        protected void configure() {
+            bind(Key.get(new TypeLiteral<Function<Identifier, FutureTransition<UnsignedLong>>>(){}, edu.uw.zookeeper.safari.storage.volumes.Volumes.class)).to(Key.get(new TypeLiteral<Function<Identifier, FutureTransition<UnsignedLong>>>(){}, edu.uw.zookeeper.safari.control.volumes.Volumes.class));
         }
     }
 }

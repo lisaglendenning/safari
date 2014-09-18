@@ -11,7 +11,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
-
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
 import edu.uw.zookeeper.client.LoggingWatchMatchListener;
 import edu.uw.zookeeper.client.WatchMatchServiceListener;
 import edu.uw.zookeeper.client.DeleteSubtree;
@@ -27,7 +30,11 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.safari.SafariModule;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -37,6 +44,34 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
  * Assumes that session state and snapshot state are already watched.
  */
 public final class ExpireSnapshotSessions extends WatchMatchServiceListener {
+
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+        
+        protected Module() {}
+        
+        @Provides @Singleton
+        public ExpireSnapshotSessions getExpireSnapshotSessions(
+                final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> client,
+                final RegionRoleService service) {
+            return ExpireSnapshotSessions.listen(
+                    client.materializer(), 
+                    client.cacheEvents(),
+                    service);
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(ExpireSnapshotSessions.class);
+        }
+
+        @Override
+        protected void configure() {
+        }
+    }
     
     public static ExpireSnapshotSessions listen(
             Materializer<StorageZNode<?>,?> materializer,
@@ -76,7 +111,7 @@ public final class ExpireSnapshotSessions extends WatchMatchServiceListener {
     public void handleWatchEvent(WatchEvent event) {
         super.handleWatchEvent(event);
         ImmutableList<AbsoluteZNodePath> expired = ImmutableList.of();
-        final ZNodeLabel label = ((AbsoluteZNodePath) event.getPath()).label();
+        final ZNodeLabel label = (ZNodeLabel) event.getPath().label();
         synchronized (snapshots) {
             for (AbsoluteZNodePath path: snapshots) {
                 StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot snapshot = 

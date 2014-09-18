@@ -12,22 +12,30 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.client.Watchers.FutureCallbackListener;
-
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.WatchMatcher;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.Operation.Error;
 import edu.uw.zookeeper.protocol.proto.IDeleteRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
 import edu.uw.zookeeper.protocol.proto.IMultiResponse;
 import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.safari.SafariModule;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
+import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -36,7 +44,37 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
  */
 public final class CleanSnapshot<O extends Operation.ProtocolResponse<?>> implements FutureCallback<StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot> {
 
-    public static <O extends Operation.ProtocolResponse<?>> Watchers.CacheNodeCreatedListener<StorageZNode<?>> listen(
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+        
+        protected Module() {}
+        
+        @Provides @Singleton
+        public CleanSnapshot<?> getCleanSnapshot(
+                final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> client,
+                final RegionRoleService service) {
+            return CleanSnapshot.listen(
+                    client.materializer(), 
+                    client.cacheEvents(),
+                    service,
+                    service.logger());
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(CleanSnapshot.class);
+        }
+
+        @Override
+        protected void configure() {
+            bind(CleanSnapshot.class).to(new TypeLiteral<CleanSnapshot<?>>(){});
+        }
+    }
+    
+    public static <O extends Operation.ProtocolResponse<?>> CleanSnapshot<O> listen(
             Materializer<StorageZNode<?>,O> materializer,
             WatchListeners cacheEvents,
             Service service,
@@ -69,7 +107,7 @@ public final class CleanSnapshot<O extends Operation.ProtocolResponse<?>> implem
                 cacheEvents, 
                 service, 
                 logger);
-        return Watchers.CacheNodeCreatedListener.listen(
+        Watchers.CacheNodeCreatedListener.listen(
                 materializer.cache(), 
                 service, 
                 cacheEvents, 
@@ -83,6 +121,7 @@ public final class CleanSnapshot<O extends Operation.ProtocolResponse<?>> implem
                                 Watcher.Event.EventType.NodeChildrenChanged),
                         logger), 
                 logger);
+        return instance;
     }
 
     private final Operations.Requests.Delete delete;

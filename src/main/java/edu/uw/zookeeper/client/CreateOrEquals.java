@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.client;
 
-import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -14,28 +13,23 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 
 
-public class CreateOrEquals<V> implements ChainedProcessor<ListenableFuture<? extends Optional<V>>> {
+public class CreateOrEquals<V> implements ChainedFutures.ChainedProcessor<ListenableFuture<? extends Optional<V>>, ChainedFutures.ListChain<ListenableFuture<? extends Optional<V>>, ?>> {
     
     public static <V> ListenableFuture<Optional<V>> create(
             ZNodePath path, 
             V value, 
-            Materializer<?,?> materializer, 
-            Promise<Optional<V>> promise) {
+            Materializer<?,?> materializer) {
         return ChainedFutures.run(
-                ChainedFutures.process(
-                    ChainedFutures.chain(
+                ChainedFutures.<Optional<V>>castLast(
+                        ChainedFutures.apply(
                             new CreateOrEquals<V>(path, value, materializer),
-                            Lists.<ListenableFuture<? extends Optional<V>>>newArrayListWithCapacity(2)),
-                    ChainedFutures.<Optional<V>,ListenableFuture<? extends Optional<V>>>getLast()), 
-                promise);
+                            ChainedFutures.list(Lists.<ListenableFuture<? extends Optional<V>>>newArrayListWithCapacity(2)))));
     }
     
     protected final Materializer<?,?> materializer;
@@ -53,7 +47,7 @@ public class CreateOrEquals<V> implements ChainedProcessor<ListenableFuture<? ex
     
     @Override
     public Optional<? extends ListenableFuture<? extends Optional<V>>> apply(
-            List<ListenableFuture<? extends Optional<V>>> input) throws Exception {
+            ChainedFutures.ListChain<ListenableFuture<? extends Optional<V>>, ?> input) throws Exception {
         switch (input.size()) {
         case 0:
         {

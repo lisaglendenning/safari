@@ -12,11 +12,15 @@ import com.google.common.base.Functions;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Lists;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
@@ -27,8 +31,7 @@ import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
@@ -36,220 +39,193 @@ import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Serializers;
-import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.data.Serializers.ByteCodec;
-import edu.uw.zookeeper.net.ClientConnectionFactory;
-import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.SessionListener;
 import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.schema.volumes.MergeParameters;
-import edu.uw.zookeeper.safari.schema.volumes.SplitParameters;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperation;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperator;
+import edu.uw.zookeeper.safari.storage.Storage;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public final class CoordinateSnapshot implements ChainedProcessor<ListenableFuture<?>> {
+public final class CoordinateSnapshot implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain<ListenableFuture<?>>> {
 
-    public static <O extends Operation.ProtocolResponse<?>, T extends ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?>> ListenableFuture<Boolean> call(
-            final boolean isCommit,
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+        
+        protected Module() {}
+        
+        @Provides @Singleton @Snapshot
+        public AsyncFunction<Boolean, Boolean> getCoordinateSnapshot(
+                final VolumeOperation<?> operation,
+                final @Snapshot AsyncFunction<Boolean,Long> snapshot,
+                final @From SnapshotVolumeParameters fromVolume,
+                final @To SnapshotVolumeParameters toVolume,
+                final @From EnsembleView<ServerInetAddressView> fromEnsemble,
+                final @Storage Materializer<StorageZNode<?>,?> fromMaterializer,
+                final @From ConnectionClientExecutor<? super Records.Request, Message.ServerResponse<?>, SessionListener, ?> fromClient,
+                final @To ConnectionClientExecutor<? super Records.Request, Message.ServerResponse<?>, SessionListener, ?> toClient) {
+            return new AsyncFunction<Boolean, Boolean>() {
+                @Override
+                public ListenableFuture<Boolean> apply(Boolean input) throws Exception {
+                    if (input.booleanValue()) {
+                    return CoordinateSnapshot.commit(
+                            operation,
+                            fromVolume,
+                            toVolume,
+                            snapshot,
+                            fromMaterializer,
+                            fromClient,
+                            toClient);
+                    } else {
+                        return CoordinateSnapshot.abort(snapshot);
+                    }
+                }
+            };
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(new TypeLiteral<Callable<ListenableFuture<Boolean>>>(){});
+        }
+
+        @Override
+        protected void configure() {
+        }
+    }
+    
+    public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> commit(
             final VolumeOperation<?> operation,
-            final EnsembleView<ServerInetAddressView> fromEnsemble,
+            final SnapshotVolumeParameters fromVolume,
+            final SnapshotVolumeParameters toVolume,
+            final AsyncFunction<Boolean,Long> snapshot,
             final Materializer<StorageZNode<?>,?> fromMaterializer,
-            final Pair<ServerInetAddressView, ? extends T> fromClient,
-            final Pair<ServerInetAddressView, ? extends T> toClient,
-            final List<ZNodePath> paths,
-            final ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous) {
-        final Identifier fromVolume = operation.getVolume().getValue();
-        final Identifier toVolume;
-        final ZNodeName fromBranch;
-        final ZNodeName toBranch;
-        switch (operation.getOperator().getOperator()) {
-        case MERGE:
-        {
-            MergeParameters parameters = (MergeParameters) operation.getOperator().getParameters();
-            toVolume = parameters.getParent().getValue();
-            toBranch = paths.get(0).suffix(paths.get(1));
-            fromBranch = ZNodeLabel.empty();
-            break;
-        }
-        case SPLIT:
-        {
-            SplitParameters parameters = (SplitParameters) operation.getOperator().getParameters();
-            toVolume = parameters.getLeaf();
-            toBranch = ZNodeLabel.empty();
-            fromBranch = parameters.getBranch();
-            break;
-        }
-        case TRANSFER:
-        {
-            toVolume = fromVolume;
-            toBranch = ZNodeLabel.empty();
-            fromBranch = ZNodeLabel.empty();
-            break;
-        }
-        default:
-            throw new AssertionError();
-        }
-        final Callable<ExecuteSnapshot.DeleteExistingSnapshot> undoSnapshot = new Callable<ExecuteSnapshot.DeleteExistingSnapshot>() {
+            final ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient,
+            final ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient) {
+        final Callable<ListenableFuture<Optional<Long>>> getXomega = new Callable<ListenableFuture<Optional<Long>>>() {
             @Override
-            public ExecuteSnapshot.DeleteExistingSnapshot call() throws Exception {
-                return ExecuteSnapshot.undo(
-                        toClient.second(), 
-                        toVolume, 
-                        operation.getOperator().getParameters().getVersion(),
-                        toBranch);
+            public ListenableFuture<Optional<Long>> call()
+                    throws Exception {
+                return GetXomega.create(operation.getVolume(), fromMaterializer);
             }
         };
-        if (isCommit) {
-            final Callable<ListenableFuture<Optional<Long>>> getXomega = new Callable<ListenableFuture<Optional<Long>>>() {
-                @Override
-                public ListenableFuture<Optional<Long>> call()
-                        throws Exception {
-                    return GetXomega.create(operation.getVolume(), fromMaterializer);
-                }
-            };
-            final AsyncFunction<Long, KeeperException.Code> createXomega = CreateXomega.creator(operation.getVolume(), fromMaterializer.codec(), fromMaterializer);
-            final Callable<ListenableFuture<Long>> doSnapshot = new Callable<ListenableFuture<Long>>() {
-                @Override
-                public ListenableFuture<Long> call() throws Exception {
-                    return ExecuteSnapshot.recover(
-                            fromClient.second(), 
-                            fromVolume, 
-                            fromBranch, 
-                            toClient.second(), 
-                            toVolume, 
-                            operation.getOperator().getParameters().getVersion(),
-                            toBranch, 
-                            fromMaterializer, 
-                            fromClient.first(), 
-                            fromEnsemble, 
-                            anonymous);
-                }
-            };
-            final Callable<ListenableFuture<Long>> commitSnapshot = new Callable<ListenableFuture<Long>>() {
-                @Override
-                public ListenableFuture<Long> call() throws Exception {
-                    return CommitSnapshot.create(toVolume, operation.getOperator().getParameters().getVersion(), toClient.second(), fromMaterializer.codec());
-                }
-            };
-            final Callable<ListenableFuture<List<AbsoluteZNodePath>>> deleteVolume = new Callable<ListenableFuture<List<AbsoluteZNodePath>>>() {
-                @Override
-                public ListenableFuture<List<AbsoluteZNodePath>> call() throws Exception {
-                    return DeleteSubtree.deleteChildren(
-                            StorageSchema.Safari.Volumes.Volume.Root.pathOf(fromVolume).join(fromBranch), 
-                            fromClient.second());
-                }
-            };
-            final AsyncFunction<? super Long, List<AbsoluteZNodePath>> callDelete = new AsyncFunction<Object, List<AbsoluteZNodePath>>() {
-                @Override
-                public ListenableFuture<List<AbsoluteZNodePath>> apply(Object input) throws Exception {
-                    return deleteVolume.call();
-                }
-            };
-            final AsyncFunction<? super Long, List<AbsoluteZNodePath>> complete;
-            if (operation.getOperator().getOperator() == VolumeOperator.MERGE) {
-                final CreateXomega.Create creator = CreateXomega.creator(((MergeParameters) operation.getOperator().getParameters()).getParent(), fromMaterializer.codec(), toClient.second());
-                complete = new AsyncFunction<Long, List<AbsoluteZNodePath>>() {
-                    @Override
-                    public ListenableFuture<List<AbsoluteZNodePath>> apply(Long input) throws Exception {
-                        return Futures.transform(
-                                creator.apply(input),
-                                new AsyncFunction<KeeperException.Code, List<AbsoluteZNodePath>>() {
-                                    @Override
-                                    public ListenableFuture<List<AbsoluteZNodePath>> apply(
-                                            KeeperException.Code input)
-                                            throws Exception {
-                                        switch (input) {
-                                        case OK:
-                                        case NODEEXISTS:
-                                            break;
-                                        default:
-                                            throw KeeperException.create(input);
-                                        }
-                                        return deleteVolume.call();
-                                    }
-                                });
-                    }
-                };
-            } else {
-                complete = callDelete;
+        final AsyncFunction<Long, KeeperException.Code> createXomega = CreateXomega.creator(operation.getVolume(), fromMaterializer.codec(), fromMaterializer);
+        final Callable<ListenableFuture<Long>> commitSnapshot = new Callable<ListenableFuture<Long>>() {
+            @Override
+            public ListenableFuture<Long> call() throws Exception {
+                return CommitSnapshot.create(toVolume.getVolume(), toVolume.getVersion(), toClient, fromMaterializer.codec());
             }
-            return doSnapshot(
-                    getXomega, 
-                    createXomega, 
-                    doSnapshot, 
-                    commitSnapshot,
-                    complete,
-                    undoSnapshot);
+        };
+        final Callable<ListenableFuture<List<AbsoluteZNodePath>>> deleteVolume = new Callable<ListenableFuture<List<AbsoluteZNodePath>>>() {
+            @Override
+            public ListenableFuture<List<AbsoluteZNodePath>> call() throws Exception {
+                return DeleteSubtree.deleteChildren(
+                        StorageSchema.Safari.Volumes.Volume.Root.pathOf(fromVolume.getVolume()).join(fromVolume.getBranch()), 
+                        fromClient);
+            }
+        };
+        final AsyncFunction<? super Long, List<AbsoluteZNodePath>> callDelete = new AsyncFunction<Object, List<AbsoluteZNodePath>>() {
+            @Override
+            public ListenableFuture<List<AbsoluteZNodePath>> apply(Object input) throws Exception {
+                return deleteVolume.call();
+            }
+        };
+        final AsyncFunction<? super Long, List<AbsoluteZNodePath>> complete;
+        if (operation.getOperator().getOperator() == VolumeOperator.MERGE) {
+            final CreateXomega.Create creator = CreateXomega.creator(((MergeParameters) operation.getOperator().getParameters()).getParent(), fromMaterializer.codec(), toClient);
+            complete = new AsyncFunction<Long, List<AbsoluteZNodePath>>() {
+                @Override
+                public ListenableFuture<List<AbsoluteZNodePath>> apply(Long input) throws Exception {
+                    return Futures.transform(
+                            creator.apply(input),
+                            new AsyncFunction<KeeperException.Code, List<AbsoluteZNodePath>>() {
+                                @Override
+                                public ListenableFuture<List<AbsoluteZNodePath>> apply(
+                                        KeeperException.Code input)
+                                        throws Exception {
+                                    switch (input) {
+                                    case OK:
+                                    case NODEEXISTS:
+                                        break;
+                                    default:
+                                        throw KeeperException.create(input);
+                                    }
+                                    return deleteVolume.call();
+                                }
+                            });
+                }
+            };
         } else {
-            return undoSnapshot(undoSnapshot);
+            complete = callDelete;
         }
+        return commit(
+                snapshot,
+                getXomega, 
+                createXomega,
+                commitSnapshot,
+                complete);
     }
     
-    protected static ListenableFuture<Boolean> doSnapshot(
-            Callable<ListenableFuture<Optional<Long>>> getXomega,
-            AsyncFunction<Long, KeeperException.Code> createXomega,
-            Callable<ListenableFuture<Long>> doSnapshot,
-            Callable<ListenableFuture<Long>> commitSnapshot,
-            AsyncFunction<? super Long, ?> complete,
-            Callable<ExecuteSnapshot.DeleteExistingSnapshot> undoSnapshot) {
-        return ChainedFutures.run(
-                ChainedFutures.process(
-                        ChainedFutures.chain(
-                                new CoordinateSnapshot(
-                                        getXomega,
-                                        createXomega,
-                                        doSnapshot,
-                                        commitSnapshot,
-                                        complete,
-                                        undoSnapshot), 
-                                Lists.<ListenableFuture<?>>newArrayListWithCapacity(6)), 
-                        ChainedFutures.<Boolean>castLast()), 
-                        SettableFuturePromise.<Boolean>create());
-    }
-    
-    protected static ListenableFuture<Boolean> undoSnapshot(
-            Callable<ExecuteSnapshot.DeleteExistingSnapshot> delete) {
+    public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> abort(
+            final AsyncFunction<Boolean,Long> snapshot) {
         try {
-            return undoSnapshot(delete.call());
+            return abort(snapshot.apply(Boolean.FALSE));
         } catch (Exception e) {
             return Futures.immediateFailedFuture(e);
         }
     }
+    
+    protected static ListenableFuture<Boolean> commit(
+            AsyncFunction<Boolean,Long> snapshot,
+            Callable<ListenableFuture<Optional<Long>>> getXomega,
+            AsyncFunction<Long, KeeperException.Code> createXomega,
+            Callable<ListenableFuture<Long>> commitSnapshot,
+            AsyncFunction<? super Long, ?> complete) {
+        return ChainedFutures.run(
+                ChainedFutures.<Boolean>castLast(
+                        ChainedFutures.arrayList(
+                                new CoordinateSnapshot(
+                                        snapshot,
+                                        getXomega,
+                                        createXomega,
+                                        commitSnapshot,
+                                        complete), 
+                                5)));
+    }
 
-    protected static ListenableFuture<Boolean> undoSnapshot(
-            ExecuteSnapshot.DeleteExistingSnapshot delete) {
+    protected static ListenableFuture<Boolean> abort(
+            ListenableFuture<Long> delete) {
         return Futures.transform(
                 delete, 
                 Functions.constant(Boolean.FALSE));
     }
 
-    private final Callable<ExecuteSnapshot.DeleteExistingSnapshot> undoSnapshot;
+    private final AsyncFunction<Boolean,Long> snapshot;
     private final Callable<ListenableFuture<Optional<Long>>> getXomega;
     private final AsyncFunction<Long, KeeperException.Code> createXomega;
-    private final Callable<ListenableFuture<Long>> doSnapshot;
     private final Callable<ListenableFuture<Long>> commitSnapshot;
     private final AsyncFunction<? super Long, ?> complete;
     
     protected CoordinateSnapshot(
+            AsyncFunction<Boolean,Long> snapshot,
             Callable<ListenableFuture<Optional<Long>>> getXomega,
             AsyncFunction<Long, KeeperException.Code> createXomega,
-            Callable<ListenableFuture<Long>> doSnapshot,
             Callable<ListenableFuture<Long>> commitSnapshot,
-            AsyncFunction<? super Long, ?> complete,
-            Callable<ExecuteSnapshot.DeleteExistingSnapshot> undoSnapshot) {
-        this.undoSnapshot = undoSnapshot;
+            AsyncFunction<? super Long, ?> complete) {
+        this.snapshot = snapshot;
         this.getXomega = getXomega;
         this.createXomega = createXomega;
-        this.doSnapshot = doSnapshot;
         this.commitSnapshot = commitSnapshot;
         this.complete = complete;
     }
@@ -257,7 +233,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
     @SuppressWarnings("unchecked")
     @Override
     public Optional<? extends ListenableFuture<?>> apply(
-            List<ListenableFuture<?>> input) {
+            FutureChain<ListenableFuture<?>> input) {
         switch (input.size()) {
         case 0:
         {
@@ -273,7 +249,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
         {
             Optional<Long> xomega;
             try {
-                xomega = (Optional<Long>) input.get(input.size()-1).get();
+                xomega = (Optional<Long>) input.getLast().get();
             } catch (InterruptedException e) {
                 throw Throwables.propagate(e);
             } catch (ExecutionException e) {
@@ -290,7 +266,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
         case 2:
         {
             try {
-                input.get(input.size()-1).get();
+                input.getLast().get();
             } catch (InterruptedException e) {
                 throw Throwables.propagate(e);
             } catch (ExecutionException e) {
@@ -308,7 +284,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
         {
             Long toXomega;
             try {
-                toXomega = (Long) input.get(input.size()-1).get();
+                toXomega = (Long) input.getLast().get();
             } catch (InterruptedException e) {
                 throw Throwables.propagate(e);
             } catch (ExecutionException e) {
@@ -325,7 +301,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
         case 4:
         {
             try {
-                input.get(input.size()-1).get();
+                input.getLast().get();
             } catch (InterruptedException e) {
                 throw Throwables.propagate(e);
             } catch (ExecutionException e) {
@@ -349,12 +325,9 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
         public static CallSnapshot create(CallSnapshotChain chain) {
             return create(
                     ChainedFutures.run(
-                            ChainedFutures.process(
-                                    ChainedFutures.chain(
-                                            chain, 
-                                            Lists.<ListenableFuture<?>>newArrayListWithCapacity(3)),
-                                    ChainedFutures.<Long>castLast()),
-                            SettableFuturePromise.<Long>create()));
+                            ChainedFutures.<Long>castLast(
+                                    ChainedFutures.arrayList(
+                                            chain, 3))));
         }
 
         public static CallSnapshot create(ListenableFuture<Long> future) {
@@ -366,19 +339,19 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
         }
     }
 
-    protected final class CallSnapshotChain implements ChainedProcessor<ListenableFuture<?>> {
+    protected final class CallSnapshotChain implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, ChainedFutures.ListChain<ListenableFuture<?>,?>> {
         
         public CallSnapshotChain() {}
         
         @Override
         public Optional<? extends ListenableFuture<?>> apply(
-                List<ListenableFuture<?>> input) {
+                ChainedFutures.ListChain<ListenableFuture<?>,?> input) {
             switch (input.size()) {
             case 0:
             {
                 ListenableFuture<?> future;
                 try {
-                    future = doSnapshot.call();
+                    future = snapshot.apply(Boolean.TRUE);
                 } catch (Exception e) {
                     future = Futures.immediateFailedFuture(e);
                 }
@@ -388,12 +361,11 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             {
                 Long xomega;
                 try {
-                    xomega = (Long) input.get(input.size()-1).get();
+                    xomega = (Long) input.getLast().get();
                 } catch (InterruptedException e) {
                     throw Throwables.propagate(e);
                 } catch (ExecutionException e) {
-                    return Optional.of(
-                            undoSnapshot(undoSnapshot));
+                    return Optional.of(abort(snapshot));
                 }
                 ListenableFuture<KeeperException.Code> future;
                 try {
@@ -407,7 +379,7 @@ public final class CoordinateSnapshot implements ChainedProcessor<ListenableFutu
             {
                 Object last;
                 try {
-                    last = input.get(input.size()-1).get();
+                    last = input.getLast().get();
                 } catch (InterruptedException e) {
                     throw Throwables.propagate(e);
                 } catch (ExecutionException e) {

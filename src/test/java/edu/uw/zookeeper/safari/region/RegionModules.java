@@ -62,6 +62,23 @@ public class RegionModules {
                 modules,
                 provider);
     }
+    
+    public static Component<?> newSingletonRegionMember(
+            final Component<?> storage,
+            final Iterable<? extends Component<?>> components,
+            final Named name,
+            final Iterable<? extends com.google.inject.Module> modules,
+            final List<SafariModule> safariModules,
+            final Class<? extends Provider<Component<?>>> provider) {
+        return newRegionMember(
+                ImmutableList.<Component<?>>of(storage), 
+                0, 
+                components, 
+                name,
+                modules,
+                safariModules,
+                provider);
+    }
 
     public static Component<?> newRegionMember(
             final List<Component<?>> storage,
@@ -92,6 +109,24 @@ public class RegionModules {
                 name, 
                 ImmutableList.<com.google.inject.Module>of(), 
                 modules, 
+                provider);
+    }
+
+    public static Component<?> newRegionMember(
+            final List<Component<?>> storage,
+            final int server,
+            final Iterable<? extends Component<?>> components,
+            final Named name,
+            final Iterable<? extends com.google.inject.Module> modules,
+            final List<SafariModule> safariModules,
+            Class<? extends Provider<Component<?>>> provider) {
+        return newRegionMember(
+                storage, 
+                server, 
+                components, 
+                name, 
+                modules, 
+                safariModules, 
                 Modules.SafariServerModuleProvider.class, 
                 provider);
     }

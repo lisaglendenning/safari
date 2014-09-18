@@ -25,8 +25,8 @@ import com.google.common.util.concurrent.MoreExecutors;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
 import edu.uw.zookeeper.common.ForwardingPromise.SimpleForwardingPromise;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -53,19 +53,17 @@ import edu.uw.zookeeper.safari.schema.volumes.VolumeOperation;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperator;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperatorParameters;
 
-public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?>> implements ChainedProcessor<ListenableFuture<?>> {
+public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?>> implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain.FutureDequeChain<ListenableFuture<?>>> {
 
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<VolumeOperation<?>> create(
             VolumesSchemaRequests<O>.VolumeSchemaRequests volume,
             VolumeOperator operator,
             List<?> arguments) {
         return ChainedFutures.run(
-                ChainedFutures.process(
-                        ChainedFutures.chain(
+                ChainedFutures.<VolumeOperation<?>>castLast(
+                        ChainedFutures.apply(
                                 new PrepareVolumeOperation<O>(volume, operator, arguments),
-                                Lists.<ListenableFuture<?>>newLinkedList()),
-                        ChainedFutures.<VolumeOperation<?>>castLast()), 
-                SettableFuturePromise.<VolumeOperation<?>>create());
+                                ChainedFutures.deque(Lists.<ListenableFuture<?>>newLinkedList()))));
     }
     
     protected final Logger logger;
@@ -85,7 +83,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
     
     @SuppressWarnings("unchecked")
     @Override
-    public Optional<? extends ListenableFuture<?>> apply(List<ListenableFuture<?>> input) {
+    public Optional<? extends ListenableFuture<?>> apply(FutureChain.FutureDequeChain<ListenableFuture<?>> input) {
         if (input.isEmpty()) {
             return Optional.of(
                     LoggingFutureListener.listen(
@@ -95,7 +93,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         
         Object last;
         try {
-            last = input.get(input.size() - 1).get();
+            last = input.getLast().get();
         } catch (InterruptedException e) {
             throw new AssertionError(e);
         } catch (ExecutionException e) {
@@ -107,7 +105,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         }
         
         UnsignedLong latest = (input.size() > 1) ? 
-                (UnsignedLong) Futures.getUnchecked(input.get(0)) : 
+                (UnsignedLong) Futures.getUnchecked(input.getFirst()) : 
                     (UnsignedLong) last;
                 
         VolumeOperatorParameters parameters;
@@ -230,17 +228,16 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         }
     }
     
-    public static final class LookupParent implements ChainedProcessor<ListenableFuture<?>> {
+    public static final class LookupParent implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain<ListenableFuture<?>>> {
         
         public static ListenableFuture<Optional<VersionedId>> create(
                 VolumesSchemaRequests<?>.VolumeSchemaRequests volume) {
             return ChainedFutures.run(
-                    ChainedFutures.process(
-                            ChainedFutures.chain(
+                    ChainedFutures.result(
+                            ChainedFutures.<Optional<VersionedId>>castLast(),
+                            ChainedFutures.apply(
                                     new LookupParent(volume),
-                                    Lists.<ListenableFuture<?>>newLinkedList()),
-                            ChainedFutures.<Optional<VersionedId>>castLast()),
-                    SettableFuturePromise.<Optional<VersionedId>>create());
+                                    ChainedFutures.deque(Lists.<ListenableFuture<?>>newLinkedList()))));
         }
         
         protected final VolumesSchemaRequests<?>.VolumeSchemaRequests volume;
@@ -252,8 +249,8 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         @SuppressWarnings("unchecked")
         @Override
         public Optional<? extends ListenableFuture<?>> apply(
-                List<ListenableFuture<?>> input) throws Exception {
-            Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.get(input.size()-1));
+                FutureChain<ListenableFuture<?>> input) throws Exception {
+            Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.getLast());
             if (last.isPresent() && (last.get() instanceof LookupPrefixes)) {
                 return Optional.absent();
             }
@@ -275,7 +272,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                 return Optional.of(SubmittedRequests.submit(volume.volumes().getMaterializer(), volume.path().get()));
             }
             
-            if (!last.isPresent() || ((Records.PathGetter) ((SubmittedRequests<Records.Request,?>) last.get()).requests().get(0)).getPath().equals(volume.path().getPath().toString())) {
+            if (!last.isPresent() || ((Records.PathGetter) ((SubmittedRequests<Records.Request,?>) last.get()).getValue().get(0)).getPath().equals(volume.path().getPath().toString())) {
                 return Optional.of(SubmittedRequests.submit(volume.volumes().getMaterializer(), volume.volumes().children()));
             }
             
@@ -380,19 +377,17 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         }
     }
 
-    public static final class LookupPrefix implements ChainedProcessor<ListenableFuture<?>> {
+    public static final class LookupPrefix implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, ChainedFutures.ListChain<ListenableFuture<?>,?>> {
     
         public static ListenableFuture<Optional<VersionedId>> create(
                 Identifier child,
                 ZNodePath prefix,
                 VolumesSchemaRequests<?> schema) {
             return ChainedFutures.run(
-                    ChainedFutures.process(
-                            ChainedFutures.chain(
+                    ChainedFutures.<Optional<VersionedId>>castLast(
+                            ChainedFutures.apply(
                                     new LookupPrefix(child, prefix, schema), 
-                                    Lists.<ListenableFuture<?>>newLinkedList()), 
-                            ChainedFutures.<Optional<VersionedId>>castLast()),
-                    SettableFuturePromise.<Optional<VersionedId>>create());
+                                    ChainedFutures.list(Lists.<ListenableFuture<?>>newLinkedList()))));
         }
         
         protected final Logger logger;
@@ -413,7 +408,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         @SuppressWarnings("unchecked")
         @Override
         public Optional<? extends ListenableFuture<?>> apply(
-                List<ListenableFuture<?>> input) throws Exception {
+                ChainedFutures.ListChain<ListenableFuture<?>,?> input) throws Exception {
             if (input.isEmpty()) {
                 ListenableFuture<?> future;
                 try {
@@ -443,7 +438,7 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                 return Optional.of(future);
             }
             
-            Object last = input.get(input.size()-1).get();
+            Object last = input.getLast().get();
             
             if (last instanceof Optional) {
                 return Optional.absent();

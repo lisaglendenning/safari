@@ -26,6 +26,10 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 import com.google.common.util.concurrent.Service.State;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigUtil;
 
@@ -55,7 +59,9 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.Lease;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
@@ -65,12 +71,45 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
  */
 public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener<StorageZNode<?>> {
 
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+
+        protected Module() {}
+        
+        @Provides @Singleton
+        public VolumesLeaseManager getVolumesLeaseManager(
+                final SchemaClientService<StorageZNode<?>,?> client,
+                final Configuration configuration,
+                final @Volumes AsyncFunction<VersionedId, Boolean> renewal,
+                final ScheduledExecutorService scheduler,
+                final RegionRoleService service) {
+            return VolumesLeaseManager.listen(
+                    configuration,
+                    renewal,
+                    client,
+                    scheduler, 
+                    service);
+        }
+
+        @Override
+        public Key<? extends Service.Listener> getKey() {
+            return Key.get(VolumesLeaseManager.class);
+        }
+
+        @Override
+        protected void configure() {
+        }
+    }
+    
     public static VolumesLeaseManager listen(
             Configuration configuration,
             AsyncFunction<? super VersionedId, Boolean> renewal,
+            SchemaClientService<StorageZNode<?>,?> client,
             ScheduledExecutorService scheduler,
-            Service service,
-            SchemaClientService<StorageZNode<?>,?> client) {
+            Service service) {
         return listen(
                 Functions.constant(
                         UnsignedLong.valueOf(
@@ -78,17 +117,17 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
                                         configuration)
                                     .value(TimeUnit.MILLISECONDS))),
                 renewal,
+                client,
                 scheduler,
-                service,
-                client);
+                service);
     }
     
     public static VolumesLeaseManager listen(
             Function<? super Identifier, UnsignedLong> durations,
             AsyncFunction<? super VersionedId, Boolean> renewal,
+            SchemaClientService<StorageZNode<?>,?> client,
             ScheduledExecutorService scheduler,
-            Service service,
-            SchemaClientService<StorageZNode<?>,?> client) {
+            Service service) {
         final ConcurrentMap<Identifier, VolumeLeaseManager> managers = new MapMaker().makeMap();
         VolumesLeaseManager instance = new VolumesLeaseManager(
                     durations,
@@ -514,8 +553,8 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
             public Optional<Pair<Integer,Lease>> call() throws Exception {
                 if (requests.isDone()) {
                     List<? extends Operation.ProtocolResponse<?>> responses = requests.get();
-                    for (int i=0; i<requests.requests().size(); ++i) {
-                        Records.Request request = requests.requests().get(i);
+                    for (int i=0; i<requests.getValue().size(); ++i) {
+                        Records.Request request = requests.getValue().get(i);
                         Records.Response response = responses.get(i).record();
                         switch (request.opcode()) {
                         case CREATE:
@@ -544,7 +583,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
                         return;
                     }
                     if (logger.isInfoEnabled()) {
-                        for (Records.Request request: requests.requests()) {
+                        for (Records.Request request: requests.getValue()) {
                             switch (request.opcode()) {
                             case SET_DATA:
                                 logger.info("LEASE RENEWED {} for volume {}", lease.second(), getVolume());

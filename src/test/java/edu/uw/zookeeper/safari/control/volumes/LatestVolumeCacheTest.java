@@ -92,7 +92,7 @@ public class LatestVolumeCacheTest extends AbstractMainTest {
             }
         };
         callWithService(
-                monitored(ImmutableList.of(root, server, client), Modules.StoppingServiceMonitorProvider.class),
+                stopping(ImmutableList.of(root, server, client)),
                 callable);
     }
     

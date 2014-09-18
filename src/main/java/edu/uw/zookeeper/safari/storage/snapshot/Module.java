@@ -20,6 +20,7 @@ public class Module extends AbstractCompositeSafariModule<Service> {
                 module.getKey(),
                 ImmutableList.<com.google.inject.Module>of(
                         module,
+                        FrontendSessionLookup.module(),
                         RoleListener.module()));
     }
     

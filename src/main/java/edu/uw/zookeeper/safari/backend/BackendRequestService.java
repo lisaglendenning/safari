@@ -135,7 +135,7 @@ public class BackendRequestService extends ServiceListenersService {
             final ServerInetAddressView value, 
             final Materializer<ControlZNode<?>,?> materializer) {
         ZNodePath path = ControlSchema.Safari.Peers.Peer.StorageAddress.pathOf(peer);
-        ListenableFuture<Optional<ServerInetAddressView>> task = CreateOrEquals.create(path, value, materializer, SettableFuturePromise.<Optional<ServerInetAddressView>>create());
+        ListenableFuture<Optional<ServerInetAddressView>> task = CreateOrEquals.create(path, value, materializer);
         return Futures.transform(task, 
                 new Function<Optional<ServerInetAddressView>, Optional<ServerInetAddressView>>() {
                     @Override

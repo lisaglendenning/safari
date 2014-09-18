@@ -8,7 +8,6 @@ import org.apache.zookeeper.KeeperException;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -17,9 +16,7 @@ import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-
-import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
@@ -31,7 +28,7 @@ import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeState;
 
-public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> implements ChainedProcessor<ListenableFuture<?>> {
+public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain<ListenableFuture<?>>> {
     
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> call(
             Predicate<? super AssignedVolumeState> isAssigned,
@@ -40,12 +37,9 @@ public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> imp
                 isAssigned, 
                 VolumesSchemaRequests.create(materializer));
         return ChainedFutures.run(
-                ChainedFutures.process(
-                    ChainedFutures.chain(
-                            instance, 
-                            Lists.<ListenableFuture<?>>newLinkedList()),
-                    ChainedFutures.<Boolean>castLast()),
-                SettableFuturePromise.<Boolean>create());
+                ChainedFutures.<Boolean>castLast(
+                    ChainedFutures.arrayDeque(
+                            instance)));
     }
     
     private final VolumesSchemaRequests<O> schema;
@@ -60,11 +54,11 @@ public class ScanLatestResidentLogs<O extends Operation.ProtocolResponse<?>> imp
     
     @Override
     public Optional<? extends ListenableFuture<?>> apply(
-            List<ListenableFuture<?>> input) throws Exception {
+            FutureChain<ListenableFuture<?>> input) throws Exception {
         if (input.isEmpty()) {
             return Optional.of(GetVolumes.call(schema));
         }
-        ListenableFuture<?> last = input.get(input.size()-1);
+        ListenableFuture<?> last = input.getLast();
         if (last instanceof GetVolumes) {
             for (Operation.ProtocolResponse<?> response: ((GetVolumes<?>) last).get()) {
                 Operations.unlessError(response.record());

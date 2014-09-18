@@ -6,13 +6,14 @@ import java.util.NavigableMap;
 import java.util.NavigableSet;
 import java.util.SortedMap;
 
+import org.apache.zookeeper.Watcher;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.Maps;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.primitives.UnsignedLongs;
 
-import edu.uw.zookeeper.WatchType;
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Acls;
@@ -649,8 +650,8 @@ public class StorageSchema extends StorageZNode<Void> {
                                         super(schema, codec, parent);
                                     }
 
-                                    @ZNode
-                                    public static class Watch extends StorageZNode.EscapedNamedZNode<WatchType> {
+                                    @ZNode(dataType=Watcher.WatcherType.class)
+                                    public static class Watch extends StorageZNode.EscapedNamedZNode<Watcher.WatcherType> {
 
                                         public static final AbsoluteZNodePath PATH = Session.PATH.join(ZNodeLabel.fromString(LABEL));
                                         

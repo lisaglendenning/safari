@@ -1,6 +1,5 @@
 package edu.uw.zookeeper.safari.control.volumes;
 
-import java.util.List;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 
@@ -12,20 +11,22 @@ import org.apache.zookeeper.Watcher;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
-
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
@@ -33,7 +34,9 @@ import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
@@ -41,11 +44,58 @@ import edu.uw.zookeeper.safari.control.schema.OperatorVolumeLogEntry;
 import edu.uw.zookeeper.safari.control.schema.VolumeLogEntryPath;
 import edu.uw.zookeeper.safari.control.volumes.VolumeOperationCoordinatorEntry;
 import edu.uw.zookeeper.safari.control.volumes.VolumesSchemaRequests;
+import edu.uw.zookeeper.safari.region.Region;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperation;
+import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 
 public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure<ZNodePath> {
 
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+
+        protected Module() {}
+        
+        @Provides @Singleton
+        public VolumesEntryCoordinator getVolumesEntryCoordinator(
+                final @Region AsyncFunction<VersionedId, Boolean> isResident,
+                final TaskExecutor<VolumeOperationDirective,Boolean> operations,
+                final @Volumes AsyncFunction<VersionedId, VolumeVersion<?>> branches,
+                final SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> client,
+                final RegionRoleService service) {
+            return VolumesEntryCoordinator.listen(
+                    isResident, 
+                    new AsyncFunction<VolumeOperationCoordinatorEntry, Boolean>() {
+                        @Override
+                        public ListenableFuture<Boolean> apply(
+                                VolumeOperationCoordinatorEntry input)
+                                throws Exception {
+                            return VolumeOperationCoordinator.forEntry(
+                                            input, 
+                                            operations,
+                                            branches, 
+                                            service, 
+                                            client);
+                        }
+                    },  
+                    client,
+                    service);
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(VolumesEntryCoordinator.class);
+        }
+
+        @Override
+        protected void configure() {
+        }
+    }
+    
     public static VolumesEntryCoordinator listen(
             final AsyncFunction<? super VersionedId, Boolean> isResident,
             final AsyncFunction<VolumeOperationCoordinatorEntry, Boolean> execute,
@@ -164,7 +214,7 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
         }
     }
 
-    protected static final class VolumeEntryCoordinator extends ToStringListenableFuture<VolumeLogEntryPath> implements ChainedProcessor<ListenableFuture<?>> {
+    protected static final class VolumeEntryCoordinator extends ToStringListenableFuture<VolumeLogEntryPath> implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain<ListenableFuture<?>>> {
 
         public static VolumeEntryCoordinator create(
                 VolumeOperationCoordinatorEntry entry,
@@ -187,11 +237,11 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
         }
         
         @Override
-        public Optional<? extends ListenableFuture<?>> apply(List<ListenableFuture<?>> input) throws Exception {
+        public Optional<? extends ListenableFuture<?>> apply(FutureChain<ListenableFuture<?>> input) throws Exception {
             if (input.isEmpty()) {
                 return Optional.of(delegate());
             }
-            ListenableFuture<?> last = input.get(input.size()-1);
+            ListenableFuture<?> last = input.getLast();
             if (last instanceof VolumeOperationCoordinatorEntry) {
                 VolumeLogEntryPath entry;
                 try {
@@ -264,18 +314,16 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
     protected final class VolumeEntryCoordinatorListener extends ToStringListenableFuture<Boolean> implements Runnable {
 
         protected final VolumeEntryCoordinator coordinator;
-        protected final ChainedFutures.ChainedFuturesTask<?,?,Boolean> delegate;
+        protected final ChainedFutures.ChainedFuturesTask<Boolean> delegate;
         
         protected VolumeEntryCoordinatorListener(
                 VolumeEntryCoordinator coordinator) {
             this.coordinator = coordinator;
             this.delegate = ChainedFutures.task(
-                    ChainedFutures.process(
-                        ChainedFutures.chain(
+                    ChainedFutures.<Boolean>castLast(
+                        ChainedFutures.arrayList(
                                 coordinator, 
-                                Lists.<ListenableFuture<?>>newArrayListWithCapacity(3)), 
-                        ChainedFutures.<Boolean>castLast()), 
-                    SettableFuturePromise.<Boolean>create());
+                                3)));
             addListener(this, MoreExecutors.directExecutor());
             coordinator.addListener(this, MoreExecutors.directExecutor());
         }
@@ -317,7 +365,7 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
         }
 
         @Override
-        protected ChainedFutures.ChainedFuturesTask<?,?,Boolean> delegate() {
+        protected ChainedFutures.ChainedFuturesTask<Boolean> delegate() {
             return delegate;
         }
         

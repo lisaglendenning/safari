@@ -30,7 +30,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
-import edu.uw.zookeeper.WatchType;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.client.WatchMatchServiceListener;
 import edu.uw.zookeeper.client.PathToQuery;
@@ -80,7 +79,6 @@ import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
-import edu.uw.zookeeper.safari.storage.SessionsWatcher;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -142,7 +140,6 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                     listener, 
                     instance.logger());
         }
-        SessionsWatcher.listen(client, service);
         return instance;
     }
 
@@ -397,10 +394,10 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                 if (next == null) {
                     return Optional.of(trie);
                 } else if (next.isDone() && requests.remove(next)) {
-                    final Records.Response response = next.get().get(next.requests().size()-1).record();
+                    final Records.Response response = next.get().get(next.getValue().size()-1).record();
                     final Optional<Operation.Error> error = Operations.maybeError(response, KeeperException.Code.NONODE);
                     if (!error.isPresent()) {
-                        final ZNodePath path = ZNodePath.fromString(((Records.PathGetter) next.requests().get(next.requests().size()-1)).getPath());
+                        final ZNodePath path = ZNodePath.fromString(((Records.PathGetter) next.getValue().get(next.getValue().size()-1)).getPath());
                         cache.lock().readLock().lock();
                         try {
                             final StorageZNode<?> session = cache.cache().get(path);
@@ -513,14 +510,14 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
         protected final class WatchProcessor extends Actors.QueuedActor<Pair<AbsoluteZNodePath, Watch>> {
 
             private final ZNodePath ephemeralsPath;
-            private final ImmutableMap<WatchType, Operations.PathBuilder<? extends Records.Request, ?>> requests;
+            private final ImmutableMap<Watcher.WatcherType, Operations.PathBuilder<? extends Records.Request, ?>> requests;
             
             public WatchProcessor() {
                 super(Queues.<Pair<AbsoluteZNodePath, Watch>>newConcurrentLinkedQueue(), 
                         LogManager.getLogger(WatchProcessor.class));
                 this.ephemeralsPath = getWatchMatcher().getPath().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.LABEL);
                 this.requests = ImmutableMap.
-                        <WatchType, Operations.PathBuilder<? extends Records.Request, ?>>of(WatchType.DATA, Operations.Requests.exists().setWatch(true));
+                        <Watcher.WatcherType, Operations.PathBuilder<? extends Records.Request, ?>>of(Watcher.WatcherType.Data, Operations.Requests.exists().setWatch(true));
             }
             
             @Override
@@ -610,7 +607,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                 super.doApply(input);
                 SnapshotSessionExecutors.this.client.materializer().cache().lock().readLock().lock();
                 try {
-                    ZNodePath path = AbsoluteZNodePath.fromString(input.request().getPath()).parent();
+                    ZNodePath path = AbsoluteZNodePath.fromString(input.getValue().getPath()).parent();
                     StorageZNode<?> node = SnapshotSessionExecutors.this.client.materializer().cache().cache().get(path);
                     if ((node instanceof StorageZNode.SessionZNode) && node.isEmpty()) {
                         submit((AbsoluteZNodePath) node.path());
@@ -803,12 +800,12 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
 
         private final long session;
         private final AbsoluteZNodePath path;
-        private final WatchType type;
+        private final Watcher.WatcherType type;
         
         public Watch(
                 long session,
                 AbsoluteZNodePath path, 
-                WatchType type) {
+                Watcher.WatcherType type) {
             this.session = session;
             this.path = path;
             this.type = type;
@@ -822,9 +819,11 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
             return path;
         }
         
-        public WatchType type() {
+        public Watcher.WatcherType type() {
             return type;
         }
+        
+        // TODO equals
     }
     
     protected static final class SequentialNode extends OptionalNode<Recreate> {

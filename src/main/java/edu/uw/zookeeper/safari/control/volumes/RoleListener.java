@@ -1,37 +1,39 @@
 package edu.uw.zookeeper.safari.control.volumes;
 
+import java.util.List;
+
+import org.apache.logging.log4j.LogManager;
+
 import com.google.common.base.Function;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
+import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.common.FutureTransition;
-
-import edu.uw.zookeeper.common.Services;
-import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
-import edu.uw.zookeeper.safari.control.schema.ControlZNode;
-import edu.uw.zookeeper.safari.region.AbstractRoleListener;
+import edu.uw.zookeeper.safari.region.InjectingRoleListener;
 import edu.uw.zookeeper.safari.region.Region;
 import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.DirectoryWatcherService;
-import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeBranches;
 import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeState;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 
-public final class RoleListener extends AbstractRoleListener<RoleListener> {
+public final class RoleListener implements Function<RegionRoleService, List<? extends com.google.inject.Module>> {
 
     public static Module module() {
         return new Module();
@@ -79,64 +81,55 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
         }
 
         @Provides @Singleton
-        public RoleListener newRoleListener(
-                @Region Predicate<AssignedVolumeState> isAssigned,
-                @Region AsyncFunction<VersionedId, Boolean> isResident,
-                SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control,
+        public InjectingRoleListener<RoleListener> newRoleListener(
+                Injector injector,
                 Supplier<FutureTransition<RegionRoleService>> role,
                 DirectoryWatcherService<ControlSchema.Safari.Volumes> service) {
-            // FIXME start services
-            return RoleListener.listen(isAssigned, isResident, control, role, service);
+            return RoleListener.listen(injector, role, service);
         }
 
         @Override
-        public Key<? extends Service.Listener> getKey() {
-            return Key.get(RoleListener.class);
+        public Key<?> getKey() {
+            return Key.get(InjectingRoleListener.class, Volumes.class);
         }
-        
+
         @Override
         protected void configure() {
+            bind(Key.get(InjectingRoleListener.class, Volumes.class)).to(Key.get(new TypeLiteral<InjectingRoleListener<RoleListener>>(){}));
         }
     }
     
-    public static RoleListener listen(
-            Predicate<AssignedVolumeState> isAssigned,
-            AsyncFunction<VersionedId, Boolean> isResident,
-            SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control,
+    public static InjectingRoleListener<RoleListener> listen(
+            Injector injector,
             Supplier<FutureTransition<RegionRoleService>> role,
             Service service) {
-        return Services.listen(new RoleListener(isAssigned, isResident, control, role), service);
+        final RoleListener instance = new RoleListener();
+        return InjectingRoleListener.listen(
+                injector, 
+                instance, 
+                role, 
+                instance, 
+                LogManager.getLogger(instance),
+                service);
     }
 
-    private final Predicate<AssignedVolumeState> isAssigned;
-    private final AsyncFunction<VersionedId, Boolean> isResident;
-    private final SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control;
-    
-    protected RoleListener(
-            Predicate<AssignedVolumeState> isAssigned,
-            AsyncFunction<VersionedId, Boolean> isResident,
-            SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> control,
-            Supplier<FutureTransition<RegionRoleService>> role) {
-        super(role);
-        this.isAssigned = isAssigned;
-        this.isResident = isResident;
-        this.control = control;
-    }
+    protected RoleListener() {}
 
     @Override
-    public void onSuccess(final RegionRoleService result) {
-        super.onSuccess(result);
-        if (result.getRole().getRole() == EnsembleRole.LEADING) {
-            ResidentLogListener.listen(
-                    isAssigned, 
-                    control, 
-                    result, 
-                    result.logger());
-            OutdatedEntryRejecter.listen(
-                    isResident, 
-                    control, 
-                    result, 
-                    result.logger());
+    public List<? extends com.google.inject.Module> apply(final RegionRoleService input) {
+        switch (input.getRole().getRole()) {
+        case LEADING:
+            return ImmutableList.of(
+                    InjectingRoleListener.RegionRoleServiceModule.create(input),
+                    ResidentLogListener.module(),
+                    OutdatedEntryRejecter.module());
+        default:
+            return ImmutableList.of();
         }
+    }
+    
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this).toString();
     }
 }

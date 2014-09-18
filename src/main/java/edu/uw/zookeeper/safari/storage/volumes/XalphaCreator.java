@@ -1,12 +1,12 @@
 package edu.uw.zookeeper.safari.storage.volumes;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -17,7 +17,6 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -26,6 +25,11 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.PathToQuery;
@@ -34,7 +38,7 @@ import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
 import edu.uw.zookeeper.common.ChainedFutures.ChainedFuturesTask;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
@@ -50,10 +54,13 @@ import edu.uw.zookeeper.data.StampedValue;
 import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
@@ -64,14 +71,56 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
  */
 public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extends Watchers.StopServiceOnFailure<ZNodePath> {
 
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+
+        protected Module() {}
+        
+        @Provides @Singleton
+        public XalphaCreator<?> getXalphaCreator(
+                final @Volumes Function<Identifier, FutureTransition<UnsignedLong>> latest,
+                final VolumeVersionCache.CachedVolumes volumes,
+                final @Volumes AsyncFunction<VersionedId, Optional<VersionedId>> precedingVersion,
+                final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions,
+                final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> client,
+                final RegionRoleService service) {
+            return XalphaCreator.listen(
+                    latest, 
+                    precedingVersion, 
+                    volumes, 
+                    client, 
+                    versions, 
+                    service);
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(XalphaCreator.class);
+        }
+
+        @Override
+        protected void configure() {
+            bind(XalphaCreator.class).to(new TypeLiteral<XalphaCreator<?>>(){});
+        }
+    }
+    
     public static <O extends Operation.ProtocolResponse<?>> XalphaCreator<O> listen(
             final Function<Identifier, FutureTransition<UnsignedLong>> latestVersion,
             final AsyncFunction<VersionedId, Optional<VersionedId>> precedingVersion,
             final VolumeVersionCache.CachedVolumes volumes,
             final SchemaClientService<StorageZNode<?>,O> client,
-            final Service service,
-            final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions) {
-        return listen(latestVersion, precedingVersion, GetXomega.create(volumes), client, service, versions);
+            final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions,
+            final Service service) {
+        return listen(
+                latestVersion, 
+                precedingVersion, 
+                GetXomega.create(volumes), 
+                client, 
+                versions, 
+                service);
     }
     
     public static <O extends Operation.ProtocolResponse<?>> XalphaCreator<O> listen(
@@ -79,8 +128,8 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
             final AsyncFunction<VersionedId, Optional<VersionedId>> precedingVersion,
             final AsyncFunction<VersionedId, Long> getXomega,
             final SchemaClientService<StorageZNode<?>,O> client,
-            final Service service,
-            final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions) {
+            final DirectoryEntryListener<StorageZNode<?>, StorageSchema.Safari.Volumes.Volume.Log.Version> versions,
+            final Service service) {
         final XalphaCreator<O> instance = new XalphaCreator<O>(
                 latestVersion, 
                 UseXomega.create(client.materializer().cache(), precedingVersion), 
@@ -452,7 +501,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
         private final VersionedId version;
         private final ZNodePath path;
         private final IsEmpty<?> isEmpty;
-        private final ChainedFuturesTask<?,?,Long> delegate;
+        private final ChainedFuturesTask<Long> delegate;
         
         protected VersionCallback(
                 VersionedId version, ZNodePath path) {
@@ -460,12 +509,9 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
             this.path = path;
             this.isEmpty = IsEmpty.create(path, materializer);
             this.delegate = ChainedFutures.run(
-                    ChainedFutures.process(
-                            ChainedFutures.chain(
-                                    new Chained(), 
-                                    Lists.<ListenableFuture<?>>newLinkedList()),
-                            ChainedFutures.<Long>castLast()),
-                    SettableFuturePromise.<Long>create());
+                    ChainedFutures.<Long>castLast(
+                            ChainedFutures.arrayDeque(
+                                    new Chained())));
             addListener(this, MoreExecutors.directExecutor());
             isEmpty.addListener(this, MoreExecutors.directExecutor());
         }
@@ -523,8 +569,8 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
                 if (!isEmpty.isDone() && (empty != null)) {
                     if (empty.get().booleanValue()) {
                         synchronized (delegate) {
-                            List<? extends ListenableFuture<?>> futures = delegate.task().delegate().futures();
-                            if (!futures.isEmpty() && (isEmpty == futures.get(futures.size()-1))) {
+                            FutureChain<? extends ListenableFuture<?>> futures = delegate.task().chain();
+                            if (!futures.isEmpty() && (isEmpty == futures.getLast())) {
                                 isEmpty.delegate().set(empty);
                             }
                         }
@@ -541,17 +587,18 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
             return delegate;
         }
         
-        protected final class Chained implements ChainedProcessor<ListenableFuture<?>> {
+        protected final class Chained implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain.FutureDequeChain<ListenableFuture<?>>> {
 
             protected Chained() {}
             
             @Override
             public Optional<? extends ListenableFuture<?>> apply(
-                    List<ListenableFuture<?>> input) throws Exception {
+                    FutureChain.FutureDequeChain<ListenableFuture<?>> input) throws Exception {
                 if (input.isEmpty()) {
                     return Optional.of(IsLatest.create(version, latestVersion));
                 }
-                ListenableFuture<?> last = input.get(input.size()-1);
+                Iterator<ListenableFuture<?>> previous = input.descendingIterator();
+                ListenableFuture<?> last = previous.next();
                 if (last instanceof IsLatest) {
                     ListenableFuture<?> future;
                     if (!((Boolean) last.get()).booleanValue()) {
@@ -585,7 +632,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
                         }
                         future = ComputeXalpha.forXomega(preceding, getXomega);
                     } else {
-                        future = ComputeXalpha.forValue(Long.valueOf(((IsEmpty<?>) input.get(input.size()-2)).get().stamp()));
+                        future = ComputeXalpha.forValue(Long.valueOf(((IsEmpty<?>) previous.next()).get().stamp()));
                     }
                     return Optional.of(future);
                 } else if (last instanceof ComputeXalpha) {

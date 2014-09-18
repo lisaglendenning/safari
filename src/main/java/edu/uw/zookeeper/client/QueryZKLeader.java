@@ -37,8 +37,7 @@ public class QueryZKLeader extends ForwardingListenableFuture<List<Boolean>> imp
                     Futures.transform(
                         FourLetterCommand.callThenClose(
                                 FourLetterWord.MNTR, 
-                                connections.connect(server.get()), 
-                                SettableFuturePromise.<String>create()),
+                                connections.connect(server.get())),
                         Functions.compose(
                                 new MntrServerStateIsLeader(), 
                                 new GetMntrServerState())), 

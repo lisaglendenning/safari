@@ -27,8 +27,17 @@ public class PrefixCreator<V extends Operation.ProtocolResponse<?>> implements C
     public static <V extends Operation.ProtocolResponse<?>> PrefixCreator<V> forMaterializer(Materializer<?,V> materializer) {
         return new PrefixCreator<V>(materializer);
     }
+    
+    public static <V extends Operation.ProtocolResponse<?>> ListenableFuture<List<V>> call(
+            Materializer<?,V> materializer) {
+        try {
+            return Futures.allAsList(forMaterializer(materializer).call());
+        } catch (Exception e) {
+            return Futures.immediateFailedFuture(e);
+        }
+    }
 
-    final static public Predicate<ValueNode<ZNodeSchema>> IS_PREFIX = new Predicate<ValueNode<ZNodeSchema>>() {
+    protected static final Predicate<ValueNode<ZNodeSchema>> IS_PREFIX = new Predicate<ValueNode<ZNodeSchema>>() {
         @Override
         public boolean apply(ValueNode<ZNodeSchema> input) {
             return (NameType.STATIC == input.get().getNameType());

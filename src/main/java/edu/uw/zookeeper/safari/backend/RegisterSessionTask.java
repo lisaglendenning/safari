@@ -1,21 +1,20 @@
 package edu.uw.zookeeper.safari.backend;
 
-import java.util.concurrent.ExecutionException;
+import java.io.IOException;
 
 import org.apache.zookeeper.KeeperException;
 
-import com.google.common.base.Optional;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
-import edu.uw.zookeeper.common.Pair;
+import edu.uw.zookeeper.common.ForwardingPromise.SimpleForwardingPromise;
 import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.PromiseTask;
-import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Operations;
+import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -27,91 +26,192 @@ import edu.uw.zookeeper.protocol.client.ConnectTask;
 import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
-import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public class RegisterSessionTask extends PromiseTask<Pair<Long, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>, Void> implements Runnable, FutureCallback<Object>, Connection.Listener<Operation.Response> {
+/**
+ * Creates StorageSchema.Safari.Sessions.Session znode mapping frontend session to backend session and password.
+ */
+public final class RegisterSessionTask<O extends Operation.Response, C extends ProtocolConnection<? super Message.ClientSession, ? extends O, ?, ?, ?>> extends SimpleForwardingPromise<ConnectTask<C>> implements Runnable, FutureCallback<Operation.Response> {
+
+    public static <O extends Operation.Response, C extends ProtocolConnection<? super Message.ClientSession, ? extends O, ?, ?, ?>> ListenableFuture<ConnectTask<C>> connect(
+            final Long frontend,
+            final ConnectMessage.Request request,
+            final C connection,
+            final Serializers.ByteSerializer<? super StorageSchema.Safari.Sessions.Session.Data> serializer) {
+        return create(frontend, ConnectTask.connect(request, connection), serializer);
+    }
     
-    public static RegisterSessionTask create(
-            Materializer<StorageZNode<?>,?> materializer,
-            Pair<Long, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> task,
-            Promise<Void> promise) {
-        return new RegisterSessionTask(materializer, task, promise);
+    public static <O extends Operation.Response, C extends ProtocolConnection<? super Message.ClientSession, ? extends O, ?, ?, ?>> ListenableFuture<ConnectTask<C>> create(
+            final Long frontend,
+            final ConnectTask<C> value,
+            final Serializers.ByteSerializer<? super StorageSchema.Safari.Sessions.Session.Data> serializer) {
+        final Operations.DataBuilder<? extends Records.Request, ?> request = toRequest(frontend, value.task().first());
+        RegisterSessionTask<O,C> instance = new RegisterSessionTask<O,C>(request, serializer, value, SettableFuturePromise.<ConnectTask<C>>create());
+        instance.run();
+        return instance;
     }
 
-    // magic constant xid
-    protected static final int XID = 0;
+    public static Operations.DataBuilder<? extends Records.Request, ?> toRequest(
+            final Long frontend,
+            final ConnectMessage.Request request) {
+        final Operations.DataBuilder<? extends Records.Request, ?> builder;
+        if (request instanceof ConnectMessage.Request.NewRequest) {
+            builder = Operations.Requests.create();
+        } else {
+            builder = Operations.Requests.setData();
+        }
+        final ZNodePath path = StorageSchema.Safari.Sessions.Session.pathOf(frontend);
+        ((Operations.PathBuilder<?,?>) builder).setPath(path);
+        return builder;
+    }
 
-    private final Materializer<StorageZNode<?>,?> materializer;
-    private Optional<? extends ListenableFuture<? extends Message.ClientRequest<?>>> registered;
+    private final Operations.DataBuilder<? extends Records.Request, ?> request;
+    private final Serializers.ByteSerializer<? super StorageSchema.Safari.Sessions.Session.Data> serializer;
+    private final ConnectTask<C> value;
     
     public RegisterSessionTask(
-            Materializer<StorageZNode<?>,?> materializer,
-            Pair<Long, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> task,
-            Promise<Void> promise) {
-        super(task, promise);
-        this.materializer = materializer;
-        this.registered = Optional.absent();
-        task().second().addListener(this, MoreExecutors.directExecutor());
-        addListener(this, MoreExecutors.directExecutor());
+            Operations.DataBuilder<? extends Records.Request, ?> request,
+            Serializers.ByteSerializer<? super StorageSchema.Safari.Sessions.Session.Data> serializer,
+            ConnectTask<C> value,
+            Promise<ConnectTask<C>> promise) {
+        super(promise);
+        this.request = request;
+        this.serializer = serializer;
+        this.value = value;
     }
     
     @Override
-    public synchronized void run() {
-        if (isDone()) {
-            task().second().task().second().unsubscribe(this);
-        } else if (task().second().isDone()) {
-            if (!registered.isPresent()) {
-                try {
-                    task().second().task().second().subscribe(this);
-                    final StorageSchema.Safari.Sessions.Session.Data value = StorageSchema.Safari.Sessions.Session.Data.valueOf(task().second().get().getSessionId(), task().second().get().getPasswd());
-                    final ZNodePath path = StorageSchema.Safari.Sessions.Session.pathOf(task().first());
-                    final Records.Request request;
-                    if (task().second().task().first() instanceof ConnectMessage.Request.NewRequest) {
-                        request = materializer.create(path, value).get().build();
-                    } else {
-                        request = materializer.setData(path, value).get().build();
-                    }
-                    final Message.ClientRequest<?> message = ProtocolRequestMessage.of(XID, request);
-                    this.registered = Optional.of(task().second().task().second().write(message));
-                    Futures.addCallback(registered.get(), this);
-                } catch (ExecutionException e) {
-                    setException(e.getCause());
-                } catch (InterruptedException e) {
-                    throw new AssertionError(e);
-                }
-            }
-        }
-    }
-
-    @Override
-    public void handleConnectionState(Automaton.Transition<edu.uw.zookeeper.net.Connection.State> state) {
-        if (Connection.State.CONNECTION_CLOSED == state.to()) {
-            onFailure(new KeeperException.ConnectionLossException());
-        }
-    }
-
-    @Override
-    public void handleConnectionRead(Operation.Response message) {
-        Operation.ProtocolResponse<?> response = (Operation.ProtocolResponse<?>) message;
-        if (response.xid() == XID) {
+    public void run() {
+        if (value.isDone()) {
             try {
-                Operations.unlessError(((Operation.ProtocolResponse<?>) message).record());
-            } catch (KeeperException e) {
-                setException(e);
+                onSuccess(value.get());
+            } catch (Exception e) {
+                onFailure(e);
+            }
+        } else {
+            value.addListener(this, MoreExecutors.directExecutor());
+        }
+    }
+
+    @Override
+    public void onSuccess(Operation.Response result) {
+        if (result instanceof ConnectMessage.Response) {
+            final ConnectMessage.Response response = (ConnectMessage.Response) result;
+            final StorageSchema.Safari.Sessions.Session.Data data = StorageSchema.Safari.Sessions.Session.Data.valueOf(response.getSessionId(), response.getPasswd());
+            final Records.Request request;
+            try {
+                request = this.request.setData(serializer.toBytes(data)).build();
+            } catch (IOException e) {
+                onFailure(e);
                 return;
             }
-            set(null);
+            Futures.addCallback(
+                    CreateSessionZNode.create(
+                            request, 
+                            value.task().second(), 
+                            response),
+                    this);
         } else {
-            assert (OpCodeXid.has(response.xid()));
+            set(value);
         }
-    }
-
-    @Override
-    public void onSuccess(Object result) {
     }
 
     @Override
     public void onFailure(Throwable t) {
         setException(t);
+    }
+    
+    protected static final class CreateSessionZNode<O extends Operation.Response> extends SimpleForwardingPromise<O> implements FutureCallback<Operation>, Connection.Listener<Operation.Response> {
+
+        public static <O extends Operation.Response> ListenableFuture<O> create(
+                final Records.Request request,
+                final ProtocolConnection<? super Message.ClientSession, ? extends O, ?, ?, ?> connection,
+                final ConnectMessage.Response response) {
+            final Message.ClientRequest<?> message = ProtocolRequestMessage.of(
+                    XID,
+                    request);
+            final CreateSessionZNode<O> instance = new CreateSessionZNode<O>(SettableFuturePromise.<O>create());
+            connection.subscribe(instance);
+            try {
+                Futures.addCallback(connection.write(message), instance);
+            } finally {
+                UnsubscribeWhenDone.listen(instance, connection, instance);
+            }
+            return instance;
+        }
+
+        // magic constant xid
+        protected static final int XID = 0;
+        
+        protected CreateSessionZNode(Promise<O> delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public void handleConnectionState(Automaton.Transition<edu.uw.zookeeper.net.Connection.State> state) {
+            if (Connection.State.CONNECTION_CLOSED == state.to()) {
+                onFailure(new KeeperException.ConnectionLossException());
+            }
+        }
+
+        @Override
+        public void handleConnectionRead(Operation.Response message) {
+            Operation.ProtocolResponse<?> response = (Operation.ProtocolResponse<?>) message;
+            if (response.xid() == XID) {
+                try {
+                    Operations.unlessError(((Operation.ProtocolResponse<?>) message).record());
+                } catch (KeeperException e) {
+                    setException(e);
+                    return;
+                }
+                onSuccess(message);
+            } else {
+                assert (OpCodeXid.has(response.xid()));
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public void onSuccess(Operation result) {
+            if (result instanceof Operation.Response) {
+                set((O) result);
+            }
+        }
+
+        @Override
+        public void onFailure(Throwable t) {
+            setException(t);
+        }
+        
+        protected static final class UnsubscribeWhenDone<O> implements Runnable {
+
+            public static <O, T extends Connection.Listener<? super O>> T listen(
+                    ListenableFuture<?> future,
+                    Connection<?, ? extends O, ?> connection,
+                    T listener) {
+                UnsubscribeWhenDone<O> callback = new UnsubscribeWhenDone<O>(future, connection, listener);
+                future.addListener(callback, MoreExecutors.directExecutor());
+                return listener;
+            }
+            
+            private final ListenableFuture<?> future;
+            private final Connection<?, ? extends O, ?> connection;
+            private final Connection.Listener<? super O> listener;
+            
+            protected UnsubscribeWhenDone(
+                    ListenableFuture<?> future,
+                    Connection<?, ? extends O, ?> connection,
+                    Connection.Listener<? super O> listener) {
+                this.future = future;
+                this.connection = connection;
+                this.listener = listener;
+            }
+            
+            @Override
+            public void run() {
+                if (future.isDone()) {
+                    connection.unsubscribe(listener);
+                }
+            }
+        }
     }
 }

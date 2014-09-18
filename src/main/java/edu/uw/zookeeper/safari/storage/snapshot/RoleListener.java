@@ -1,24 +1,27 @@
 package edu.uw.zookeeper.safari.storage.snapshot;
 
+import java.util.List;
+
+import org.apache.logging.log4j.LogManager;
+
+import com.google.common.base.Function;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
+import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
-import edu.uw.zookeeper.EnsembleRole;
 import edu.uw.zookeeper.common.FutureTransition;
-import edu.uw.zookeeper.common.Services;
-import edu.uw.zookeeper.protocol.Message;
-import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.safari.SafariModule;
-import edu.uw.zookeeper.safari.region.AbstractRoleListener;
+import edu.uw.zookeeper.safari.region.InjectingRoleListener;
 import edu.uw.zookeeper.safari.region.RegionRoleService;
-import edu.uw.zookeeper.safari.schema.SchemaClientService;
-import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public final class RoleListener extends AbstractRoleListener<RoleListener> {
+public final class RoleListener implements Function<RegionRoleService, List<? extends com.google.inject.Module>> {
 
     public static Module module() {
         return new Module();
@@ -29,46 +32,55 @@ public final class RoleListener extends AbstractRoleListener<RoleListener> {
         protected Module() {}
         
         @Provides @Singleton
-        public RoleListener newRoleListener(
-                final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage,
+        public InjectingRoleListener<RoleListener> newRoleListener(
                 final Supplier<FutureTransition<RegionRoleService>> role,
+                final Injector injector,
                 final SnapshotListener service) {
-            RoleListener instance = listen(storage, role, service);
-            return instance;
+            return RoleListener.listen(injector, role, service);
         }
 
         @Override
         public Key<?> getKey() {
-            return Key.get(RoleListener.class);
+            return Key.get(InjectingRoleListener.class, Snapshot.class);
         }
 
         @Override
         protected void configure() {
+            bind(Key.get(InjectingRoleListener.class, Snapshot.class)).to(Key.get(new TypeLiteral<InjectingRoleListener<RoleListener>>(){}));
         }
-    }
-    
-    public static <O extends Operation.ProtocolResponse<?>>  RoleListener listen(
-            final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage,
-            final Supplier<FutureTransition<RegionRoleService>> role,
-            final Service service) {
-        return Services.listen(new RoleListener(storage, role), service);
-    }
-    
-    private final SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage;
-    
-    protected RoleListener(
-            SchemaClientService<StorageZNode<?>,Message.ServerResponse<?>> storage,
-            final Supplier<FutureTransition<RegionRoleService>> role) {
-        super(role);
-        this.storage = storage;
     }
 
+    public static InjectingRoleListener<RoleListener> listen(
+            Injector injector,
+            Supplier<FutureTransition<RegionRoleService>> role,
+            Service service) {
+        final RoleListener instance = new RoleListener();
+        return InjectingRoleListener.listen(
+                injector, 
+                instance, 
+                role, 
+                instance, 
+                LogManager.getLogger(instance),
+                service);
+    }
+
+    protected RoleListener() {}
+
     @Override
-    public void onSuccess(RegionRoleService result) {
-        super.onSuccess(result);
-        if (result.getRole().getRole() == EnsembleRole.LEADING) {
-            CleanSnapshot.listen(storage.materializer(), storage.cacheEvents(), result, result.logger());
-            ExpireSnapshotSessions.listen(storage.materializer(), storage.cacheEvents(), result);
+    public List<? extends com.google.inject.Module> apply(final RegionRoleService input) {
+        switch (input.getRole().getRole()) {
+        case LEADING:
+            return ImmutableList.of(
+                    InjectingRoleListener.RegionRoleServiceModule.create(input),
+                    CleanSnapshot.module(),
+                    ExpireSnapshotSessions.module());
+        default:
+            return ImmutableList.of();
         }
+    }
+    
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this).toString();
     }
 }

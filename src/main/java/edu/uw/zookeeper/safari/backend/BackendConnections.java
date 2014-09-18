@@ -3,7 +3,6 @@ package edu.uw.zookeeper.safari.backend;
 import org.apache.logging.log4j.LogManager;
 
 import com.google.common.base.Function;
-import com.google.common.base.Functions;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -16,10 +15,7 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.Pair;
-
 import edu.uw.zookeeper.common.Services;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.protocol.ConnectMessage;
@@ -95,26 +91,23 @@ public class BackendConnections extends AbstractModule {
     public AsyncFunction<MessageSessionOpenRequest, ? extends ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> newSessionOpenToConnect(
             final @Backend Provider<ListenableFuture<? extends ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>>> connections,
             final @Backend Materializer<StorageZNode<?>,?> materializer) {
-            return new AsyncFunction<MessageSessionOpenRequest, ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
+            return new AsyncFunction<MessageSessionOpenRequest, ConnectTask<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
                     @Override
-                    public ListenableFuture<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(
+                    public ListenableFuture<ConnectTask<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(
                             final MessageSessionOpenRequest request) {
                         return Futures.transform(
                                 connections.get(), 
-                                new AsyncFunction<ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>, ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
+                                new AsyncFunction<ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?>, ConnectTask<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
                                     @Override
-                                    public ListenableFuture<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?> connection) {
-                                        final ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>> connect = ConnectTask.connect(request.getMessage(), connection);
-                                        ListenableFuture<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> task = Futures.transform(
-                                                RegisterSessionTask.create( 
-                                                    materializer, 
-                                                    Pair.create(
-                                                            request.getIdentifier(), connect),
-                                                        SettableFuturePromise.<Void>create()),
-                                                Functions.<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>constant(connect));
-                                        LoggingFutureListener.listen(
-                                                        LogManager.getLogger(BackendConnections.class), 
-                                                        task);
+                                    public ListenableFuture<ConnectTask<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(ProtocolConnection<? super Message.ClientSession,? extends Operation.Response,?,?,?> connection) {
+                                        ListenableFuture<ConnectTask<ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> task = 
+                                                LoggingFutureListener.listen(
+                                                        LogManager.getLogger(BackendConnections.class),
+                                                            RegisterSessionTask.<Operation.Response, ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>connect( 
+                                                                request.getIdentifier(), 
+                                                                request.getMessage(), 
+                                                                connection,
+                                                                materializer.codec()));
                                         return task;
                                     }
                                 });

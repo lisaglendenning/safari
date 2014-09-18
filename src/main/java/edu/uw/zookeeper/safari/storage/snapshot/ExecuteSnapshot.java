@@ -5,6 +5,7 @@ import io.netty.buffer.Unpooled;
 
 import java.net.InetSocketAddress;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,11 @@ import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
@@ -47,6 +53,8 @@ import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.DeleteSubtree;
+import edu.uw.zookeeper.client.FixedQuery;
+import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.client.TreeWalker;
@@ -55,7 +63,7 @@ import edu.uw.zookeeper.common.Actors;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.ListenableFutureActor;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
@@ -64,6 +72,7 @@ import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.SubmitActor;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
+import edu.uw.zookeeper.common.ValueFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
@@ -97,143 +106,180 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.proto.Stats;
 import edu.uw.zookeeper.safari.Identifier;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.backend.PrefixTranslator;
-import edu.uw.zookeeper.safari.storage.schema.SessionLookup;
+import edu.uw.zookeeper.safari.storage.Storage;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 
-public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements ChainedProcessor<ExecuteSnapshot.Action<?>> {
+public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements ChainedFutures.ChainedProcessor<ExecuteSnapshot.Action<?>, ChainedFutures.DequeChain<ExecuteSnapshot.Action<?>,?>> {
+
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+        
+        protected Module() {}
+        
+        @Provides @Singleton @Snapshot
+        public AsyncFunction<Boolean,Long> getExecuteSnapshot(
+                final @From ConnectionClientExecutor<? super Records.Request, Message.ServerResponse<?>, SessionListener, ?> fromClient,
+                final @From SnapshotVolumeParameters fromVolume,
+                final @To ConnectionClientExecutor<? super Records.Request, Message.ServerResponse<?>, SessionListener, ?> toClient,
+                final @To SnapshotVolumeParameters toVolume,
+                final @From EnsembleView<ServerInetAddressView> fromEnsemble,
+                final @Storage Materializer<StorageZNode<?>,?> fromMaterializer,
+                final @From ServerInetAddressView fromAddress,
+                final @Snapshot AsyncFunction<Long, Long> sessions,
+                final ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous) {
+            return new AsyncFunction<Boolean, Long>() {
+                @Override
+                public ListenableFuture<Long> apply(Boolean input) throws Exception {
+                    if (input.booleanValue()) {
+                        return ExecuteSnapshot.recover(
+                                fromClient, 
+                                fromVolume, 
+                                toClient, 
+                                toVolume,
+                                fromMaterializer, 
+                                fromAddress, 
+                                fromEnsemble,
+                                sessions, 
+                                anonymous);
+                    } else {
+                        return Futures.transform(
+                                undo(toVolume, toClient),
+                                Functions.constant(Long.valueOf(0L)));
+                    }
+                }
+            };
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(new TypeLiteral<Callable<ListenableFuture<Boolean>>>(){});
+        }
+
+        @Override
+        protected void configure() {
+        }
+    }
     
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Long> recover(
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient,
-            Identifier fromVolume,
-            ZNodeName fromBranch,
+            SnapshotVolumeParameters fromVolume,
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient,
-            Identifier toVolume,
-            UnsignedLong toVersion,
-            ZNodeName toBranch,
+            SnapshotVolumeParameters toVolume,
             Materializer<StorageZNode<?>,?> materializer,
             ServerInetAddressView server,
             EnsembleView<ServerInetAddressView> storage,
+            AsyncFunction<Long, Long> sessions,
             ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous) {
-        List<ExecuteSnapshot.Action<?>> steps = Lists.newLinkedList();
-        steps.add(undo(toClient, toVolume, toVersion, toBranch));
+        Deque<ExecuteSnapshot.Action<?>> steps = Queues.newArrayDeque(ImmutableList.<Action<?>>of(undo(toVolume, toClient)));
         return create(
                 fromClient, 
-                fromVolume, 
-                fromBranch,
+                fromVolume,
                 toClient, 
-                toVolume, 
-                toVersion,
-                toBranch,
+                toVolume,
                 materializer, 
                 server,
                 storage,
+                sessions,
                 anonymous,
                 steps);
     }
     
     public static <O extends Operation.ProtocolResponse<?>> DeleteExistingSnapshot undo(
-            ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient,
-            Identifier toVolume,
-            UnsignedLong toVersion,
-            ZNodeName toBranch) {
-        return DeleteExistingSnapshot.create(toVolume, toVersion, toBranch, toClient);
+            SnapshotVolumeParameters toVolume,
+            ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient) {
+        return DeleteExistingSnapshot.create(toVolume, toClient);
     }
 
     protected static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Long> create(
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient,
-            Identifier fromVolume,
-            ZNodeName fromBranch,
+            SnapshotVolumeParameters fromVolume,
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient,
-            Identifier toVolume,
-            UnsignedLong toVersion,
-            ZNodeName toBranch,
+            SnapshotVolumeParameters toVolume,
             Materializer<StorageZNode<?>,?> materializer,
             ServerInetAddressView server,
             EnsembleView<ServerInetAddressView> storage,
+            AsyncFunction<Long, Long> sessions,
             ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous,
-            List<ExecuteSnapshot.Action<?>> steps) {
-        final AbsoluteZNodePath fromRoot = StorageSchema.Safari.Volumes.Volume.Root.pathOf(fromVolume).join(fromBranch);
-        final AbsoluteZNodePath toRoot = StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume).join(toBranch);
+            Deque<ExecuteSnapshot.Action<?>> steps) {
+        final AbsoluteZNodePath fromRoot = StorageSchema.Safari.Volumes.Volume.Root.pathOf(fromVolume.getVolume()).join(fromVolume.getBranch());
+        final AbsoluteZNodePath toRoot = StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume.getVolume()).join(toVolume.getBranch());
         final PathTranslator paths = PathTranslator.empty(fromRoot, toRoot);
         final ZxidTracker zxid = ZxidTracker.zero();
         final ExecuteSnapshot<O> snapshot = new ExecuteSnapshot<O>(
                 fromClient, 
                 fromVolume, 
-                fromBranch,
                 fromRoot, 
                 toClient, 
-                toVolume, 
-                toVersion,
-                toBranch, 
+                toVolume,
                 toRoot, 
                 materializer, 
                 server,
                 storage,
                 anonymous,
                 paths, 
+                sessions,
                 zxid);
         return ChainedFutures.run(
-                ChainedFutures.process(
-                        ChainedFutures.chain(snapshot, steps),
-                        new Processor<List<ExecuteSnapshot.Action<?>>, Long>() {
+                ChainedFutures.result(
+                        new Processor<FutureChain.FutureDequeChain<ExecuteSnapshot.Action<?>>, Long>() {
                             @Override
                             public Long apply(
-                                    List<Action<?>> input)
+                                    FutureChain.FutureDequeChain<ExecuteSnapshot.Action<?>> input)
                                     throws Exception {
-                                for (int index=input.size()-1; index>=0; --index) {
-                                    Object result = input.get(index).get();
+                                Iterator<ExecuteSnapshot.Action<?>> actions = input.descendingIterator();
+                                while (actions.hasNext()) {
+                                    Object result = actions.next().get();
                                     if (result instanceof Long) {
                                         return (Long) result;
                                     }
                                 }
                                 throw new AssertionError();
                             }
-                        }), 
-                SettableFuturePromise.<Long>create());
+                        },
+                        ChainedFutures.deque(
+                                snapshot, 
+                                steps)));
     }
     
     protected final ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient;
-    protected final Identifier fromVolume;
-    protected final ZNodeName fromBranch;
+    protected final SnapshotVolumeParameters fromVolume;
     protected final ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient;
-    protected final Identifier toVolume;
-    protected final UnsignedLong toVersion;
-    protected final ZNodeName toBranch;
+    protected final SnapshotVolumeParameters toVolume;
     protected final Materializer<StorageZNode<?>,?> materializer;
     protected final ServerInetAddressView server;
     protected final EnsembleView<ServerInetAddressView> storage;
     protected final ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous;
     protected final AbsoluteZNodePath fromRoot;
     protected final AbsoluteZNodePath toRoot;
+    protected final AsyncFunction<Long, Long> sessions;
     protected final PathTranslator paths;
     protected final WalkerProcessor walker;
     
     protected ExecuteSnapshot(
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient,
-            Identifier fromVolume,
-            ZNodeName fromBranch,
+            SnapshotVolumeParameters fromVolume,
             AbsoluteZNodePath fromRoot,
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> toClient,
-            Identifier toVolume,
-            UnsignedLong toVersion,
-            ZNodeName toBranch,
+            SnapshotVolumeParameters toVolume,
             AbsoluteZNodePath toRoot,
             Materializer<StorageZNode<?>,?> materializer,
             ServerInetAddressView server,
             EnsembleView<ServerInetAddressView> storage,
             ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous,
             PathTranslator paths,
+            AsyncFunction<Long, Long> sessions,
             ZxidTracker fromZxid) {
         this.fromClient = fromClient;
         this.fromVolume = fromVolume;
-        this.fromBranch = fromBranch;
         this.toClient = toClient;
         this.toVolume = toVolume;
-        this.toVersion = toVersion;
-        this.toBranch = toBranch;
         this.materializer = materializer;
         this.server = server;
         this.storage = storage;
@@ -241,13 +287,14 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         this.fromRoot = fromRoot;
         this.toRoot = toRoot;
         this.paths = paths;
+        this.sessions = sessions;
         this.walker = new WalkerProcessor(fromZxid,
                 SettableFuturePromise.<Long>create());
     }
     
     @Override
-    public Optional<? extends Action<?>> apply(List<Action<?>> input) {
-        Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.get(input.size()-1));
+    public Optional<? extends Action<?>> apply(ChainedFutures.DequeChain<Action<?>,?> input) {
+        Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.getLast());
         if (last.isPresent()) {
             try {
                 last.get().get();
@@ -258,17 +305,16 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             }
         }
         if (!last.isPresent() || (last.get() instanceof DeleteExistingSnapshot)) {
-            return Optional.of(CreateSnapshotPrefix.create(toVolume, toVersion, toClient));
+            return Optional.of(CreateSnapshotPrefix.create(toVolume.getVolume(), toVolume.getVersion(), toClient));
         } else if (last.get() instanceof CreateSnapshotPrefix) {
             return Optional.of(
                     PrepareSnapshotEnsembleWatches.create(
-                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(toVolume, toVersion),
+                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(toVolume.getVolume(), toVolume.getVersion()),
                         new Function<ZNodePath,ZNodeLabel>() {
                             @Override
                             public ZNodeLabel apply(ZNodePath input) {
-                                return ZNodeLabel.fromString(
-                                        ESCAPE_ZNODE_NAME.apply(
-                                                paths.apply(input).suffix(toRoot).toString()));
+                                return (ZNodeLabel) StorageZNode.EscapedNamedZNode.converter().convert(
+                                                paths.apply(input).suffix(toRoot));
                             }
                         },
                         server,
@@ -284,20 +330,21 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                         toClient,
                         storage,
                         anonymous,
-                        new SnapshotEnsembleWatches.FilteredWchc(
+                        sessions,
+                        new SnapshotWatches.FilteredWchc(
                                 new FromRootWchc(fromRoot))));
         } else if (last.get() instanceof PrepareSnapshotEnsembleWatches) {
             try {
                 return Optional.of((CallSnapshotEnsembleWatches)
-                        CallSnapshotEnsembleWatches.empty(
-                                (PrepareSnapshotEnsembleWatches) last.get()));
+                        CallSnapshotEnsembleWatches.create(
+                                ((PrepareSnapshotEnsembleWatches) last.get()).get()));
             } catch (InterruptedException e) {
                 throw Throwables.propagate(e);
             } catch (ExecutionException e) {
                 return Optional.absent();
             }
         } else if (last.get() instanceof CallSnapshotEnsembleWatches) {
-            Action<?> previous = input.get(input.size()-2);
+            Action<?> previous = Iterators.get(input.descendingIterator(), 1);
             if (previous instanceof PrepareSnapshotEnsembleWatches) {
                 final ListenableFuture<Long> future = Futures.transform(
                         walker.walk(fromRoot), 
@@ -309,14 +356,8 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                 throw new AssertionError();
             }
         } else if (last.get() instanceof CreateSnapshot) {
-            CallSnapshotEnsembleWatches watches = (CallSnapshotEnsembleWatches) input.get(input.size()-2);
-            try {
-                return Optional.of((CallSnapshotEnsembleWatches) CallSnapshotEnsembleWatches.fromPrevious(watches));
-            } catch (InterruptedException e) {
-                throw Throwables.propagate(e);
-            } catch (ExecutionException e) {
-                return Optional.absent();
-            }
+            CallSnapshotEnsembleWatches watches = (CallSnapshotEnsembleWatches) Iterators.get(input.descendingIterator(), 1);
+            return Optional.of((CallSnapshotEnsembleWatches) CallSnapshotEnsembleWatches.create(watches.chain()));
         }
         return Optional.absent();
     }
@@ -326,7 +367,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         return MoreObjects.toStringHelper(this).add("from", fromVolume).add("to", toVolume).toString();
     }
     
-    public static final class FromRootWchc implements Function<Map.Entry<Long, Collection<ZNodePath>>, Collection<ZNodePath>> {
+    public static final class FromRootWchc implements Function<Map.Entry<Long, ? extends Collection<ZNodePath>>, Collection<ZNodePath>> {
 
         private final ZNodePath root;
         
@@ -335,7 +376,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
         
         @Override
-        public Collection<ZNodePath> apply(Map.Entry<Long, Collection<ZNodePath>> entry) {
+        public Collection<ZNodePath> apply(Map.Entry<Long, ? extends Collection<ZNodePath>> entry) {
             ImmutableList.Builder<ZNodePath> filtered = ImmutableList.builder();
             for (ZNodePath path: entry.getValue()) {
                 if (path.startsWith(root)) {
@@ -346,7 +387,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
     }
     
-    public static final class WithoutSessionsWchc implements Function<Map.Entry<Long, Collection<ZNodePath>>, Collection<ZNodePath>> {
+    public static final class WithoutSessionsWchc implements Function<Map.Entry<Long, ? extends Collection<ZNodePath>>, Collection<ZNodePath>> {
 
         private final ImmutableSet<Long> sessions;
         
@@ -355,7 +396,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
         
         @Override
-        public Collection<ZNodePath> apply(Map.Entry<Long, Collection<ZNodePath>> entry) {
+        public Collection<ZNodePath> apply(Map.Entry<Long, ? extends Collection<ZNodePath>> entry) {
             return sessions.contains(entry.getKey()) ? 
                     ImmutableSet.<ZNodePath>of() : 
                         entry.getValue();
@@ -384,15 +425,13 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
     public static final class DeleteExistingSnapshot extends Action<Boolean> {
 
         public static DeleteExistingSnapshot create(
-                final Identifier toVolume,
-                final UnsignedLong toVersion,
-                final ZNodeName toBranch,
-                ClientExecutor<? super Records.Request,?,?> client) {
+                final SnapshotVolumeParameters toVolume,
+                final ClientExecutor<? super Records.Request,?,?> client) {
             ImmutableList<AbsoluteZNodePath> paths = 
                     ImmutableList.of(
-                            StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume).join(toBranch),
-                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume, toVersion),
-                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(toVolume, toVersion));
+                            StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume.getVolume()).join(toVolume.getBranch()),
+                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume.getVolume(), toVolume.getVersion()),
+                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(toVolume.getVolume(), toVolume.getVersion()));
             return new DeleteExistingSnapshot(Deleted.create(paths, client));
         }
         
@@ -496,7 +535,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
     }
     
-    public static final class PrepareSnapshotEnsembleWatches extends Action<SnapshotEnsembleWatches> {
+    public static final class PrepareSnapshotEnsembleWatches extends Action<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> {
         
         public static <O extends Operation.ProtocolResponse<?>> PrepareSnapshotEnsembleWatches create(
                 final ZNodePath prefix,
@@ -507,92 +546,112 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                 final ClientExecutor<? super Records.Request, O, SessionListener> client,
                 final EnsembleView<ServerInetAddressView> ensemble,
                 final ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous,
+                final AsyncFunction<Long, Long> sessions,
                 final Function<FourLetterWords.Wchc, FourLetterWords.Wchc> transformer) {
-            final SnapshotEnsembleWatches.StringToWchc stringToWchc = new SnapshotEnsembleWatches.StringToWchc();
             final ListenableFuture<Function<FourLetterWords.Wchc, FourLetterWords.Wchc>> localTransformer = 
                     Futures.transform(
                             session, 
                             new Function<Long,Function<FourLetterWords.Wchc, FourLetterWords.Wchc>>() {
                                 @Override
                                 public Function<FourLetterWords.Wchc, FourLetterWords.Wchc> apply(Long input) {
-                                    return new SnapshotEnsembleWatches.FilteredWchc(new WithoutSessionsWchc(ImmutableSet.of(input)));
+                                    return new SnapshotWatches.FilteredWchc(new WithoutSessionsWchc(ImmutableSet.of(input)));
                                 }
                             });
-            final Callable<Optional<SnapshotEnsembleWatches>> call = new Callable<Optional<SnapshotEnsembleWatches>>() {
+            final Callable<Optional<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>>> call = new Callable<Optional<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>>>() {
                 @Override
-                public Optional<SnapshotEnsembleWatches> call()
+                public Optional<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> call()
                         throws Exception {
                     if (!localTransformer.isDone()) {
                         return Optional.absent();
                     }
-                    ImmutableList.Builder<SnapshotEnsembleWatches.QueryServerWatches> servers = ImmutableList.builder();
+                    ImmutableList.Builder<Supplier<? extends ListenableFuture<FourLetterWords.Wchc>>> servers = ImmutableList.builder();
                     for (ServerInetAddressView e: ensemble) {
                         final InetSocketAddress address = e.get();
-                        final Supplier<? extends ListenableFuture<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>>> connection = new Supplier<ListenableFuture<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>>>() {
+                        final Supplier<? extends ListenableFuture<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>>> connections = new Supplier<ListenableFuture<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>>>() {
                             @Override
                             public ListenableFuture<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> get() {
                                 return anonymous.connect(address);
                             }
                         };
-                        final Function<String, FourLetterWords.Wchc> transformWchc = Functions.compose(server.get().equals(address) ? Functions.compose(transformer, localTransformer.get()) : transformer, stringToWchc);
-                        servers.add(SnapshotEnsembleWatches.QueryServerWatches.create(materializer, transformWchc, connection));
+                        final Function<FourLetterWords.Wchc, FourLetterWords.Wchc> transformWchc = server.get().equals(address) ? Functions.compose(transformer, localTransformer.get()) : transformer;
+                        servers.add(SnapshotWatches.futureTransform(
+                                SnapshotWatches.transform(
+                                        connections, 
+                                        SnapshotWatches.QueryWchc.create()),
+                                transformWchc));
                     }
-                    return Optional.of(SnapshotEnsembleWatches.forServers(prefix, labelOf, materializer.codec(), client, servers.build()));
+                    final Supplier<ListenableFuture<AsyncFunction<Long,Long>>> getSessions = new Supplier<ListenableFuture<AsyncFunction<Long,Long>>>() {
+                        @SuppressWarnings("unchecked")
+                        final FixedQuery<?> query = FixedQuery.forIterable(
+                                materializer, 
+                                PathToRequests.forRequests(
+                                        Operations.Requests.sync(), 
+                                        Operations.Requests.getChildren())
+                                        .apply(StorageSchema.Safari.Sessions.PATH));
+                        
+                        @Override
+                        public ListenableFuture<AsyncFunction<Long, Long>> get() {
+                            return Futures.transform(
+                                    Futures.<Operation.ProtocolResponse<?>>allAsList(query.call()),
+                                    new AsyncFunction<List<? extends Operation.ProtocolResponse<?>>, AsyncFunction<Long,Long>>() {
+                                        @Override
+                                        public ListenableFuture<AsyncFunction<Long, Long>> apply(
+                                                List<? extends Operation.ProtocolResponse<?>> input)
+                                                throws Exception {
+                                            for (Operation.ProtocolResponse<?> response: input) {
+                                                Operations.unlessError(response.record());
+                                            }
+                                            return Futures.immediateFuture(sessions);
+                                        }
+                            });
+                        }
+                    };
+                    return Optional.<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>>of(SnapshotWatches.create(prefix, labelOf, materializer.codec(), client, getSessions, servers.build()));
                 }
             };
-            CallablePromiseTask<?, SnapshotEnsembleWatches> task = CallablePromiseTask.create(call, SettableFuturePromise.<SnapshotEnsembleWatches>create());
+            CallablePromiseTask<?, ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> task = CallablePromiseTask.create(
+                    call, 
+                    SettableFuturePromise.<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>>create());
             localTransformer.addListener(task, MoreExecutors.directExecutor());
             return new PrepareSnapshotEnsembleWatches(task);
         }
         
         protected PrepareSnapshotEnsembleWatches(
-                ListenableFuture<SnapshotEnsembleWatches> delegate) {
+                ListenableFuture<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> delegate) {
             super(delegate);
         }
     }
 
     public static final class CallSnapshotEnsembleWatches extends Action<FourLetterWords.Wchc> {
 
-        public static ListenableFuture<FourLetterWords.Wchc> empty(
-                PrepareSnapshotEnsembleWatches prepare) throws InterruptedException, ExecutionException {
-            return fromChain(ImmutableList.<ListenableFuture<FourLetterWords.Wchc>>of(), prepare);
-        }
-
-        public static ListenableFuture<FourLetterWords.Wchc> fromPrevious(
-                CallSnapshotEnsembleWatches call) throws InterruptedException, ExecutionException {
-            return fromChain(ImmutableList.<ListenableFuture<FourLetterWords.Wchc>>builder().addAll(call.chain()).add(call).build(), call.prepare());
-        }
         
-        public static ListenableFuture<FourLetterWords.Wchc> fromChain(
-                List<ListenableFuture<FourLetterWords.Wchc>> chain,
-                PrepareSnapshotEnsembleWatches prepare) throws InterruptedException, ExecutionException {
-            SnapshotEnsembleWatches snapshot = prepare.get();
-            Optional<? extends ListenableFuture<FourLetterWords.Wchc>> future = snapshot.apply(chain);
-            if (future.isPresent()) {
-                return new CallSnapshotEnsembleWatches(chain, prepare, future.get());
+        @SuppressWarnings("unchecked")
+        public static ListenableFuture<FourLetterWords.Wchc> create(
+                ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain) {
+            Optional<FourLetterWords.Wchc> result;
+            try {
+                result = chain.call();
+            } catch (Exception e) {
+                return Futures.immediateFailedFuture(e);
+            }
+            if (result.isPresent()) {
+                return Futures.immediateFuture(result.get());
             } else {
-                return chain.get(chain.size()-1);
+                return new CallSnapshotEnsembleWatches(chain, (ListenableFuture<FourLetterWords.Wchc>) chain.chain().chain().getLast());
             }
         }
         
-        protected final List<ListenableFuture<FourLetterWords.Wchc>> chain;
-        protected final PrepareSnapshotEnsembleWatches prepare;
+        protected final ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain;
         
         public CallSnapshotEnsembleWatches(
-                List<ListenableFuture<FourLetterWords.Wchc>> chain,
-                PrepareSnapshotEnsembleWatches prepare,
+                ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain,
                 ListenableFuture<FourLetterWords.Wchc> future) {
             super(future);
             this.chain = chain;
-            this.prepare = prepare;
         }
         
-        public List<ListenableFuture<FourLetterWords.Wchc>> chain() {
+        public ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain() {
             return chain;
-        }
-        
-        public PrepareSnapshotEnsembleWatches prepare() {
-            return prepare;
         }
     }
     
@@ -622,7 +681,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         public Iterator<AbsoluteZNodePath> apply(SubmittedRequest<Records.Request,?> input) throws Exception {
                 final Records.Response response = input.get().record();
             if (response instanceof Records.ChildrenGetter) {
-                final ZNodePath path = ZNodePath.fromString(((Records.PathGetter) input.request()).getPath());
+                final ZNodePath path = ZNodePath.fromString(((Records.PathGetter) input.getValue()).getPath());
                 final ImmutableSortedSet<String> children = 
                         ImmutableSortedSet.copyOf(
                                 Sequential.comparator(), 
@@ -693,13 +752,12 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             this.submitTo = Actors.stopWhenDone(new ToClient(), this);
             this.ephemerals = Actors.stopWhenDone(
                     new EphemeralZNodeLookups(
-                        StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume, toVersion),
+                        StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume.getVolume(), toVolume.getVersion()),
                         new Function<ZNodePath,ZNodeLabel>() {
                             @Override
                             public ZNodeLabel apply(ZNodePath input) {
-                                return ZNodeLabel.fromString(
-                                        ESCAPE_ZNODE_NAME.apply(
-                                                input.suffix(toRoot).toString()));
+                                return (ZNodeLabel) StorageZNode.EscapedNamedZNode.converter().convert(
+                                                input.suffix(toRoot));
                             }
                         }), this);
             this.changes = new FromListener();
@@ -737,14 +795,14 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             if (input.isPresent()) {
                 final Operation.ProtocolResponse<?> response = input.get().get();
                 if (Operations.maybeError(response.record(), KeeperException.Code.NONODE).isPresent()) {
-                    if (((Records.PathGetter) input.get().request()).getPath().length() == fromRoot.length()) {
+                    if (((Records.PathGetter) input.get().getValue()).getPath().length() == fromRoot.length()) {
                         // root must exist
                         throw new KeeperException.NoNodeException(fromRoot.toString());
                     }
                 } else {
-                    if (input.get().request() instanceof IGetDataRequest) {
+                    if (input.get().getValue() instanceof IGetDataRequest) {
                         final long zxid = response.zxid();
-                        final AbsoluteZNodePath fromPath = AbsoluteZNodePath.fromString(((Records.PathGetter) input.get().request()).getPath());
+                        final AbsoluteZNodePath fromPath = AbsoluteZNodePath.fromString(((Records.PathGetter) input.get().getValue()).getPath());
                         final Records.ZNodeStatGetter stat = new IStat(((Records.StatGetter) response.record()).getStat());
                         CreateMode mode = (stat.getEphemeralOwner() == Stats.CreateStat.ephemeralOwnerNone()) ? CreateMode.PERSISTENT : CreateMode.EPHEMERAL;
                         final Optional<? extends Sequential<String,?>> sequential;
@@ -865,8 +923,8 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             protected boolean doApply(SubmittedRequest<Records.Request, O> input) throws Exception {
                 synchronized (WalkerProcessor.this) {
                     O response = input.get();
-                    if (input.request() instanceof ICreateRequest) {
-                        ICreateRequest request = (ICreateRequest) input.request();
+                    if (input.getValue() instanceof ICreateRequest) {
+                        ICreateRequest request = (ICreateRequest) input.getValue();
                         Optional<Operation.Error> error = Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS);
                         if (CreateMode.valueOf(request.getFlags()) == CreateMode.PERSISTENT_SEQUENTIAL) {
                             if (!error.isPresent()) {
@@ -876,7 +934,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                                 throw new UnsupportedOperationException();
                             }
                         }
-                    } else if (input.request() instanceof IDeleteRequest) {
+                    } else if (input.getValue() instanceof IDeleteRequest) {
                         Operations.maybeError(response.record(), KeeperException.Code.NONODE);
                     } else {
                         // TODO
@@ -889,7 +947,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             }
         }
         
-        protected final class EphemeralZNodeLookups extends RunOnEmptyActor<StampedValue<ZNode>, StorageSchema.Safari.Sessions.Session.Data, ValueSessionLookup<StampedValue<ZNode>>> {
+        protected final class EphemeralZNodeLookups extends RunOnEmptyActor<StampedValue<ZNode>, Long, ValueFuture<StampedValue<ZNode>,Long,?>> {
 
             protected final ZNodePath prefix;
             protected final Function<ZNodePath,ZNodeLabel> labelOf;
@@ -898,18 +956,24 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                     ZNodePath prefix,
                     Function<ZNodePath,ZNodeLabel> labelOf) {
                 super(WalkerProcessor.this,
-                        Queues.<ValueSessionLookup<StampedValue<ZNode>>>newConcurrentLinkedQueue(),
+                        Queues.<ValueFuture<StampedValue<ZNode>,Long,?>>newConcurrentLinkedQueue(),
                         LogManager.getLogger(EphemeralZNodeLookups.class));
                 this.prefix = prefix;
                 this.labelOf = labelOf;
             }
 
             @Override
-            public ListenableFuture<StorageSchema.Safari.Sessions.Session.Data> submit(StampedValue<ZNode> value) {
-                ValueSessionLookup<StampedValue<ZNode>> lookup = ValueSessionLookup.create(
-                        value, 
-                        Long.valueOf(value.get().getStat().getEphemeralOwner()),
-                        materializer);
+            public ListenableFuture<Long> submit(StampedValue<ZNode> value) {
+                ListenableFuture<Long> future;
+                try {
+                    future = sessions.apply(
+                            Long.valueOf(
+                                    value.get().getStat().getEphemeralOwner()));
+                } catch (Exception e) {
+                    future = Futures.immediateFailedFuture(e);
+                }
+                ValueFuture<StampedValue<ZNode>, Long, ?> lookup =  ValueFuture.create(
+                        value, future);
                 if (!send(lookup)) {
                     lookup.cancel(false);
                 }
@@ -917,25 +981,19 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
             }
             
             @Override
-            protected boolean doApply(ValueSessionLookup<StampedValue<ZNode>> input) throws Exception {
-                StorageSchema.Safari.Sessions.Session.Data data;
-                try { 
-                    data = input.get();
-                } catch (ExecutionException e) {
-                    if (e.getCause() instanceof KeeperException.NoNodeException) {
-                        return true;
-                    } else {
-                        throw e;
-                    }
+            protected boolean doApply(ValueFuture<StampedValue<ZNode>, Long, ?> input) throws Exception {
+                Long session = input.get();
+                if (session == null) {
+                    return true;
                 }
-                ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.labelOf(data.getSessionId()));
+                ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.labelOf(session.longValue()));
                 WalkerProcessor.this.submit(Pair.create(Optional.<Long>absent(), Operations.Requests.create().setPath(path).build()));
                 path = path.join(
-                        labelOf.apply(input.value().get().getCreate().getPath()));
+                        labelOf.apply(input.getValue().get().getCreate().getPath()));
                 ByteBufOutputArchive buf = new ByteBufOutputArchive(Unpooled.buffer());
-                Records.Requests.serialize(input.value().get().getCreate().build(), buf);
+                Records.Requests.serialize(input.getValue().get().getCreate().build(), buf);
                 WalkerProcessor.this.submit(Pair.create(
-                        Optional.of(Long.valueOf(input.value().stamp())), 
+                        Optional.of(Long.valueOf(input.getValue().stamp())), 
                         Operations.Requests.create().setPath(path).setData(buf.get().array()).build()));
                 return true;
             }
@@ -1083,7 +1141,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                         final Optional<Operation.Error> fromError = Operations.maybeError(fromResponse, KeeperException.Code.NONODE);
                         final Records.Response toResponse = toResponses.get(i).record();
                         final Optional<Operation.Error> toError = Operations.maybeError(fromResponse, KeeperException.Code.NONODE);
-                        if (getFromChildren.requests().get(i).opcode() == OpCode.GET_CHILDREN) {
+                        if (getFromChildren.getValue().get(i).opcode() == OpCode.GET_CHILDREN) {
                             if (fromError.isPresent()) {
                                 if (!toError.isPresent()) {
                                     WalkerProcessor.this.submit(
@@ -1158,7 +1216,7 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
                     for (int i=0; i<responses.size(); ++i) {
                         final Records.Response response = responses.get(i).record();
                         final Optional<Operation.Error> error = Operations.maybeError(response, KeeperException.Code.NONODE);
-                        if (getData.requests().get(i).opcode() == OpCode.GET_DATA) {
+                        if (getData.getValue().get(i).opcode() == OpCode.GET_DATA) {
                             Operations.PathBuilder<? extends Records.Request, ?> record;
                             if (!error.isPresent()) {
                                 record = Operations.Requests.setData().setData(((Records.DataGetter) response).getData());
@@ -1183,50 +1241,6 @@ public class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> implements
         }
     }
     
-    protected static final char ESCAPE_CHAR = '\\';
-    protected static final String ESCAPE_ESCAPE = "\\\\";
-    
-    protected static final Function<String,String> ESCAPE_ZNODE_NAME = new Function<String,String>() {
-        @Override
-        public String apply(String input) {
-            return input.replace(String.valueOf(ESCAPE_CHAR), ESCAPE_ESCAPE).replace(ZNodePath.SLASH, ESCAPE_CHAR);
-        }
-    };
-    
-    protected static final class ValueSessionLookup<V> extends ForwardingListenableFuture<StorageSchema.Safari.Sessions.Session.Data> {
-
-        public static <V> ValueSessionLookup<V> create(
-                V value,
-                Long session,
-                Materializer<StorageZNode<?>,?> materializer) {
-            return new ValueSessionLookup<V>(
-                    value,
-                    SessionLookup.create(
-                            session, 
-                            materializer));
-        }
-        
-        private final V value;
-        private final ListenableFuture<StorageSchema.Safari.Sessions.Session.Data> future;
-        
-        protected ValueSessionLookup(
-                V value,
-                ListenableFuture<StorageSchema.Safari.Sessions.Session.Data> future) {
-            this.value = value;
-            this.future = future;
-        }
-        
-        public V value() {
-            return value;
-        }
-        
-        @Override
-        protected ListenableFuture<StorageSchema.Safari.Sessions.Session.Data> delegate() {
-            return future;
-        }
-    }
-
-
     public static final class ZNode extends AbstractPair<Operations.Requests.Create, Records.ZNodeStatGetter> {
 
         public static ZNode create(Operations.Requests.Create create, Records.ZNodeStatGetter stat) {

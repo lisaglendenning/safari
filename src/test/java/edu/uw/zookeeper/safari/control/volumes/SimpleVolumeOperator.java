@@ -2,15 +2,11 @@ package edu.uw.zookeeper.safari.control.volumes;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
-import java.util.List;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
@@ -19,9 +15,7 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.common.ChainedFutures;
-import edu.uw.zookeeper.common.ChainedFutures.ChainedProcessor;
-
-import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ZNodeName;
@@ -79,12 +73,10 @@ public class SimpleVolumeOperator {
     
     protected ListenableFuture<? extends VolumeVersion<?>> newOp(SimpleVolumeOperator.SimpleVolumeOp<?> op) {
         return ChainedFutures.run(
-                ChainedFutures.process(
-                    ChainedFutures.chain(
+                ChainedFutures.<VolumeVersion<?>>castLast(
+                    ChainedFutures.arrayList(
                             new SimpleVolumeOpChain(op),
-                            Lists.<ListenableFuture<? extends VolumeVersion<?>>>newArrayListWithCapacity(2)), 
-                    ChainedFutures.<VolumeVersion<?>,ListenableFuture<? extends VolumeVersion<?>>>getLast()),
-                SettableFuturePromise.<VolumeVersion<?>>create());
+                            2)));
     }
     
     public static abstract class SimpleVolumeOp<V extends VolumeVersion<?>> implements AsyncFunction<AssignedVolumeBranches, V> {
@@ -117,7 +109,7 @@ public class SimpleVolumeOperator {
         }
     }
 
-    public static class SimpleVolumeOpChain implements ChainedProcessor<ListenableFuture<? extends VolumeVersion<?>>> {
+    public static class SimpleVolumeOpChain implements ChainedFutures.ChainedProcessor<ListenableFuture<? extends VolumeVersion<?>>, FutureChain<ListenableFuture<? extends VolumeVersion<?>>>> {
 
         protected final SimpleVolumeOperator.SimpleVolumeOp<?> op;
         
@@ -128,7 +120,7 @@ public class SimpleVolumeOperator {
         
         @Override
         public Optional<? extends ListenableFuture<? extends VolumeVersion<?>>> apply(
-                List<ListenableFuture<? extends VolumeVersion<?>>> input) {
+                FutureChain<ListenableFuture<? extends VolumeVersion<?>>> input) throws Exception {
             switch (input.size()) {
             case 0:
             {
@@ -136,16 +128,10 @@ public class SimpleVolumeOperator {
             }
             case 1:
             {
+                AssignedVolumeBranches parent = (AssignedVolumeBranches) input.getLast().get(0L, TimeUnit.MILLISECONDS);
                 ListenableFuture<? extends VolumeVersion<?>> future;
                 try {
-                    AssignedVolumeBranches parent = (AssignedVolumeBranches) input.get(0).get(0L, TimeUnit.MILLISECONDS);
                     future = op.apply(parent);
-                } catch (ExecutionException e) {
-                    return Optional.absent();
-                } catch (InterruptedException e) {
-                    throw new AssertionError(e);
-                } catch (TimeoutException e) {
-                    throw new AssertionError(e);
                 } catch (Exception e) {
                     future = Futures.immediateFailedFuture(e);
                 }

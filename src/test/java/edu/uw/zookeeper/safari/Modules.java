@@ -36,6 +36,7 @@ import edu.uw.zookeeper.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.common.ListeningExecutorServiceFactory;
 import edu.uw.zookeeper.common.RuntimeModule;
 import edu.uw.zookeeper.common.ServiceMonitor;
+import edu.uw.zookeeper.net.AnonymousClientModule;
 import edu.uw.zookeeper.net.IntraVmAsNetModule;
 import edu.uw.zookeeper.server.SimpleServerBuilder;
 import edu.uw.zookeeper.server.SimpleServerModule;
@@ -47,11 +48,11 @@ public abstract class Modules {
                 Names.named("root"), 
                 Guice.createInjector(IntraVmAsNetModule.create()));
     }
-    
+
     public static Component<?> newNamedComponent(
             Iterable<? extends Component<?>> components,
-            Named name,
-            Iterable<? extends com.google.inject.Module> modules) {
+                    Named name,
+                    Iterable<? extends com.google.inject.Module> modules) {
         modules = ImmutableList.<com.google.inject.Module>builder()
                 .add(Modules.AnnotatedComponentsModule.forComponents(components))
                 .add(Modules.NamedModule.create(name))
@@ -68,21 +69,21 @@ public abstract class Modules {
         return ((root == null) ? 
                 Guice.createInjector(modules) : 
                     root.injector().createChildInjector(modules))
-                .getInstance(Key.get(new TypeLiteral<Component<?>>(){}));
+                    .getInstance(Key.get(new TypeLiteral<Component<?>>(){}));
     }
 
     public static Component<?> newSafariComponent(
             final Iterable<? extends Component<?>> components,
-            final Named name,
-            final List<SafariModule> safariModules,
-            final Class<? extends Provider<? extends Component<?>>> provider) {
+                    final Named name,
+                    final List<SafariModule> safariModules,
+                    final Class<? extends Provider<? extends Component<?>>> provider) {
         return newSafariComponent(
                 components, 
                 name,
                 ImmutableList.of(SafariServerModuleProvider.module(safariModules)), 
                 provider, 
                 SafariServerModuleProvider.class);
-     }
+    }
 
     public static Component<?> newSafariComponent(
             final Iterable<? extends Component<?>> components,
@@ -94,11 +95,23 @@ public abstract class Modules {
                 components,
                 name,
                 ImmutableList.<com.google.inject.Module>builder()
-                    .addAll(modules)
-                    .add(Modules.ServiceComponentProvider.module(
-                            provider, module))
-                    .build());
-     }
+                .addAll(modules)
+                .add(Modules.ServiceComponentProvider.module(
+                        provider, module))
+                        .build());
+    }
+
+    public static ImmutableList<Component<?>> newServerAndClientComponents() {
+        final Component<?> root = Modules.newRootComponent();
+        return ImmutableList.<Component<?>>builder().add(root).addAll(newServerAndClientComponents(root)).build();
+    }
+
+    public static ImmutableList<Component<?>> newServerAndClientComponents(
+            final Component<?> parent) {
+        final Component<?> server = Modules.newServerComponent(parent, Names.named("server"));
+        final Component<?> client = Modules.newClientComponent(parent, server, Names.named("client"));
+        return ImmutableList.of(server, client);
+    }
 
     public static Component<?> newServerComponent(
             Component<?> parent, Named name) {
@@ -108,6 +121,12 @@ public abstract class Modules {
                 ImmutableList.of(
                         Modules.ServiceComponentProvider.module(
                                 ServerModulesProvider.class)));
+    }
+    
+    public static Component<?> newClientComponent(
+            Component<?> parent, Component<?> server, Named name) {
+        final EnsembleView<ServerInetAddressView> ensemble = EnsembleView.copyOf(server.injector().getInstance(SimpleServerBuilder.class).getConnectionsBuilder().getConnectionBuilder().getAddress());
+        return newClientComponent(parent, ensemble, name);
     }
     
     public static Component<?> newClientComponent(
@@ -282,6 +301,7 @@ public abstract class Modules {
         @Override
         protected void configure() {
             bind(new TypeLiteral<Component<?>>(){}).annotatedWith(component.annotation()).toInstance(component);
+            bind(Component.class).annotatedWith(component.annotation()).toInstance(component);
         }
     }
     
@@ -493,6 +513,7 @@ public abstract class Modules {
         public List<com.google.inject.Module> get() {
             return ImmutableList.<com.google.inject.Module>builder()
                     .add(GuiceRuntimeModule.create(runtime))
+                    .add(AnonymousClientModule.create())
                     .add(SafariServicesModule.create(safariModules))
                     .add(new AbstractModule() {
                         @Override

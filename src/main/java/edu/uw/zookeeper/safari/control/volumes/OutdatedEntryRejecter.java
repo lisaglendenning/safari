@@ -13,6 +13,11 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
+import com.google.inject.AbstractModule;
+import com.google.inject.Key;
+import com.google.inject.Provides;
+import com.google.inject.Singleton;
+import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.client.Watchers;
@@ -24,16 +29,52 @@ import edu.uw.zookeeper.data.WatchListeners;
 import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
+import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
+import edu.uw.zookeeper.safari.region.Region;
+import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 /**
  * Assumes all versions and all resident logs are watched
  */
 public class OutdatedEntryRejecter<O extends Operation.ProtocolResponse<?>> extends Watchers.StopServiceOnFailure<ControlSchema.Safari.Volumes.Volume.Log.Version.Entry> {
+
+    public static Module module() {
+        return new Module();
+    }
+    
+    public static class Module extends AbstractModule implements SafariModule {
+        
+        protected Module() {}
+        
+        @Provides @Singleton
+        public OutdatedEntryRejecter<?> getOutdatedEntryRejecter(
+                @Region AsyncFunction<VersionedId, Boolean> isResident,
+                final SchemaClientService<ControlZNode<?>,Message.ServerResponse<?>> client,
+                final RegionRoleService service) {
+            // TODO start services?
+            return OutdatedEntryRejecter.listen(
+                    isResident, 
+                    client, 
+                    service, 
+                    service.logger());
+        }
+
+        @Override
+        public Key<?> getKey() {
+            return Key.get(OutdatedEntryRejecter.class);
+        }
+        
+        @Override
+        protected void configure() {
+            bind(OutdatedEntryRejecter.class).to(new TypeLiteral<OutdatedEntryRejecter<?>>(){});
+        }
+    }
     
     public static <O extends Operation.ProtocolResponse<?>> OutdatedEntryRejecter<O> listen(
             AsyncFunction<VersionedId, Boolean> isResident,

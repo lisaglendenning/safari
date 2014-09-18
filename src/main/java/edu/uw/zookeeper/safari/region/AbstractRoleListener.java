@@ -14,7 +14,7 @@ import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 
 
-public class AbstractRoleListener<T> extends LoggingServiceListener<T> implements Runnable, FutureCallback<RegionRoleService> {
+public abstract class AbstractRoleListener<T> extends LoggingServiceListener<T> implements Runnable, FutureCallback<RegionRoleService> {
 
     protected final Supplier<FutureTransition<RegionRoleService>> role;
     

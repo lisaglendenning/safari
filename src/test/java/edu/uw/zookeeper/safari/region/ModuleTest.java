@@ -67,9 +67,8 @@ public class ModuleTest extends AbstractMainTest {
         final Component<?> control = ControlModules.newControlSingletonEnsemble(root);
         final List<Component<?>> storage = StorageModules.newStorageEnsemble(root, size);
         final List<Component<?>> members = RegionModules.newRegion(storage, ImmutableList.of(root, control));
-        final Injector world = monitored(
-                ImmutableList.<Component<?>>builder().add(root).add(control).addAll(storage).addAll(members).build(),
-                Modules.NonStoppingServiceMonitorProvider.class);
+        final Injector world = nonstopping(
+                ImmutableList.<Component<?>>builder().add(root).add(control).addAll(storage).addAll(members).build());
         final Callable<Void> callable = new Callable<Void>() {
             @Override
             public Void call() throws Exception {

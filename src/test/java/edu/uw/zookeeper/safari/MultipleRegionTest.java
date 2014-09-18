@@ -130,13 +130,11 @@ public class MultipleRegionTest extends AbstractMainTest {
             }
         };
         callWithService(
-                monitored(
-                        components,
-                        Modules.StoppingServiceMonitorProvider.class),
+                stopping(components),
                 callable);
     }
 
-    @Test(timeout=45000)
+    @Test//(timeout=45000)
     public void testTransfer() throws Exception {
         final int num_regions = 2;
         final long pause = 4000L;
@@ -150,9 +148,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                 regions.add(component);
             }
         }
-        final Injector injector = monitored(
-                components,
-                Modules.StoppingServiceMonitorProvider.class);
+        final Injector injector = stopping(components);
         final Callable<Void> callable = new Callable<Void>() {
             @Override
             public Void call() throws Exception {
@@ -212,9 +208,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                 Names.named("client"));
         components = ImmutableList.<Component<?>>builder().addAll(components).add(client).build();
         
-        final Injector injector = monitored(
-                components,
-                Modules.StoppingServiceMonitorProvider.class);
+        final Injector injector = stopping(components);
         
         final Callable<Void> callable = new Callable<Void>() {
             @Override
@@ -266,8 +260,8 @@ public class MultipleRegionTest extends AbstractMainTest {
     }
     
     protected void committed(VolumeLogEntryPath entry, SchemaClientService<ControlZNode<?>,?> control) throws InterruptedException, ExecutionException {
-        assertEquals(VolumeEntryResponse.voted(entry, control.materializer(), control.cacheEvents(), logger).get(), Boolean.TRUE);
-        assertEquals(VolumeEntryResponse.committed(entry, control.materializer(), control.cacheEvents(), logger).get(), Boolean.TRUE);
+        assertTrue(VolumeEntryResponse.voted(entry, control.materializer(), control.cacheEvents(), logger).get().booleanValue());
+        assertTrue(VolumeEntryResponse.committed(entry, control.materializer(), control.cacheEvents(), logger).get().booleanValue());
     }
     
     protected void commit(VolumeOperation<?> operation, SchemaClientService<ControlZNode<?>,?> control, Iterable<? extends Component<?>> regions) throws Exception {

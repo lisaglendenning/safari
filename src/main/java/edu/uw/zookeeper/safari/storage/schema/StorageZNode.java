@@ -184,13 +184,17 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
 
         @Name(type=NameType.PATTERN)
         public static final String LABEL = ".+";
-        
-        public static class EscapedConverter extends Converter<ZNodeName, ZNodeName> {
 
+        /**
+         * TODO: ambiguous if backslash is adjacent to a slash
+         */
+        public static final class EscapedConverter extends Converter<ZNodeName, ZNodeName> {
+
+            protected EscapedConverter() {}
+            
             @Override
-            protected ZNodeName doForward(ZNodeName input) {
+            protected ZNodeLabel doForward(ZNodeName input) {
                 StringBuilder sb = new StringBuilder(input.length()+1);
-                sb.append('\\');
                 for (int i=0; i<input.length(); ++i) {
                     char c = input.charAt(i);
                     switch (c) {
@@ -209,7 +213,7 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
                     // special case to avoid empty label
                     sb.append('\\');
                 }
-                return ZNodeName.fromString(sb.toString());
+                return ZNodeLabel.fromString(sb.toString());
             }
 
             @Override

@@ -126,7 +126,7 @@ public class FrontendServerService extends ServiceListenersService {
             final ServerInetAddressView value, 
             final Materializer<ControlZNode<?>,?> materializer) {    
         ZNodePath path = ControlSchema.Safari.Peers.Peer.ClientAddress.pathOf(peer);
-        ListenableFuture<Optional<ServerInetAddressView>> future = CreateOrEquals.create(path, value, materializer, SettableFuturePromise.<Optional<ServerInetAddressView>>create());
+        ListenableFuture<Optional<ServerInetAddressView>> future = CreateOrEquals.create(path, value, materializer);
         return Futures.transform(future, 
                 new Function<Optional<ServerInetAddressView>, Optional<ServerInetAddressView>>() {
                     @Override

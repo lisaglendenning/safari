@@ -12,6 +12,7 @@ import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.common.GuiceRuntimeModule;
 import edu.uw.zookeeper.common.RuntimeModule;
+import edu.uw.zookeeper.net.AnonymousClientModule;
 import edu.uw.zookeeper.net.IntraVmModule;
 import edu.uw.zookeeper.net.NettyModule;
 
@@ -26,6 +27,7 @@ public class Module extends ServiceApplicationModule {
                 GuiceRuntimeModule.create(runtime),
                 IntraVmModule.create(),
                 NettyModule.create(),
+                AnonymousClientModule.create(),
                 SafariServicesModule.create(newSafariModules()),
                 create());
     }

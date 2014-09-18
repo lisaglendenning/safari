@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -14,6 +15,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.name.Names;
 
@@ -69,15 +71,16 @@ public class SingletonTest extends AbstractMainTest {
         final int logInterval = 8;
         final TimeValue timeOut = TimeValue.seconds(15L);
         final List<Component<?>> components = newSingletonServerAndClient();
-        final Component<?> client = components.get(components.size()-1);
+        final Injector injector = stopping(components);
         final Callable<Void> callable = new Callable<Void>() {
             @Override
             public Void call() throws Exception {
+                final ConnectionClientExecutorService<Operation.Request, Message.ServerResponse<?>> client = injector.getInstance(Key.get(Component.class, Names.named("client"))).injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor();
                 final Queue<ListenableFuture<Message.ServerResponse<?>>> futures = Queues.newArrayDeque();
                 final Generator<? extends Records.Request> requests = Generators.constant(Operations.Requests.exists().setPath(ZNodePath.root()).build());
                 final CountingGenerator<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> operations = 
                         CountingGenerator.create(iterations, logInterval, 
-                                SubmitGenerator.create(requests, client.injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor()), logger);
+                                SubmitGenerator.create(requests, client), logger);
                 while (operations.hasNext()) {
                      futures.add(operations.next().second());
                 }
@@ -89,9 +92,7 @@ public class SingletonTest extends AbstractMainTest {
             }
         };
         callWithService(
-                monitored(
-                        components,
-                        Modules.StoppingServiceMonitorProvider.class),
+                injector,
                 callable);
     }
 
@@ -101,21 +102,26 @@ public class SingletonTest extends AbstractMainTest {
         final int iterations = 32;
         final int logInterval = 8;
         final List<Component<?>> components = newSingletonServerAndClients(nclients);
+        final Injector injector = stopping(components);
         final Callable<Void> callable = new Callable<Void>() {
                 @Override
                 public Void call() throws Exception {
                     final Generator<? extends Records.Request> requests = Generators.constant(Operations.Requests.exists().setPath(ZNodePath.root()).build());
                     final ImmutableList.Builder<IteratingClient> clients = ImmutableList.builder();
                     for (int i=0; i<nclients; ++i) {
-                        Component<?> client = components.get(components.size() - i - 1);
+                        final Component<?> client = injector.getInstance(Key.get(Component.class, Names.named(String.format("client-%d", i))));
                         final CountingGenerator<Pair<Records.Request, ListenableFuture<Message.ServerResponse<?>>>> operations = 
                                 CountingGenerator.create(iterations, logInterval, 
                                         SubmitGenerator.create(requests, 
                                                 client.injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor()), logger);
                         Executor executor = client.injector().getInstance(Executor.class);
-                        IteratingClient iterating = IteratingClient.create(
-                                executor, operations, SettableFuturePromise.<Void>create());
-                        LoggingFutureListener.listen(logger, iterating);
+                        IteratingClient iterating = 
+                                LoggingFutureListener.listen(
+                                        logger,
+                                        IteratingClient.create(
+                                                executor, 
+                                                operations, 
+                                                SettableFuturePromise.<Void>create()));
                         clients.add(iterating);
                         executor.execute(iterating);
                     }
@@ -124,9 +130,7 @@ public class SingletonTest extends AbstractMainTest {
                 }
             };
         callWithService(
-                monitored(
-                        components,
-                        Modules.StoppingServiceMonitorProvider.class),
+                injector,
                 callable);
     }
     

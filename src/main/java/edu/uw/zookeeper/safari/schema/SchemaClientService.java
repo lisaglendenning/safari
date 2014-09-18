@@ -6,7 +6,6 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.Service;
 
 import edu.uw.zookeeper.common.ServiceListenersService;
@@ -148,7 +147,7 @@ public class SchemaClientService<E extends Materializer.MaterializedNode<E,?>, O
         @Override
         public void running() {
             try {
-                Futures.successfulAsList(PrefixCreator.forMaterializer(materializer).call()).get();
+                PrefixCreator.call(materializer).get();
             } catch (Exception e) {
                 throw Throwables.propagate(e);
             }
