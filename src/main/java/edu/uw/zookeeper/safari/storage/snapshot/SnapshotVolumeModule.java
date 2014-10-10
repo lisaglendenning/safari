@@ -51,9 +51,15 @@ public class SnapshotVolumeModule extends AbstractModule {
         default:
             throw new AssertionError();
         }
-        return new SnapshotVolumeModule(
+        return create(
                 new SnapshotVolumeParameters(fromVolume, fromBranch, fromVersion), 
                 new SnapshotVolumeParameters(toVolume, toBranch, toVersion));
+    }
+    
+    public static SnapshotVolumeModule create(
+            SnapshotVolumeParameters fromVolume,
+            SnapshotVolumeParameters toVolume) {
+        return new SnapshotVolumeModule(fromVolume, toVolume);
     }
 
     private final SnapshotVolumeParameters fromVolume;

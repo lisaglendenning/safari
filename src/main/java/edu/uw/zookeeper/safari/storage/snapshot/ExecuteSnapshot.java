@@ -5,19 +5,24 @@ import io.netty.buffer.Unpooled;
 
 import java.net.InetSocketAddress;
 import java.util.Collection;
+import java.util.ConcurrentModificationException;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
@@ -26,17 +31,22 @@ import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.ClassToInstanceMap;
+import com.google.common.collect.ImmutableClassToInstanceMap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
+import com.google.common.collect.MapMaker;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
-import com.google.common.collect.Sets;
 import com.google.common.primitives.UnsignedLong;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.ForwardingListenableFuture;
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -54,6 +64,7 @@ import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.DeleteSubtree;
 import edu.uw.zookeeper.client.FixedQuery;
+import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequest;
 import edu.uw.zookeeper.client.SubmittedRequests;
@@ -63,18 +74,21 @@ import edu.uw.zookeeper.common.Actors;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
+import edu.uw.zookeeper.common.ForwardingPromise;
+import edu.uw.zookeeper.common.ForwardingPromise.SimpleForwardingPromise;
 import edu.uw.zookeeper.common.FutureChain;
 import edu.uw.zookeeper.common.ListenableFutureActor;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
+import edu.uw.zookeeper.common.Processors;
 import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
-import edu.uw.zookeeper.common.SubmitActor;
 import edu.uw.zookeeper.common.TaskExecutor;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
-import edu.uw.zookeeper.common.ValueFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
-import edu.uw.zookeeper.data.CreateFlag;
 import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.EmptyZNodeLabel;
 import edu.uw.zookeeper.data.Materializer;
@@ -84,6 +98,7 @@ import edu.uw.zookeeper.data.Sequential;
 import edu.uw.zookeeper.data.SimpleNameTrie;
 import edu.uw.zookeeper.data.StampedValue;
 import edu.uw.zookeeper.data.ValueNode;
+import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeLabelVector;
 import edu.uw.zookeeper.data.ZNodeName;
@@ -96,19 +111,15 @@ import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.SessionListener;
 import edu.uw.zookeeper.protocol.client.ZxidTracker;
 import edu.uw.zookeeper.protocol.proto.ByteBufOutputArchive;
-import edu.uw.zookeeper.protocol.proto.ICreateRequest;
-import edu.uw.zookeeper.protocol.proto.ICreateResponse;
-import edu.uw.zookeeper.protocol.proto.IDeleteRequest;
 import edu.uw.zookeeper.protocol.proto.IGetDataRequest;
-import edu.uw.zookeeper.protocol.proto.IStat;
+import edu.uw.zookeeper.protocol.proto.IGetDataResponse;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
-import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.proto.Stats;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.SafariModule;
-import edu.uw.zookeeper.safari.backend.PrefixTranslator;
 import edu.uw.zookeeper.safari.storage.Storage;
+import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -166,7 +177,10 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         protected void configure() {
         }
     }
-    
+
+    /**
+     * Assumes volume log version exists at the destination.
+     */
     public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Long> recover(
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient,
             SnapshotVolumeParameters fromVolume,
@@ -210,7 +224,6 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             Deque<ExecuteSnapshot.Action<?>> steps) {
         final AbsoluteZNodePath fromRoot = StorageSchema.Safari.Volumes.Volume.Root.pathOf(fromVolume.getVolume()).join(fromVolume.getBranch());
         final AbsoluteZNodePath toRoot = StorageSchema.Safari.Volumes.Volume.Root.pathOf(toVolume.getVolume()).join(toVolume.getBranch());
-        final PathTranslator paths = PathTranslator.empty(fromRoot, toRoot);
         final ZxidTracker zxid = ZxidTracker.zero();
         final ExecuteSnapshot<O> snapshot = new ExecuteSnapshot<O>(
                 fromClient, 
@@ -223,7 +236,6 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                 server,
                 storage,
                 anonymous,
-                paths, 
                 sessions,
                 zxid);
         return ChainedFutures.run(
@@ -259,8 +271,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
     protected final AbsoluteZNodePath fromRoot;
     protected final AbsoluteZNodePath toRoot;
     protected final AsyncFunction<Long, Long> sessions;
-    protected final PathTranslator paths;
-    protected final WalkerProcessor walker;
+    protected final SequentialTranslator<O> sequentials;
     
     protected ExecuteSnapshot(
             ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient,
@@ -273,7 +284,6 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             ServerInetAddressView server,
             EnsembleView<ServerInetAddressView> storage,
             ClientConnectionFactory<? extends Connection<? super Message.ClientAnonymous,? extends Message.ServerAnonymous,?>> anonymous,
-            PathTranslator paths,
             AsyncFunction<Long, Long> sessions,
             ZxidTracker fromZxid) {
         this.fromClient = fromClient;
@@ -286,10 +296,8 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         this.anonymous = anonymous;
         this.fromRoot = fromRoot;
         this.toRoot = toRoot;
-        this.paths = paths;
         this.sessions = sessions;
-        this.walker = new WalkerProcessor(fromZxid,
-                SettableFuturePromise.<Long>create());
+        this.sequentials = SequentialTranslator.create(fromRoot, toRoot, toClient);
     }
     
     @Override
@@ -308,13 +316,20 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             return Optional.of(CreateSnapshotPrefix.create(toVolume.getVolume(), toVolume.getVersion(), toClient));
         } else if (last.get() instanceof CreateSnapshotPrefix) {
             return Optional.of(
-                    PrepareSnapshotEnsembleWatches.create(
+                    PrepareSnapshotWatches.create(
                             StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(toVolume.getVolume(), toVolume.getVersion()),
                         new Function<ZNodePath,ZNodeLabel>() {
                             @Override
                             public ZNodeLabel apply(ZNodePath input) {
-                                return (ZNodeLabel) StorageZNode.EscapedNamedZNode.converter().convert(
-                                                paths.apply(input).suffix(toRoot));
+                                // all sequential persistent znodes should have been created by now
+                                try {
+                                    return ZNodeLabel.fromString(EscapedConverter.getInstance().convert(
+                                                    sequentials.apply(input).get().suffix(toRoot).toString()));
+                                } catch (InterruptedException e) {
+                                    throw Throwables.propagate(e);
+                                } catch (Exception e) {
+                                    throw new IllegalStateException(e);
+                                }
                             }
                         },
                         server,
@@ -333,31 +348,31 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                         sessions,
                         new SnapshotWatches.FilteredWchc(
                                 new FromRootWchc(fromRoot))));
-        } else if (last.get() instanceof PrepareSnapshotEnsembleWatches) {
+        } else if (last.get() instanceof PrepareSnapshotWatches) {
             try {
-                return Optional.of((CallSnapshotEnsembleWatches)
-                        CallSnapshotEnsembleWatches.create(
-                                ((PrepareSnapshotEnsembleWatches) last.get()).get()));
+                return Optional.of((CallSnapshotWatches)
+                        CallSnapshotWatches.create(
+                                ((PrepareSnapshotWatches) last.get()).get()));
             } catch (InterruptedException e) {
                 throw Throwables.propagate(e);
             } catch (ExecutionException e) {
                 return Optional.absent();
             }
-        } else if (last.get() instanceof CallSnapshotEnsembleWatches) {
+        } else if (last.get() instanceof CallSnapshotWatches) {
             Action<?> previous = Iterators.get(input.descendingIterator(), 1);
-            if (previous instanceof PrepareSnapshotEnsembleWatches) {
-                final ListenableFuture<Long> future = Futures.transform(
-                        walker.walk(fromRoot), 
-                        new GetOptional<Long>());
-                return Optional.of(CreateSnapshot.call(future));
+            if (previous instanceof PrepareSnapshotWatches) {
+                return Optional.of(
+                        CreateSnapshot.call(
+                                new WalkSnapshotter(ZxidTracker.zero(),
+                                        SettableFuturePromise.<Long>create())));
             } else if (previous instanceof CreateSnapshot) {
                 return Optional.absent();
             } else {
                 throw new AssertionError();
             }
         } else if (last.get() instanceof CreateSnapshot) {
-            CallSnapshotEnsembleWatches watches = (CallSnapshotEnsembleWatches) Iterators.get(input.descendingIterator(), 1);
-            return Optional.of((CallSnapshotEnsembleWatches) CallSnapshotEnsembleWatches.create(watches.chain()));
+            CallSnapshotWatches watches = (CallSnapshotWatches) Iterators.get(input.descendingIterator(), 1);
+            return Optional.of((CallSnapshotWatches) CallSnapshotWatches.create(watches.chain()));
         }
         return Optional.absent();
     }
@@ -535,9 +550,9 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         }
     }
     
-    public static final class PrepareSnapshotEnsembleWatches extends Action<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> {
+    public static final class PrepareSnapshotWatches extends Action<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> {
         
-        public static <O extends Operation.ProtocolResponse<?>> PrepareSnapshotEnsembleWatches create(
+        public static <O extends Operation.ProtocolResponse<?>> PrepareSnapshotWatches create(
                 final ZNodePath prefix,
                 final Function<ZNodePath,ZNodeLabel> labelOf,
                 final ServerInetAddressView server,
@@ -613,18 +628,17 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                     call, 
                     SettableFuturePromise.<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>>create());
             localTransformer.addListener(task, MoreExecutors.directExecutor());
-            return new PrepareSnapshotEnsembleWatches(task);
+            return new PrepareSnapshotWatches(task);
         }
         
-        protected PrepareSnapshotEnsembleWatches(
+        protected PrepareSnapshotWatches(
                 ListenableFuture<ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?>> delegate) {
             super(delegate);
         }
     }
 
-    public static final class CallSnapshotEnsembleWatches extends Action<FourLetterWords.Wchc> {
+    public static final class CallSnapshotWatches extends Action<FourLetterWords.Wchc> {
 
-        
         @SuppressWarnings("unchecked")
         public static ListenableFuture<FourLetterWords.Wchc> create(
                 ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain) {
@@ -637,13 +651,13 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             if (result.isPresent()) {
                 return Futures.immediateFuture(result.get());
             } else {
-                return new CallSnapshotEnsembleWatches(chain, (ListenableFuture<FourLetterWords.Wchc>) chain.chain().chain().getLast());
+                return new CallSnapshotWatches(chain, (ListenableFuture<FourLetterWords.Wchc>) chain.chain().chain().getLast());
             }
         }
         
         protected final ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain;
         
-        public CallSnapshotEnsembleWatches(
+        public CallSnapshotWatches(
                 ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> chain,
                 ListenableFuture<FourLetterWords.Wchc> future) {
             super(future);
@@ -657,7 +671,13 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
     
     public static final class CreateSnapshot extends Action<Long> {
         
-        public static CreateSnapshot call(ListenableFuture<Long> future) {
+        public static CreateSnapshot call(Callable<ListenableFuture<Long>> callable) {
+            ListenableFuture<Long> future;
+            try {
+                future = callable.call();
+            } catch (Exception e) {
+                future = Futures.immediateFailedFuture(e);
+            }
             return new CreateSnapshot(future);
         }
         
@@ -723,25 +743,25 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         }
     }
     
-    protected final class WalkerProcessor extends ForwardingListenableFuture<Long> implements Processor<Optional<? extends SubmittedRequest<Records.Request,?>>, Optional<ListenableFuture<Long>>>, Runnable, TaskExecutor<Pair<Optional<Long>,? extends Records.Request>, O> {
+    protected final class WalkSnapshotter extends ForwardingListenableFuture<Long> implements Callable<ListenableFuture<Long>>, AsyncFunction<ZNodePath, Long>, FutureCallback<Long>, Runnable, TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> {
 
+        protected final Logger logger;
         protected final Promise<Long> promise;
-        protected final ToClient submitTo;
-        protected final EphemeralZNodeLookups ephemerals;
-        protected final FromListener changes;
-        protected final TreeWalker.Builder<ListenableFuture<Long>> walker;
+        protected final Map<Walker, ListenableFuture<Long>> walkers;
+        protected final EphemeralsSnapshotter<O> ephemerals;
+        protected final NotificationsSnapshotter<O> changes;
+        protected final TreeWalker.Builder<ListenableFuture<Long>> walk;
         protected final ZxidTracker fromZxid;
-        protected int walkers;
-        protected int pending;
+        protected final Map<ZNodePath, Long> ephemeralOwners;
         
-        public WalkerProcessor(
+        protected WalkSnapshotter(
                 ZxidTracker fromZxid,
                 Promise<Long> promise) {
+            this.logger = LogManager.getLogger(this);
             this.fromZxid = fromZxid;
             this.promise = promise;
-            this.walkers = 0;
-            this.pending = 0;
-            this.walker = TreeWalker.forResult(this)
+            this.ephemeralOwners = Maps.newHashMap();
+            this.walk = TreeWalker.<ListenableFuture<Long>>builder()
                     .setIterator(SortedChildrenIterator.create())
                     .setRequests(TreeWalker.toRequests(
                             TreeWalker.parameters()
@@ -749,113 +769,91 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                                 .setWatch(true)
                                 .setSync(true)))
                     .setClient(fromClient);
-            this.submitTo = Actors.stopWhenDone(new ToClient(), this);
-            this.ephemerals = Actors.stopWhenDone(
-                    new EphemeralZNodeLookups(
-                        StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume.getVolume(), toVolume.getVersion()),
-                        new Function<ZNodePath,ZNodeLabel>() {
-                            @Override
-                            public ZNodeLabel apply(ZNodePath input) {
-                                return (ZNodeLabel) StorageZNode.EscapedNamedZNode.converter().convert(
-                                                input.suffix(toRoot));
-                            }
-                        }), this);
-            this.changes = new FromListener();
-            
+            this.ephemerals = EphemeralsSnapshotter.create(
+                    StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume.getVolume(), toVolume.getVersion()),
+                    toRoot,
+                    sessions,
+                    sequentials,
+                    toClient);
+            this.walkers = Maps.newHashMap();
+            this.changes = NotificationsSnapshotter.create(
+                    this, this, this, fromClient, logger);
+
             addListener(this, MoreExecutors.directExecutor());
         }
+        
+        @Override
+        public ListenableFuture<Long> call() throws Exception {
+            if (!isDone()) {
+                apply(fromRoot);
+                fromClient.subscribe(changes);
+            }
+            return this;
+        }
 
-        public synchronized TreeWalker<ListenableFuture<Long>> walk(ZNodePath root) {
-            ++walkers;
-            return walker.setRoot(root).build();
+        @Override
+        public synchronized ListenableFuture<Pair<ZNodePath,O>> submit(StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>> request) {
+            final ListenableFuture<Pair<ZNodePath,O>> future;
+            if (request.get() instanceof Operations.Requests.Create) {
+                if (request.stamp() != Stats.CreateStat.ephemeralOwnerNone()) {
+                    ephemeralOwners.put(request.get().getPath(), Long.valueOf(request.stamp()));
+                    future = ephemerals.submit(request);
+                } else {
+                    future = sequentials.submit(request.get());
+                }
+            } else {
+                Long owner;
+                if (request.get() instanceof Operations.Requests.Delete) {
+                    owner = ephemeralOwners.remove(request.get().getPath());
+                } else {
+                    owner = ephemeralOwners.get(request.get().getPath());
+                }
+                if (owner != null) {
+                    future = ephemerals.submit(StampedValue.valueOf(owner.longValue(), request.get()));
+                } else {
+                    future = sequentials.submit(request.get());
+                }
+            }
+            return LoggingFutureListener.listen(logger, future);
+        }
+
+        @Override
+        public synchronized void onSuccess(Long result) {
+            if (!isDone()) {
+                fromZxid.update(result);
+                run();
+            }
+        }
+
+        @Override
+        public void onFailure(Throwable t) {
+            promise.setException(t);
+        }
+        
+        public synchronized ListenableFuture<Long> apply(ZNodePath root) {
+            final Walker walker = new Walker(SettableFuturePromise.<Long>create());
+            final ListenableFuture<Long> future = Futures.transform(
+                    this.walk.setRoot(root).setResult(walker).build(),
+                    new GetOptional<Long>());
+            walkers.put(walker, future);
+            walker.run();
+            run();
+            return LoggingFutureListener.listen(logger, future);
         }
         
         @Override
         public synchronized void run() {
             if (!isDone()) {
-                if ((walkers == 0) && (pending == 0) && submitTo.isEmpty() && ephemerals.isEmpty() && changes.isEmpty()) {
+                if (walkers.isEmpty() && changes.isEmpty()) {
                     promise.set(Long.valueOf(fromZxid.get()));
                 }
-            }
-        }
-
-        @Override
-        public ListenableFuture<O> submit(Pair<Optional<Long>,? extends Records.Request> request) {
-            ListenableFuture<O> future = submitTo.submit(request.second());
-            if (request.first().isPresent()) {
-                updateZxid(request.first().get().longValue(), future);
-            }
-            return future;
-        }
-        
-        @Override
-        public synchronized Optional<ListenableFuture<Long>> apply(
-                Optional<? extends SubmittedRequest<Records.Request, ?>> input)
-                throws Exception {
-            if (input.isPresent()) {
-                final Operation.ProtocolResponse<?> response = input.get().get();
-                if (Operations.maybeError(response.record(), KeeperException.Code.NONODE).isPresent()) {
-                    if (((Records.PathGetter) input.get().getValue()).getPath().length() == fromRoot.length()) {
-                        // root must exist
-                        throw new KeeperException.NoNodeException(fromRoot.toString());
-                    }
-                } else {
-                    if (input.get().getValue() instanceof IGetDataRequest) {
-                        final long zxid = response.zxid();
-                        final AbsoluteZNodePath fromPath = AbsoluteZNodePath.fromString(((Records.PathGetter) input.get().getValue()).getPath());
-                        final Records.ZNodeStatGetter stat = new IStat(((Records.StatGetter) response.record()).getStat());
-                        CreateMode mode = (stat.getEphemeralOwner() == Stats.CreateStat.ephemeralOwnerNone()) ? CreateMode.PERSISTENT : CreateMode.EPHEMERAL;
-                        final Optional<? extends Sequential<String,?>> sequential;
-                        if (fromPath.length() > fromRoot.length()) {
-                            sequential = Sequential.maybeFromString(fromPath.label().toString());
-                        } else {
-                            assert (fromPath.length() == fromRoot.length());
-                            sequential = Optional.absent();
-                        }
-                        final ZNodePath toPath;
-                        if (sequential.isPresent()) {
-                            mode = mode.sequential();
-                            toPath = paths.apply(((AbsoluteZNodePath) fromPath).parent().join(ZNodeLabel.fromString(sequential.get().prefix())));
-                        } else {
-                            toPath = paths.apply(fromPath);
-                        }
-                        final Operations.Requests.Create create = Operations.Requests.create()
-                                .setMode(mode)
-                                .setPath(toPath)
-                                .setData(((Records.DataGetter) response.record()).getData());
-                        if (mode.contains(CreateFlag.EPHEMERAL)) {
-                            ephemerals.submit(
-                                    StampedValue.valueOf(
-                                            zxid, ZNode.create(create, stat)));
-                        } else {
-                            Records.Request request;
-                            if (toPath.length() > toRoot.length()) {
-                                request = create.build();
-                            } else {
-                                assert (toPath.length() == toRoot.length());
-                                request = Operations.Requests.setData()
-                                        .setPath(create.getPath())
-                                        .setData(create.getData()).build();
-                            }
-                            submit(Pair.create(
-                                    Optional.of(Long.valueOf(zxid)), 
-                                    request));
-                        }
-                    }    
-                }
-                return Optional.absent();
             } else {
-                assert (walkers > 0);
-                if (--walkers == 0) {
-                    run();
+                changes.stop();
+                ephemerals.stop();
+                for (Map.Entry<Walker, ? extends ListenableFuture<?>> entry: Iterables.consumingIterable(walkers.entrySet())) {
+                    entry.getValue().cancel(false);
                 }
-                return Optional.<ListenableFuture<Long>>of(this);
             }
-        }
-        
-        protected synchronized <V,T extends ListenableFuture<V>> T updateZxid(long zxid, T future) {
-            new ZxidUpdater<V>(zxid, future);
-            return future;
         }
         
         @Override
@@ -863,515 +861,1545 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             return promise;
         }
         
-        protected final class ZxidUpdater<V> extends ForwardingListenableFuture<V> implements Runnable {
+        protected final class Walker extends SimpleForwardingPromise<Long> implements Runnable, FutureCallback<Object>, Processor<Optional<? extends SubmittedRequest<Records.Request,?>>, Optional<ListenableFuture<Long>>> {
+
+            protected AtomicInteger pending;
             
-            private final long zxid;
-            private final ListenableFuture<V> future;
-            
-            public ZxidUpdater(
-                    long zxid,
-                    ListenableFuture<V> future) {
-                this.zxid = zxid;
-                this.future = future;
-                ++pending;
+            protected Walker(
+                    Promise<Long> delegate) {
+                super(delegate);
+                this.pending = new AtomicInteger(1);
                 addListener(this, MoreExecutors.directExecutor());
             }
-
+            
             @Override
-            public void run() {
-                if (isDone()) {
-                    try {
-                        get();
-                        WalkerProcessor.this.fromZxid.update(this.zxid);
-                    } catch (InterruptedException e) {
-                        throw Throwables.propagate(e);
-                    } catch (ExecutionException e) {
-                    } finally {
-                        synchronized (WalkerProcessor.this) {
-                            if (--pending == 0) {
-                                WalkerProcessor.this.run();
-                            }
+            public Optional<ListenableFuture<Long>> apply(
+                    Optional<? extends SubmittedRequest<Records.Request, ?>> input)
+                    throws Exception {
+                if (input.isPresent()) {
+                    final Operation.ProtocolResponse<?> response = input.get().get();
+                    if (Operations.maybeError(response.record(), KeeperException.Code.NONODE).isPresent()) {
+                        if (((Records.PathGetter) input.get().getValue()).getPath().length() == fromRoot.length()) {
+                            // root must exist
+                            throw new KeeperException.NoNodeException(fromRoot.toString());
                         }
+                    } else {
+                        if (input.get().getValue() instanceof IGetDataRequest) {
+                            final long zxid = response.zxid();
+                            final ZNodePath fromPath = ZNodePath.fromString(((Records.PathGetter) input.get().getValue()).getPath());
+                            final IGetDataResponse getData = (IGetDataResponse) response.record();
+                            ListenableFuture<?> future;
+                            if (fromPath.length() == fromRoot.length()) {
+                                future = UnlessError.create(
+                                        toClient.submit(
+                                            Operations.Requests.setData()
+                                            .setPath(toRoot)
+                                            .setData(getData.getData()).build()));
+                            } else {
+                                assert (fromPath.length() > fromRoot.length());
+                                final Operations.Requests.Create create = Operations.Requests.create()
+                                        .setMode(CreateMode.PERSISTENT)
+                                        .setPath(fromPath)
+                                        .setData(getData.getData());
+                                future = submit(StampedValue.valueOf(getData.getStat().getEphemeralOwner(), create));
+                            }
+                            this.pending.incrementAndGet();
+                            new Callback(zxid, future);
+                        }    
                     }
+                    return Optional.absent();
+                } else {
+                    onSuccess(this);
+                    return Optional.<ListenableFuture<Long>>of(this);
                 }
             }
 
             @Override
-            protected ListenableFuture<V> delegate() {
+            public void onSuccess(Object result) {
+                try {
+                    if (result instanceof ExecuteSnapshot.WalkSnapshotter.Walker.Callback) {
+                        @SuppressWarnings("unchecked")
+                        Callback callback = (Callback) result;
+                        try {
+                            callback.future().get();
+                            fromZxid.update(callback.zxid());
+                        } catch (InterruptedException e) {
+                            throw Throwables.propagate(e);
+                        } catch (Exception e) {
+                            onFailure(e);
+                        }
+                    }
+                } finally {
+                    int pending = this.pending.decrementAndGet();
+                    assert (pending >= 0);
+                }
+                run();
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                promise.setException(t);
+            }
+            
+            @Override
+            public void run() {
+                if (isDone()) {
+                    synchronized (WalkSnapshotter.this) {
+                        if (walkers.remove(this) != null) {
+                            try {
+                                Long zxid = get();
+                                WalkSnapshotter.this.onSuccess(zxid);
+                            } catch (Exception e) {
+                                WalkSnapshotter.this.onFailure(e);
+                            }
+                        }
+                    }
+                } else {
+                    if (pending.get() == 0) {
+                        set(Long.valueOf(fromZxid.get()));
+                    }
+                }
+            }
+            
+            protected final class Callback implements Runnable {
+                
+                private final long zxid;
+                private final ListenableFuture<?> future;
+                
+                public Callback(
+                        long zxid,
+                        ListenableFuture<?> future) {
+                    this.zxid = zxid;
+                    this.future = future;
+                    future.addListener(this, MoreExecutors.directExecutor());
+                }
+                
+                public long zxid() {
+                    return zxid;
+                }
+                
+                public ListenableFuture<?> future() {
+                    return future;
+                }
+
+                @Override
+                public void run() {
+                    if (future.isDone()) {
+                        onSuccess(this);
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Processes one notification at a time, in order received.
+     */
+    protected static final class NotificationsSnapshotter<O extends Operation.ProtocolResponse<?>> extends Actors.PeekingQueuedActor<NotificationsSnapshotter<O>.Change> implements SessionListener, TaskExecutor<WatchEvent, Long> {
+
+        public static <O extends Operation.ProtocolResponse<?>> NotificationsSnapshotter<O> create(
+                final FutureCallback<Long> callback,
+                final AsyncFunction<ZNodePath,Long> walker,
+                final TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> toClient,
+                final ClientExecutor<? super Records.Request, O, SessionListener> fromClient,
+                final Logger logger) {
+            return new NotificationsSnapshotter<O>(
+                    callback, walker, toClient, fromClient, logger);
+        }
+        
+        private final FutureCallback<Long> callback;
+        private final ClientExecutor<? super Records.Request, O, SessionListener> fromClient;
+        private final TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> toClient;
+        private final AsyncFunction<ZNodePath,Long> walker;
+        private final AsyncFunction<ZNodePath,List<O>> getFromData;
+        private final AsyncFunction<ZNodePath,List<O>> getFromChildren;
+        
+        @SuppressWarnings("unchecked")
+        protected NotificationsSnapshotter(
+                final FutureCallback<Long> callback,
+                final AsyncFunction<ZNodePath,Long> walker,
+                final TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> toClient,
+                final ClientExecutor<? super Records.Request, O, SessionListener> fromClient,
+                final Logger logger) {
+            super(Queues.<Change>newConcurrentLinkedQueue(), logger);
+            this.callback = callback;
+            this.walker = walker;
+            this.toClient = toClient;
+            this.fromClient = fromClient;
+            this.getFromData = new AsyncFunction<ZNodePath,List<O>>() {
+                final PathToQuery<?,O> query = PathToQuery.forRequests(
+                    fromClient, 
+                    Operations.Requests.sync(),
+                    Operations.Requests.getData().setWatch(true));
+                @Override
+                public ListenableFuture<List<O>> apply(ZNodePath input) {
+                    return Futures.allAsList(query.apply(input).call());
+                }
+            };
+            this.getFromChildren = new AsyncFunction<ZNodePath,List<O>>() {
+                final PathToQuery<?,O> query = PathToQuery.forRequests(
+                        fromClient, 
+                        Operations.Requests.sync(),
+                        Operations.Requests.getChildren().setWatch(true));
+                    @Override
+                    public ListenableFuture<List<O>> apply(ZNodePath input) {
+                        return Futures.allAsList(query.apply(input).call());
+                    }
+                };
+        }
+        
+        public boolean isEmpty() {
+            return mailbox.isEmpty();
+        }
+
+        @Override
+        public ListenableFuture<Long> submit(WatchEvent request) {
+            Change task;
+            switch (request.getEventType()) {
+            case NodeChildrenChanged:
+            {
+                task = new NodeChildrenChanged(request.getPath());
+                break;
+            }
+            case NodeDataChanged:
+            {
+                task = new NodeDataChanged(request.getPath());
+                break;
+            }
+            case NodeCreated:
+            {
+                task = new NodeCreated(request.getPath());
+                break;
+            }
+            case NodeDeleted:
+            {
+                task = new NodeDeleted(request.getPath());
+                break;
+            }
+            default:
+                return null;
+            }
+            if (!send(task)) {
+                throw new RejectedExecutionException();
+            }
+            return task;
+        }
+        
+        @Override
+        public void handleAutomatonTransition(
+                Automaton.Transition<ProtocolState> transition) {
+            // TODO
+        }
+    
+        @Override
+        public void handleNotification(
+                Operation.ProtocolResponse<IWatcherEvent> notification) {
+            try {
+                submit(WatchEvent.fromRecord(notification.record()));
+            } catch (RejectedExecutionException e) {
+            }
+        }
+
+        @Override
+        protected boolean doSend(Change message) {
+            boolean sent = super.doSend(message);
+            if (sent) {
+                message.addListener(this, MoreExecutors.directExecutor());
+            }
+            return sent;
+        }
+        
+        @Override
+        protected boolean apply(Change input) throws Exception {
+            if (input.isDone()) {
+                if (mailbox.remove(input)) {
+                    Long zxid = input.get();
+                    if (mailbox.isEmpty()) {
+                        callback.onSuccess(zxid);
+                    }
+                    return true;
+                }
+            } else {
+                input.run();
+            }
+            return false;
+        }
+        
+        @Override
+        protected void doStop() {
+            fromClient.unsubscribe(this);
+            ListenableFuture<?> next;
+            while ((next = mailbox.poll()) != null) {
+                next.cancel(false);
+            }
+        }
+        
+        protected abstract class Change extends ToStringListenableFuture<Long> implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain.FutureListChain<ListenableFuture<?>>>, Runnable {
+
+            protected final ZNodePath fromPath;
+            protected final ChainedFutures.ChainedFuturesTask<Long> delegate;
+            
+            protected Change(
+                    ZNodePath fromPath,
+                    ListenableFuture<?>...chain) {
+                this(fromPath, Lists.<ListenableFuture<?>>newArrayList
+                        (chain));
+            }
+            
+            protected Change(
+                    ZNodePath fromPath,
+                    List<ListenableFuture<?>> chain) {
+                this.fromPath = fromPath;
+                this.delegate = 
+                        ChainedFutures.task(
+                            ChainedFutures.<Long>castLast(
+                                    ChainedFutures.apply(
+                                            this,
+                                            ChainedFutures.list(chain))));
+            }
+            
+            @Override
+            public void run() {
+                delegate.run();
+            }
+            
+            @Override
+            protected ListenableFuture<Long> delegate() {
+                return delegate;
+            }
+        }
+        
+        protected final class NodeCreated extends Change {
+        
+            protected NodeCreated(
+                    ZNodePath fromPath,
+                    ListenableFuture<?>...chain) {
+                super(fromPath, chain);
+            }
+            
+            @Override
+            public Optional<? extends ListenableFuture<?>> apply(
+                    FutureChain.FutureListChain<ListenableFuture<?>> input) throws Exception {
+                switch (input.size()) {
+                case 0:
+                {
+                    return Optional.of(walker.apply(fromPath));
+                }
+                default:
+                    break;
+                }
+                return Optional.absent();
+            }
+        }
+        
+        protected final class NodeDataChanged extends Change {
+        
+            protected NodeDataChanged(
+                    ZNodePath fromPath,
+                    ListenableFuture<?>...chain) {
+                super(fromPath, chain);
+            }
+            
+            @SuppressWarnings("unchecked")
+            @Override
+            public Optional<? extends ListenableFuture<?>> apply(
+                    FutureChain.FutureListChain<ListenableFuture<?>> input) throws Exception {
+                switch (input.size()) {
+                case 0:
+                {
+                    return Optional.of(getFromData.apply(fromPath));
+                }
+                case 1:
+                {
+                    O response = (O) ((List<?>) input.getLast().get()).get(1);
+                    ListenableFuture<Long> future;
+                    if (!Operations.maybeError(response.record(), KeeperException.Code.NONODE).isPresent()) {
+                        final IGetDataResponse getData = (IGetDataResponse) response.record();
+                        future = Futures.transform(
+                                UnlessSequentialError.create(
+                                        toClient.submit(
+                                                StampedValue.valueOf(
+                                                    Stats.CreateStat.ephemeralOwnerNone(),
+                                                    Operations.Requests.setData()
+                                                    .setPath(fromPath)
+                                                    .setData(getData.getData())))), 
+                                    Functions.constant(Long.valueOf(response.zxid())));
+                    } else {
+                        NodeDeleted delegate = new NodeDeleted(
+                                fromPath, input.get(0));
+                        delegate.run();
+                        future = delegate;
+                    }
+                    return Optional.of(future);
+                }
+                default:
+                    break;
+                }
+                return Optional.absent();
+            }
+        }
+
+        protected final class NodeChildrenChanged extends Change {
+
+            protected NodeChildrenChanged(
+                    ZNodePath fromPath,
+                    ListenableFuture<?>...chain) {
+                super(fromPath, chain);
+            }
+            
+            @SuppressWarnings("unchecked")
+            @Override
+            public Optional<? extends ListenableFuture<?>> apply(
+                    FutureChain.FutureListChain<ListenableFuture<?>> input) throws Exception {
+                switch (input.size()) {
+                case 0:
+                {
+                    return Optional.of(
+                            Futures.allAsList(
+                                    getFromChildren.apply(fromPath),
+                                    Futures.allAsList(
+                                            toClient.submit(
+                                                StampedValue.valueOf(
+                                                    Stats.CreateStat.ephemeralOwnerNone(),
+                                                    Operations.Requests.sync()
+                                                    .setPath(fromPath))),
+                                            toClient.submit(
+                                                    StampedValue.valueOf(
+                                                        Stats.CreateStat.ephemeralOwnerNone(),
+                                                        Operations.Requests.getChildren()
+                                                        .setPath(fromPath))))));
+                }
+                case 1:
+                {
+                    List<?> last = (List<?>) input.getLast().get();
+                    O fromResponse = (O) ((List<?>) last.get(0)).get(1);
+                    O toResponse = (O) ((Pair<?,?>) ((List<?>) last.get(0)).get(1)).second();
+                    ListenableFuture<?> future;
+                    if (!Operations.maybeError(fromResponse.record(), KeeperException.Code.NONODE).isPresent()) {
+                        // we only create new children
+                        // because any deleted children should generate a NodeDeleted event
+                        // which we'll handle separately
+                        List<ZNodeName> toWalk = ImmutableList.of();
+                        if (!Operations.maybeError(toResponse.record(), KeeperException.Code.NONODE).isPresent()) {
+                            final List<String> fromChildren = ((Records.ChildrenGetter) fromResponse).getChildren();
+                            final Set<String> toChildren = ImmutableSet.copyOf(((Records.ChildrenGetter) toResponse).getChildren());
+                            for (String fromChild: fromChildren) {
+                                if (!toChildren.contains(fromChild)) {
+                                    if (toWalk.isEmpty()) {
+                                        toWalk = Lists.newArrayListWithCapacity(fromChildren.size());
+                                    }
+                                    toWalk.add(ZNodeLabel.fromString(fromChild));
+                                }
+                            }
+                        } else {
+                            toWalk = ImmutableList.<ZNodeName>of(EmptyZNodeLabel.getInstance());
+                        }
+                        if (toWalk.isEmpty()) {
+                            future = Futures.immediateFuture(Long.valueOf(fromResponse.zxid()));
+                        } else {
+                            List<ListenableFuture<Long>> futures = Lists.newArrayListWithCapacity(toWalk.size());
+                            for (ZNodeName name: toWalk) {
+                                futures.add(walker.apply(fromPath.join(name)));
+                            }
+                            future = Futures.allAsList(futures);
+                        }
+                    } else {
+                        if (!Operations.maybeError(toResponse.record(), KeeperException.Code.NONODE).isPresent()) {
+                            NodeDeleted delegate = new NodeDeleted(
+                                    fromPath, Futures.immediateFuture(last.get(0)));
+                            delegate.run();
+                            future = delegate;
+                        } else {
+                            future = Futures.immediateFuture(Long.valueOf(fromResponse.zxid()));
+                        }
+                    }
+                    return Optional.of(future);
+                }
+                case 2:
+                {
+                    Object last = input.getLast().get();
+                    if (last instanceof List<?>) {
+                        Long max = Long.valueOf(-1L);
+                        for (Long result: (List<Long>) last) {
+                            if (result.longValue() > max.longValue()) {
+                                max = result;
+                            }
+                        }
+                        assert (max.longValue() > 0L);
+                        return Optional.of(Futures.immediateFuture(max));
+                    }
+                }
+                default:
+                    break;
+                }
+                return Optional.absent();
+            }
+        }
+        
+        protected final class NodeDeleted extends Change {
+
+            protected NodeDeleted(
+                    ZNodePath fromPath,
+                    ListenableFuture<?>...chain) {
+                super(fromPath, chain);
+            }
+            
+            @SuppressWarnings("unchecked")
+            @Override
+            public Optional<? extends ListenableFuture<?>> apply(
+                    FutureChain.FutureListChain<ListenableFuture<?>> input) throws Exception {
+                switch (input.size()) {
+                case 0:
+                {
+                    return Optional.of(
+                            Futures.allAsList(
+                                    getFromData.apply(fromPath),
+                                    MaybeSequentialError.create(
+                                            toClient.submit(StampedValue.valueOf(
+                                                    Stats.CreateStat.ephemeralOwnerNone(),
+                                                    Operations.Requests.delete().setPath(fromPath))),
+                                            KeeperException.Code.NONODE)));
+                }
+                case 1:
+                {
+                    List<?> last = (List<?>) input.getLast().get();
+                    O fromResponse = (O) ((List<?>) last.get(0)).get(1);
+                    ListenableFuture<Long> future;
+                    if (!Operations.maybeError(fromResponse.record(), KeeperException.Code.NONODE).isPresent()) {
+                        future = walker.apply(fromPath);
+                    } else {
+                        future = Futures.immediateFuture(Long.valueOf(fromResponse.zxid()));
+                    }
+                    return Optional.of(future);
+                }
+                default:
+                    break;
+                }
+                return Optional.absent();
+            }
+        }
+    }
+    
+    protected static final class EphemeralsSnapshotter<O extends Operation.ProtocolResponse<?>> implements TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> {
+
+        public static <O extends Operation.ProtocolResponse<?>> EphemeralsSnapshotter<O> create(
+                final ZNodePath ephemeralsPrefix,
+                final ZNodePath rootPrefix,
+                final AsyncFunction<Long, Long> sessions,
+                final AsyncFunction<ZNodePath, ZNodePath> paths,
+                final TaskExecutor<? super Records.Request, O> client) {
+            return new EphemeralsSnapshotter<O>(
+                    ephemeralsPrefix,
+                    new Function<ZNodePath,ZNodeLabel>() {
+                        @Override
+                        public ZNodeLabel apply(ZNodePath input) {
+                            return ZNodeLabel.fromString(EscapedConverter.getInstance().convert(
+                                            input.suffix(rootPrefix).toString()));
+                        }
+                    },
+                    sessions, 
+                    paths, 
+                    client);
+        }
+        
+        protected final TaskExecutor<? super Records.Request, O> client;
+        protected final AsyncFunction<ZNodePath, ZNodePath> paths;
+        protected final Function<ZNodePath,ZNodeLabel> labelOf;
+        protected final SessionPrefix sessionPrefix;
+        protected final ConcurrentMap<Long, SessionEphemeralSnapshotter> ephemerals;
+        protected final Logger logger;
+        
+        protected EphemeralsSnapshotter(
+                final ZNodePath ephemeralsPrefix,
+                final Function<ZNodePath,ZNodeLabel> labelOf,
+                final AsyncFunction<Long, Long> sessions,
+                final AsyncFunction<ZNodePath, ZNodePath> paths,
+                final TaskExecutor<? super Records.Request, O> client) {
+            this.labelOf = labelOf;
+            this.client = client;
+            this.paths = paths;
+            this.sessionPrefix = new SessionPrefix(ephemeralsPrefix, sessions);
+            this.ephemerals = new MapMaker().makeMap();
+            this.logger = LogManager.getLogger(this);
+        }
+        
+        @Override
+        public ListenableFuture<Pair<ZNodePath,O>> submit(StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>> request) {
+            Long session = Long.valueOf(request.stamp());
+            SessionEphemeralSnapshotter ephemeral = ephemerals.get(session);
+            if (ephemeral == null) {
+                ListenableFuture<ZNodePath> prefix = sessionPrefix.submit(Long.valueOf(
+                        session));
+                ephemeral = new SessionEphemeralSnapshotter(session, prefix);
+                if (ephemerals.putIfAbsent(session, ephemeral) != null) {
+                    return submit(request);
+                }
+            }
+            return ephemeral.submit(request.get());
+        }
+        
+        public void stop() {
+            for (SessionEphemeralSnapshotter v: Iterables.consumingIterable(ephemerals.values())) {
+                v.stop();
+            }
+        }
+        
+        protected final class SessionPrefix implements TaskExecutor<Long, ZNodePath>, Function<Long, ZNodePath> {
+
+            protected final AsyncFunction<Long, Long> sessions;
+            protected final ZNodePath prefix;
+            
+            public SessionPrefix(
+                    ZNodePath prefix,
+                    AsyncFunction<Long, Long> sessions) {
+                this.prefix = prefix;
+                this.sessions = sessions;
+            }
+            
+            @Override
+            public ListenableFuture<ZNodePath> submit(Long request) {
+                try {
+                    return Futures.transform(sessions.apply(request), this);
+                } catch (Exception e) {
+                    return Futures.immediateFailedFuture(e);
+                }
+            }
+            
+            @Override
+            public ZNodePath apply(Long input) {
+                if (input == null) {
+                    return null;
+                }
+                final ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.labelOf(input.longValue()));
+                client.submit(Operations.Requests.create().setPath(path).build());
+                return path;
+            }
+        }
+        
+        protected final class SessionEphemeralSnapshotter extends ListenableFutureActor<Operations.PathBuilder<? extends Records.Request,?>,Pair<ZNodePath,O>,EphemeralSnapshotOperation> {
+            
+            protected final Long session;
+            protected final ListenableFuture<ZNodePath> prefix;
+            protected final ClassToInstanceMap<Operations.PathBuilder<? extends Records.Request,?>> operations;
+
+            protected SessionEphemeralSnapshotter(
+                    Long session,
+                    ListenableFuture<ZNodePath> prefix) {
+                super(Queues.<EphemeralSnapshotOperation>newConcurrentLinkedQueue(), 
+                        EphemeralsSnapshotter.this.logger);
+                this.session = session;
+                this.prefix = prefix;
+                this.operations = ImmutableClassToInstanceMap.<Operations.PathBuilder<? extends Records.Request,?>>builder()
+                        .put(Operations.Requests.Create.class, Operations.Requests.create())
+                        .put(Operations.Requests.Delete.class, Operations.Requests.delete())
+                        .put(Operations.Requests.SetData.class, Operations.Requests.setData())
+                        .build();
+                prefix.addListener(this, MoreExecutors.directExecutor());
+            }
+
+            @Override
+            public boolean isReady() {
+                return prefix.isDone() && super.isReady();
+            }
+
+            @Override
+            public ListenableFuture<Pair<ZNodePath,O>> submit(Operations.PathBuilder<? extends Records.Request,?> request) {
+                final Operations.PathBuilder<? extends Records.Request, ?> operation = operations.get(request.getClass());
+                checkArgument(operation != null);
+                ListenableFuture<ZNodePath> future;
+                try {
+                    future = paths.apply(request.getPath());
+                } catch (Exception e) {
+                    future = Futures.immediateFailedFuture(e);
+                }
+                final Promise<Pair<ZNodePath,O>> promise = SettableFuturePromise.create();
+                final EphemeralSnapshotOperation task = new EphemeralSnapshotOperation(request, operation, future, promise);
+                if (!send(task)) {
+                    throw new RejectedExecutionException();
+                }
+                return promise;
+            }
+
+            @Override
+            public void run() {
+                super.run();
+                if (prefix.isDone() && mailbox.isEmpty()) {
+                    try {
+                        if (prefix.get() == null) {
+                            ephemerals.remove(session, this);
+                        }
+                    } catch (Exception e) {
+                    }
+                }
+            }
+            
+            @Override
+            protected boolean doApply(EphemeralSnapshotOperation input)
+                    throws Exception {
+                if (prefix.isCancelled()) {
+                    input.promise.cancel(false);
+                    return true;
+                }
+                ZNodePath prefix;
+                try {
+                    prefix = this.prefix.get();
+                } catch (Exception e) {
+                    input.promise.setException(e);
+                    return true;
+                }
+                if (prefix == null) {
+                    // session expired
+                    input.promise.set(null);
+                    return true;
+                }
+                try {
+                    ZNodePath path = input.get();
+                    if (input.operation instanceof Operations.DataBuilder<?,?>) {
+                        Operations.Requests.Create create;
+                        if (input.request instanceof Operations.Requests.Create) {
+                            create = (Operations.Requests.Create) input.request;
+                            create.setMode(create.getMode().ephemeral());
+                        } else {
+                            create = Operations.Requests.create()
+                                    .setMode(CreateMode.EPHEMERAL)
+                                    .setData(((Operations.Requests.SetData) input.request).getData());
+                        }
+                        Optional<? extends Sequential<String,?>> sequential = Sequential.maybeFromString(path.label().toString());
+                        if (sequential.isPresent()) {
+                            create.setMode(create.getMode().sequential())
+                            .setPath(((AbsoluteZNodePath) path).parent().join(ZNodeLabel.fromString(sequential.get().prefix())));
+                        } else {
+                            create.setPath(path);
+                        }
+                        ByteBufOutputArchive buf = new ByteBufOutputArchive(Unpooled.buffer());
+                        Records.Requests.serialize(create.build(), buf);
+                        ((Operations.DataBuilder<?,?>) input.operation).setData(buf.get().array());
+                    }
+                    Callback.create(
+                            client.submit(
+                                    input.operation.setPath(prefix.join(labelOf.apply(path))).build()), 
+                            PromiseTask.of(path, input.promise));
+                } catch (Exception e) {
+                    input.promise.setException(e);
+                } finally {
+                    input.operation.setPath(prefix);
+                    if (input.operation instanceof Operations.DataBuilder<?,?>) {
+                        ((Operations.DataBuilder<?,?>) input.operation).setData(new byte[0]);
+                    }
+                }
+                return true;
+            }
+            
+            @Override
+            protected void doStop() {
+                EphemeralSnapshotOperation next;
+                while ((next = mailbox.poll()) != null) {
+                    next.promise.cancel(false);
+                }
+            }
+        }
+        
+        protected final class EphemeralSnapshotOperation extends ToStringListenableFuture<ZNodePath> {
+ 
+            protected final Operations.PathBuilder<? extends Records.Request,?> request;
+            protected final Operations.PathBuilder<? extends Records.Request,?> operation;
+            protected final ListenableFuture<ZNodePath> future;
+            protected final Promise<Pair<ZNodePath,O>> promise;
+            
+            protected EphemeralSnapshotOperation(
+                    Operations.PathBuilder<? extends Records.Request,?> request,
+                    Operations.PathBuilder<? extends Records.Request,?> operation,
+                    ListenableFuture<ZNodePath> future,
+                    Promise<Pair<ZNodePath,O>> promise) {
+                this.request = request;
+                this.future = future;
+                this.operation = operation;
+                this.promise = promise;
+            }
+            
+            @Override
+            protected ListenableFuture<ZNodePath> delegate() {
                 return future;
             }
         }
         
-        protected final class ToClient extends SubmitActor<Records.Request, O> {
+        protected static final class Callback<T, O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<O> implements Runnable {
 
-            public ToClient() {
-                super(toClient,
-                        Queues.<SubmittedRequest<Records.Request,O>>newConcurrentLinkedQueue(),
-                        LogManager.getLogger(ToClient.class));
+            public static <T,O extends Operation.ProtocolResponse<?>> Callback<T,O> create(
+                    ListenableFuture<O> future,
+                    PromiseTask<T,Pair<T,O>> promise) {
+                Callback<T,O> callback = new Callback<T,O>(future, promise);
+                future.addListener(callback, MoreExecutors.directExecutor());
+                return callback;
             }
             
-            public boolean isEmpty() {
-                return mailbox.isEmpty();
+            private final PromiseTask<T,Pair<T,O>> promise;
+            
+            protected Callback(
+                    ListenableFuture<O> future,
+                    PromiseTask<T,Pair<T,O>> promise) {
+                super(future);
+                this.promise = promise;
             }
             
             @Override
             public void run() {
-                super.run();
-            }
-            
-            @Override
-            protected boolean doApply(SubmittedRequest<Records.Request, O> input) throws Exception {
-                synchronized (WalkerProcessor.this) {
-                    O response = input.get();
-                    if (input.getValue() instanceof ICreateRequest) {
-                        ICreateRequest request = (ICreateRequest) input.getValue();
-                        Optional<Operation.Error> error = Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS);
-                        if (CreateMode.valueOf(request.getFlags()) == CreateMode.PERSISTENT_SEQUENTIAL) {
-                            if (!error.isPresent()) {
-                                paths.add(ZNodePath.fromString(request.getPath()), ZNodePath.fromString(((ICreateResponse) response.record()).getPath()));
-                            } else {
-                                // TODO
-                                throw new UnsupportedOperationException();
-                            }
-                        }
-                    } else if (input.getValue() instanceof IDeleteRequest) {
-                        Operations.maybeError(response.record(), KeeperException.Code.NONODE);
+                if (isDone() && !promise.isDone()) {
+                    if (isCancelled()) {
+                        promise.cancel(false);
                     } else {
-                        // TODO
-                    }
-                    if (isEmpty()) {
-                        WalkerProcessor.this.run();
-                    }
-                }
-                return true;
-            }
-        }
-        
-        protected final class EphemeralZNodeLookups extends RunOnEmptyActor<StampedValue<ZNode>, Long, ValueFuture<StampedValue<ZNode>,Long,?>> {
-
-            protected final ZNodePath prefix;
-            protected final Function<ZNodePath,ZNodeLabel> labelOf;
-            
-            public EphemeralZNodeLookups(
-                    ZNodePath prefix,
-                    Function<ZNodePath,ZNodeLabel> labelOf) {
-                super(WalkerProcessor.this,
-                        Queues.<ValueFuture<StampedValue<ZNode>,Long,?>>newConcurrentLinkedQueue(),
-                        LogManager.getLogger(EphemeralZNodeLookups.class));
-                this.prefix = prefix;
-                this.labelOf = labelOf;
-            }
-
-            @Override
-            public ListenableFuture<Long> submit(StampedValue<ZNode> value) {
-                ListenableFuture<Long> future;
-                try {
-                    future = sessions.apply(
-                            Long.valueOf(
-                                    value.get().getStat().getEphemeralOwner()));
-                } catch (Exception e) {
-                    future = Futures.immediateFailedFuture(e);
-                }
-                ValueFuture<StampedValue<ZNode>, Long, ?> lookup =  ValueFuture.create(
-                        value, future);
-                if (!send(lookup)) {
-                    lookup.cancel(false);
-                }
-                return lookup;
-            }
-            
-            @Override
-            protected boolean doApply(ValueFuture<StampedValue<ZNode>, Long, ?> input) throws Exception {
-                Long session = input.get();
-                if (session == null) {
-                    return true;
-                }
-                ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.labelOf(session.longValue()));
-                WalkerProcessor.this.submit(Pair.create(Optional.<Long>absent(), Operations.Requests.create().setPath(path).build()));
-                path = path.join(
-                        labelOf.apply(input.getValue().get().getCreate().getPath()));
-                ByteBufOutputArchive buf = new ByteBufOutputArchive(Unpooled.buffer());
-                Records.Requests.serialize(input.getValue().get().getCreate().build(), buf);
-                WalkerProcessor.this.submit(Pair.create(
-                        Optional.of(Long.valueOf(input.getValue().stamp())), 
-                        Operations.Requests.create().setPath(path).setData(buf.get().array()).build()));
-                return true;
-            }
-        }
-        
-        protected final class FromListener implements SessionListener, Runnable {
-        
-            protected final Set<Change<?>> changes;
-            
-            public FromListener() {
-                this.changes = Sets.newHashSet();
-                fromClient.subscribe(this);
-                WalkerProcessor.this.addListener(this, MoreExecutors.directExecutor());
-            }
-            
-            public boolean isEmpty() {
-                synchronized (WalkerProcessor.this) {
-                    return changes.isEmpty();
-                }
-            }
-            
-            @Override
-            public void handleAutomatonTransition(
-                    Automaton.Transition<ProtocolState> transition) {
-                // TODO Auto-generated method stub
-            }
-        
-            @Override
-            public void handleNotification(
-                    Operation.ProtocolResponse<IWatcherEvent> notification) {
-                synchronized (WalkerProcessor.this) {
-                    Optional<? extends Change<?>> change = Optional.absent();
-                    switch (Watcher.Event.EventType.fromInt(notification.record().getType())) {
-                    case NodeChildrenChanged:
-                    {
-                        ZNodePath path = ZNodePath.fromString(notification.record().getPath());
-                        change = Optional.of(new ChildrenCreated(path));
-                        break;
-                    }
-                    case NodeDataChanged:
-                    {
-                        ZNodePath path = ZNodePath.fromString(notification.record().getPath());
-                        change = Optional.of(new DataChanged(path));
-                        break;
-                    }
-                    case NodeDeleted:
-                    {
-                        ZNodePath path = ZNodePath.fromString(notification.record().getPath());
-                        if (path.length() == fromRoot.length()) {
-                            // root must exist
-                            WalkerProcessor.this.promise.setException(
-                                    new KeeperException.NoNodeException(path.toString()));
+                        try {
+                            O response = get();
+                            Operations.unlessError(response.record());
+                            promise.set(Pair.create(promise.task(), response));
+                        } catch (Exception e) {
+                            promise.setException(e);
                         }
-                        WalkerProcessor.this.submit(
-                                Pair.create(
-                                        Optional.<Long>absent(),
-                                        Operations.Requests.delete().setPath(
-                                                paths.apply(path)).build()));
-                        break;
-                    }
-                    default:
-                        break;
-                    }
-                    if (change != null) {
-                        changes.add(change.get());
-                        change.get().addListener(change.get(), MoreExecutors.directExecutor());
                     }
                 }
             }
+        }
+    }
+
+    protected static final class UnlessError<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<O> implements Callable<Optional<O>> {
+
+        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<O> create(ListenableFuture<O> future) {
+            return CallablePromiseTask.listen(new UnlessError<O>(future), SettableFuturePromise.<O>create());
+        }
         
+        protected UnlessError(ListenableFuture<O> delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public Optional<O> call() throws Exception {
+            if (isDone()) {
+                O response = get();
+                Operations.unlessError(response.record());
+                return Optional.of(response);
+            }
+            return Optional.absent();
+        }
+    }
+    
+    protected static final class GetFirst<T> implements Function<Pair<? extends T,?>,T> {
+
+        public GetFirst() {}
+        
+        @Override
+        public T apply(Pair<? extends T, ?> input) {
+            return input.first();
+        }
+    }
+    
+    protected static final class GetSecond<T> implements Function<Pair<?,? extends T>,T> {
+
+        public GetSecond() {}
+        
+        @Override
+        public T apply(Pair<?,? extends T> input) {
+            return input.second();
+        }
+    }
+    
+    protected static final class MaybeSequentialError<T,O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<Pair<T,O>> implements Callable<Optional<Pair<T,O>>> {
+        
+        public static <T,O extends Operation.ProtocolResponse<?>> ListenableFuture<Pair<T,O>> create(
+                ListenableFuture<Pair<T,O>> delegate,
+                KeeperException.Code...codes) {
+            return CallablePromiseTask.listen(new MaybeSequentialError<T,O>(codes, delegate), SettableFuturePromise.<Pair<T,O>>create());
+        }
+        
+        private final KeeperException.Code[] codes;
+        
+        protected MaybeSequentialError(
+                KeeperException.Code[] codes,
+                ListenableFuture<Pair<T,O>> delegate) {
+            super(delegate);
+            this.codes = codes;
+        }
+        
+        @Override
+        public Optional<Pair<T,O>> call() throws Exception {
+            if (isDone()) {
+                Pair<T,O> value = get();
+                Operations.maybeError(value.second().record(), codes);
+                return Optional.of(value);
+            }
+            return Optional.absent();
+        }
+    }
+    
+    protected static final class UnlessSequentialError<T,O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<Pair<T,O>> implements Callable<Optional<Pair<T,O>>> {
+        
+        public static <T,O extends Operation.ProtocolResponse<?>> ListenableFuture<Pair<T,O>> create(
+                ListenableFuture<Pair<T,O>> delegate) {
+            return CallablePromiseTask.listen(new UnlessSequentialError<T,O>(delegate), SettableFuturePromise.<Pair<T,O>>create());
+        }
+        
+        protected UnlessSequentialError(
+                ListenableFuture<Pair<T,O>> delegate) {
+            super(delegate);
+        }
+        
+        @Override
+        public Optional<Pair<T,O>> call() throws Exception {
+            if (isDone()) {
+                Pair<T,O> value = get();
+                Operations.unlessError(value.second().record());
+                return Optional.of(value);
+            }
+            return Optional.absent();
+        }
+    }
+    
+    
+    /**
+     * Interposes on requests to maintain a namespace mapping for sequential znodes.
+     */
+    protected static final class SequentialTranslator<O extends Operation.ProtocolResponse<?>> implements TaskExecutor<Operations.PathBuilder<? extends Records.Request,?>, Pair<ZNodePath,O>>, AsyncFunction<ZNodePath, ZNodePath> {
+
+        public static <O extends Operation.ProtocolResponse<?>> SequentialTranslator<O> create(
+                ZNodePath fromPrefix,
+                ZNodePath toPrefix,
+                ClientExecutor<? super Records.Request, O, SessionListener> client) {
+            return new SequentialTranslator<O>(
+                    fromPrefix,
+                    toPrefix,
+                    client);
+        }
+        
+        private final Logger logger;
+        private final ZNodePath fromPrefix;
+        private final SimpleNameTrie<ValueNode<SequentialZNode>> trie;
+        private final ClientExecutor<? super Records.Request, O, SessionListener> client;
+        
+        protected SequentialTranslator(
+                ZNodePath fromPrefix,
+                ZNodePath toPrefix,
+                ClientExecutor<? super Records.Request, O, SessionListener> client) {
+            this.logger = LogManager.getLogger(this);
+            this.fromPrefix = fromPrefix;
+            this.trie = SimpleNameTrie.forRoot(
+                            ValueNode.root(
+                                    new SequentialZNode(
+                                            Futures.immediateFuture(toPrefix))));
+            this.client = client;
+        }
+
+        @Override
+        public ListenableFuture<ZNodePath> apply(
+                final ZNodePath input) throws Exception {
+            Lookup lookup = new Lookup(input);
+            lookup.run();
+            return lookup;
+        }
+
+        @Override
+        public ListenableFuture<Pair<ZNodePath,O>> submit(Operations.PathBuilder<? extends Records.Request,?> request) {
+            RequestAction<?> action;
+            if (request instanceof Operations.Requests.Create) {
+                action = new Create((Operations.Requests.Create) request);
+            } else if (request instanceof Operations.Requests.Delete) {
+                // disallow deleting the root
+                if (request.getPath().length() == fromPrefix.length()) {
+                    throw new RejectedExecutionException(new KeeperException.NoNodeException());
+                }
+                action = new Delete((Operations.Requests.Delete) request);
+            } else if (request instanceof Operations.Requests.GetChildren) {
+                action = new GetChildren((Operations.Requests.GetChildren) request);
+            } else {
+                action = new NonCreateDelete<Operations.PathBuilder<? extends Records.Request,?>>(request);
+            }
+            action.run();
+            return action;
+        }
+        
+        protected abstract class Action<T,V> extends ForwardingPromise<V> implements Runnable {
+            
+            protected final PromiseTask<T,V> delegate;
+            protected Iterator<ZNodeName> sequences;
+            protected ValueNode<SequentialZNode> node;
+            
+            protected Action(
+                    T task) {
+                this(PromiseTask.<T,V>of(task));
+            }
+            
+            protected Action(
+                    PromiseTask<T,V> delegate) {
+                this.delegate = delegate;
+            }
+            
+            public abstract ZNodeName fromName();
+
             @Override
             public void run() {
-                synchronized (WalkerProcessor.this) {
-                    if (WalkerProcessor.this.isDone()) {
-                        fromClient.unsubscribe(this);
-                        for (Change<?> change: Iterables.consumingIterable(changes)) {
-                            change.cancel(false);
+                synchronized (trie) {
+                    while (!isDone()) {
+                        try {
+                            if (!iterate()) {
+                                break;
+                            }
+                        } catch (Exception e) {
+                            setException(e);
                         }
                     }
                 }
             }
-
             
-            protected abstract class Change<V> extends ForwardingListenableFuture<V> implements Runnable {
-
-                protected final ZNodePath fromPath;
-                protected final ZNodePath toPath;
-                
-                protected Change(
-                        ZNodePath fromPath) {
-                    this.fromPath = fromPath;
-                    this.toPath = paths.apply(fromPath);
+            public void reset() {
+                synchronized (trie) {
+                    this.node = trie.root();
+                    this.sequences = SequenceIterator.forName(fromName());
                 }
-                
-                @Override
-                public void run() {
-                    synchronized (WalkerProcessor.this) {
-                        if (isDone()) {
-                            changes.remove(this);
-                            try {
-                                doRun();
-                            } catch (Exception e) {
-                                promise.setException(e);
+            }
+            
+            protected abstract boolean iterate() throws Exception;
+            
+            @Override
+            protected PromiseTask<T,V> delegate() {
+                return delegate;
+            }
+        }
+        
+        protected final class SequentialZNode extends AbstractPair<ListenableFuture<ZNodePath>, Deque<Action<?,?>>> implements Runnable {
+        
+            protected SequentialZNode(
+                    ListenableFuture<ZNodePath> toPath) {
+                this(toPath, ImmutableList.<Action<?,?>>of());
+            }
+            
+            protected SequentialZNode(
+                    ListenableFuture<ZNodePath> toPath,
+                    Iterable<? extends Action<?,?>> dependents) {
+                super(toPath, Lists.<Action<?,?>>newLinkedList(dependents));
+            }
+            
+            public ListenableFuture<ZNodePath> toPath() {
+                return first;
+            }
+            
+            public Deque<Action<?,?>> dependents() {
+                return second;
+            }
+            
+            @Override
+            public void run() {
+                synchronized (trie) {
+                    Runnable next;
+                    while ((next = dependents().peek()) != null) {
+                        next.run();
+                        if (next == dependents().peek()) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        protected final class Lookup extends Action<ZNodePath,ZNodePath> {
+
+            protected Lookup(ZNodePath task) {
+                super(task);
+                reset();
+            }
+
+            @Override
+            public ZNodeName fromName() {
+                return delegate().task().suffix(fromPrefix);
+            }
+
+            @Override
+            protected boolean iterate() throws Exception {
+                if (!node.get().toPath().isDone() || !node.get().dependents().isEmpty()) {
+                    if (!node.get().dependents().contains(this)) {
+                        node.get().dependents().add(this);
+                        return false;
+                    }
+                    if (!node.get().toPath().isDone() || (this != node.get().dependents().peek())) {
+                        return false;
+                    } else {
+                        node.get().dependents().remove(this);
+                    }
+                }
+                ZNodePath path = node.get().toPath().get();
+                ZNodeName remaining;
+                if (sequences.hasNext()) {
+                    remaining = sequences.next();
+                    ValueNode<SequentialZNode> next = node.get(remaining);
+                    if (next != null) {
+                        node = next;
+                        return true;
+                    }
+                    if (sequences.hasNext()) {
+                        throw new KeeperException.NoNodeException();
+                    }
+                    path = path.join(remaining);
+                } else {
+                    remaining = EmptyZNodeLabel.getInstance();
+                }
+                set(path);
+                return false;
+            }
+        }
+        
+        protected abstract class RequestAction<T extends Operations.PathBuilder<? extends Records.Request,?>> extends Action<T,Pair<ZNodePath,O>> {
+            
+            protected final ZNodePath fromPath;
+            protected ListenableFuture<Pair<ZNodePath,O>> future;
+            
+            protected RequestAction(
+                    T task) {
+                super(task);
+                this.future = null;
+                this.fromPath = task.getPath();
+                reset();
+            }
+            
+            @Override
+            public ZNodeName fromName() {
+                return fromPath.suffix(fromPrefix);
+            }
+
+            @Override
+            public void run() {
+                synchronized (trie) {
+                    do {
+                        try {
+                            if (!iterate()) {
+                                break;
+                            }
+                        } catch (Exception e) {
+                            if (!isDone()) {
+                                setException(e);
                             }
                         }
-                    }
+                    } while (true);
                 }
-                
-                protected abstract void doRun() throws Exception;
+            }
+            
+            public void reset() {
+                synchronized (trie) {
+                    this.node = trie.root();
+                    this.sequences = SequenceIterator.forName(fromName());
+                }
+            }
+            
+            protected ListenableFuture<Pair<ZNodePath,O>> submit(
+                    Processor<? super O, ? extends ZNodePath> toPath) {
+                return Response.create(
+                        toPath,
+                        client.submit(delegate().task().build()),
+                        delegate());
+            }
+        }
+        
+        protected abstract class NonDelete<T extends Operations.PathBuilder<? extends Records.Request,?>> extends RequestAction<T> {
+
+            protected NonDelete(
+                    T task) {
+                super(task);
             }
 
-            protected final class ChildrenCreated extends Change<List<List<O>>> {
-
-                protected final ListenableFuture<List<List<O>>> future;
-                protected final SubmittedRequests<? extends Records.Request,O> getFromChildren;
-                protected final SubmittedRequests<? extends Records.Request,O> getToChildren;
-                
-                @SuppressWarnings("unchecked")
-                public ChildrenCreated(
-                        ZNodePath fromPath) {
-                    super(fromPath);
-                    ImmutableList<? extends Operations.PathBuilder<? extends Records.Request, ?>> builders = ImmutableList.of(
-                            Operations.Requests.sync(), Operations.Requests.getChildren().setWatch(true));
-                    ImmutableList.Builder<Records.Request> requests = ImmutableList.builder();
-                    for (Operations.PathBuilder<? extends Records.Request, ?> builder: builders) {
-                        requests.add(builder.setPath(fromPath).build());
-                    }
-                    this.getFromChildren = SubmittedRequests.submit(
-                            fromClient, requests.build());
-                    requests = ImmutableList.builder();
-                    for (Operations.PathBuilder<? extends Records.Request, ?> builder: builders) {
-                        requests.add(builder.setPath(toPath).build());
-                    }
-                    this.getToChildren = SubmittedRequests.submit(
-                            toClient, requests.build());
-                    this.future = Futures.allAsList(getFromChildren, getToChildren);
+            @Override
+            protected boolean iterate() throws Exception {
+                if (isDone()) {
+                    return false;
                 }
+                if (!node.get().toPath().isDone() || !node.get().dependents().isEmpty()) {
+                    if (!node.get().dependents().contains(this)) {
+                        node.get().dependents().add(this);
+                        return false;
+                    }
+                    if (!node.get().toPath().isDone() || (this != node.get().dependents().peek())) {
+                        return false;
+                    } else {
+                        node.get().dependents().remove(this);
+                    }
+                }
+                ZNodePath path = node.get().toPath().get();
+                ZNodeName remaining;
+                if (sequences.hasNext()) {
+                    remaining = sequences.next();
+                    ValueNode<SequentialZNode> next = node.get(remaining);
+                    if (next != null) {
+                        node = next;
+                        return true;
+                    }
+                    if (sequences.hasNext()) {
+                        throw new KeeperException.NoNodeException();
+                    }
+                    path = path.join(remaining);
+                } else {
+                    remaining = EmptyZNodeLabel.getInstance();
+                }
+                future = submit(path, remaining);
+                return false;
+            }
+            
+            protected abstract ListenableFuture<Pair<ZNodePath,O>> submit(ZNodePath path, ZNodeName remaining);
+        }
 
-                @Override
-                protected void doRun() throws Exception {
-                    final List<O> fromResponses = getFromChildren.get();
-                    final List<O> toResponses = getToChildren.get();
-                    for (int i=0; i<fromResponses.size(); ++i) {
-                        final Records.Response fromResponse = fromResponses.get(i).record();
-                        final Optional<Operation.Error> fromError = Operations.maybeError(fromResponse, KeeperException.Code.NONODE);
-                        final Records.Response toResponse = toResponses.get(i).record();
-                        final Optional<Operation.Error> toError = Operations.maybeError(fromResponse, KeeperException.Code.NONODE);
-                        if (getFromChildren.getValue().get(i).opcode() == OpCode.GET_CHILDREN) {
-                            if (fromError.isPresent()) {
-                                if (!toError.isPresent()) {
-                                    WalkerProcessor.this.submit(
-                                            Pair.create(
-                                                    Optional.of(Long.valueOf(fromResponses.get(i).zxid())),
-                                                    Operations.Requests.delete().setPath(toPath).build()));
-                                }
-                            } else {
-                                if (!toError.isPresent()) {
-                                    List<String> created = ImmutableList.of();
-                                    final Set<String> fromChildren = ImmutableSet.copyOf(((Records.ChildrenGetter) fromResponse).getChildren());
-                                    final Set<String> toChildren = ImmutableSet.copyOf(((Records.ChildrenGetter) toResponse).getChildren());
-                                    for (String fromChild: fromChildren) {
-                                        String toChild = null;
-                                        Optional<? extends Sequential<String,?>> sequential = Sequential.maybeFromString(fromChild);
-                                        if (sequential.isPresent()) {
-                                            try {
-                                                toChild = ((AbsoluteZNodePath) paths.apply(fromPath.join(ZNodeLabel.fromString(fromChild)))).label().toString();
-                                            } catch (IllegalArgumentException e) {
-                                            }
+        protected final class Create extends NonDelete<Operations.Requests.Create> {
+            
+            protected Create(Operations.Requests.Create task) {
+                super(task);
+            }
+
+            @Override
+            protected boolean iterate() throws Exception {
+                if (future != null) {
+                    if (future.isDone()) {
+                        assert (isDone());
+                        if (this == node.get().dependents().peek()) {
+                            node.get().dependents().remove(this);
+                            try {
+                                Pair<ZNodePath,O> result = future.get();
+                                Operations.unlessError(result.second().record());
+                                logger.info("Snapshotted sequential {} => {}", fromPath, result.first());
+                            } catch (Exception e) {
+                                if (node.remove()) {
+                                    Action<?,?> next;
+                                    while ((next = node.get().dependents().poll()) != null) {
+                                        if (future.isCancelled()) {
+                                            next.cancel(false);
                                         } else {
-                                            toChild = fromChild;
+                                            next.setException(e);
                                         }
-                                        if ((toChild == null) || !toChildren.contains(toChild)) {
-                                            if (created.isEmpty()) {
-                                                created = Lists.newLinkedList();
-                                            }
-                                            created.add(fromChild);
-                                        }
-                                    }
-                                    for (String child: created) {
-                                        updateZxid(
-                                                fromResponses.get(i).zxid(),
-                                                WalkerProcessor.this.walk(fromPath.join(ZNodeLabel.fromString(child))));
                                     }
                                 } else {
-                                    // TODO
-                                    throw new KeeperException.NoNodeException(toPath.toString());
+                                    throw new ConcurrentModificationException();
                                 }
                             }
                         }
                     }
+                    return false;
                 }
-
-                @Override
-                protected ListenableFuture<List<List<O>>> delegate() {
-                    return future;
-                }
+                return super.iterate();
             }
             
-            protected final class DataChanged extends Change<List<O>> {
-                
-                protected final SubmittedRequests<? extends Records.Request,O> getData;
-                
-                public DataChanged(
-                        ZNodePath fromPath) {
-                    super(fromPath);
-                    ImmutableList<? extends Operations.PathBuilder<? extends Records.Request, ?>> builders = ImmutableList.of(
-                            Operations.Requests.sync(), Operations.Requests.getData().setWatch(true));
-                    ImmutableList.Builder<Records.Request> requests = ImmutableList.builder();
-                    for (Operations.PathBuilder<? extends Records.Request, ?> builder: builders) {
-                        requests.add(builder.setPath(fromPath).build());
-                    }
-                    this.getData = SubmittedRequests.submit(
-                            fromClient, requests.build());
+            @Override
+            protected ListenableFuture<Pair<ZNodePath,O>> submit(ZNodePath path, ZNodeName remaining) {
+                if (remaining instanceof EmptyZNodeLabel) {
+                    // Note that we don't check that the mode, owner, or data
+                    // is what it's supposed to be
+                    return Futures.immediateFuture(Pair.create(path, (O) null));
                 }
-                
-                @Override
-                protected void doRun() throws Exception {
-                    Pair<Optional<Long>,? extends Records.Request> request = null;
-                    List<O> responses = getData.get();
-                    for (int i=0; i<responses.size(); ++i) {
-                        final Records.Response response = responses.get(i).record();
-                        final Optional<Operation.Error> error = Operations.maybeError(response, KeeperException.Code.NONODE);
-                        if (getData.getValue().get(i).opcode() == OpCode.GET_DATA) {
-                            Operations.PathBuilder<? extends Records.Request, ?> record;
-                            if (!error.isPresent()) {
-                                record = Operations.Requests.setData().setData(((Records.DataGetter) response).getData());
-                            } else {
-                                record = Operations.Requests.delete();
-                            }
-                            request = Pair.create(
-                                    Optional.of(Long.valueOf(responses.get(i).zxid())),
-                                    record.setPath(toPath).build());
-                        }
-                    }
-                    assert (request != null);
-                    // TODO check for error?
-                    WalkerProcessor.this.submit(request);
-                }
-
-                @Override
-                protected ListenableFuture<List<O>> delegate() {
-                    return getData;
-                }
-            }
-        }
-    }
-    
-    public static final class ZNode extends AbstractPair<Operations.Requests.Create, Records.ZNodeStatGetter> {
-
-        public static ZNode create(Operations.Requests.Create create, Records.ZNodeStatGetter stat) {
-            return new ZNode(create, stat);
-        }
-        
-        protected ZNode(Operations.Requests.Create create, Records.ZNodeStatGetter stat) {
-            super(create, stat);
-        }
-        
-        public Operations.Requests.Create getCreate() {
-            return first;
-        }
-        
-        public Records.ZNodeStatGetter getStat() {
-            return second;
-        }
-    }
-    
-    protected static final class PathTranslator extends PrefixTranslator {
-
-        public static PathTranslator empty(
-                ZNodePath fromPrefix, 
-                ZNodePath toPrefix) {
-            return new PathTranslator(
-                    SimpleNameTrie.forRoot(ValueNode.<ZNodeName>root(EmptyZNodeLabel.getInstance())),
-                    fromPrefix,
-                    toPrefix);
-        }
-        
-        private final SimpleNameTrie<ValueNode<ZNodeName>> trie;
-        
-        protected PathTranslator(
-                SimpleNameTrie<ValueNode<ZNodeName>> trie,
-                ZNodePath fromPrefix, 
-                ZNodePath toPrefix) {
-            super(fromPrefix, toPrefix);
-            this.trie = trie;
-        }
-        
-        public SimpleNameTrie<ValueNode<ZNodeName>> trie() {
-            return trie;
-        }
-        
-        public boolean add(ZNodePath from, ZNodePath to) {
-            checkArgument(Sequential.maybeFromString(((AbsoluteZNodePath) from).label()).isPresent());
-            checkArgument(Sequential.maybeFromString(((AbsoluteZNodePath) to).label()).isPresent());
-            ValueNode<ZNodeName> node = trie.root();
-            Iterator<ZNodeName> fromPrefixes = SequenceIterator.forName(from);
-            Iterator<ZNodeName> toPrefixes = SequenceIterator.forName(to);
-            boolean updated = false;
-            while (fromPrefixes.hasNext()) {
-                ZNodeName fromPrefix = fromPrefixes.next();
-                ZNodeName toPrefix = toPrefixes.next();
-                ValueNode<ZNodeName> next = node.get(fromPrefix);
-                if (next == null) {
-                    next = ValueNode.child(toPrefix, fromPrefix, node);
-                    node.put(fromPrefix, next);
-                    if (!fromPrefixes.hasNext()) {
-                        updated = true;
-                    }
+                Operations.Requests.Create create = delegate().task();
+                Optional<? extends Sequential<String,?>> sequential = Sequential.maybeFromString(path.label().toString());
+                ListenableFuture<Pair<ZNodePath,O>> future;
+                if (sequential.isPresent()) {
+                    create.setMode(create.getMode().sequential());
+                    create.setPath((((AbsoluteZNodePath) path).parent().join(ZNodeLabel.fromString(sequential.get().prefix()))));
+                    future = submit(FromPathGetter.create(path));
+                    final SequentialZNode znode = new SequentialZNode(
+                            Futures.transform(future, GET_PATH),
+                            ImmutableList.of(this));
+                    final ValueNode<SequentialZNode> child = ValueNode.child(
+                                    znode, 
+                                    remaining, 
+                                    node);
+                    node.put(remaining, child);
+                    node = child;
+                    znode.toPath().addListener(znode, MoreExecutors.directExecutor());
                 } else {
-                    checkArgument(fromPrefix.equals(toPrefix));
+                    create.setPath(path);
+                    future = submit(FromPathGetter.create(path));
                 }
+                return future;
             }
-            return updated;
         }
         
-        @Override
-        public String toString() {
-            return MoreObjects.toStringHelper(this).addValue(super.toString()).addValue(trie).toString();
-        }
-
-        @Override
-        protected ZNodePath join(ZNodeName remaining) {
-            ValueNode<ZNodeName> node = trie.root();
-            Iterator<ZNodeName> prefixes = SequenceIterator.forName(remaining);
-            List<String> names = Lists.newLinkedList();
-            while (prefixes.hasNext()) {
-                final ZNodeName next = prefixes.next();
-                node = node.get(next);
-                final String name;
-                if (node != null) {
-                    name = node.get().toString();
-                } else {
-                    checkArgument(!prefixes.hasNext(), String.valueOf(next));
-                    name = next.toString();
-                }
-                names.add(name);
-            }
-            return super.join(ZNodeName.fromString(ZNodeLabelVector.join(names.iterator())));
-        }
+        protected class NonCreateDelete<T extends Operations.PathBuilder<? extends Records.Request,?>> extends NonDelete<T> {
         
-        public static final class SequenceIterator extends AbstractIterator<ZNodeName> {
-
-            public static SequenceIterator forName(ZNodeName name) {
-                final Iterator<ZNodeLabel> labels;
-                if (name instanceof EmptyZNodeLabel) {
-                    labels = ImmutableSet.<ZNodeLabel>of().iterator();
-                } else if (name instanceof ZNodeLabel) {
-                    labels = Iterators.singletonIterator((ZNodeLabel) name);
-                } else {
-                    labels = ((RelativeZNodePath) name).iterator();
-                }
-                return forLabels(labels);
-            }
-            
-            public static SequenceIterator forLabels(Iterator<ZNodeLabel> labels) {
-                return new SequenceIterator(labels);
-            }
-            
-            private final Iterator<ZNodeLabel> labels;
-
-            private SequenceIterator(Iterator<ZNodeLabel> labels) {
-                this.labels = labels;
+            protected NonCreateDelete(
+                    T task) {
+                super(task);
             }
 
             @Override
-            protected ZNodeName computeNext() {
-                if (!labels.hasNext()) {
-                    return endOfData();
-                } else {
-                    List<String> next = Lists.newLinkedList();
-                    Optional<? extends Sequential<String,?>> sequential;
-                    do {
-                        String label = labels.next().toString();
-                        next.add(label);
-                        sequential = Sequential.maybeFromString(label);
-                    } while (labels.hasNext() && !sequential.isPresent());
-                    return ZNodeName.fromString((next.size() == 1) ? Iterables.getOnlyElement(next) : ZNodeLabelVector.join(next.iterator()));
+            protected boolean iterate() throws Exception {
+                if (future != null) {
+                    return false;
                 }
+                return super.iterate();
+            }
+            
+            @Override
+            protected ListenableFuture<Pair<ZNodePath,O>> submit(ZNodePath path, ZNodeName remaining) {
+                delegate().task().setPath(path);
+                return submit(Processors.constant(path));
+            }
+        }
+        
+        protected final class GetChildren extends NonCreateDelete<Operations.Requests.GetChildren> {
+        
+            protected GetChildren(
+                    Operations.Requests.GetChildren task) {
+                super(task);
+            }
+            
+            @Override
+            protected ListenableFuture<Pair<ZNodePath,O>> submit(ZNodePath path, ZNodeName remaining) {
+                final ZNodeName fromName = fromName();
+                return Futures.transform(super.submit(path, remaining), new ChildrenTranslator(fromName));
+            }
+            
+            protected final class ChildrenTranslator implements Function<Pair<ZNodePath,O>,Pair<ZNodePath,O>> {
+                
+                private final ZNodeName fromName;
+                
+                protected ChildrenTranslator(
+                        ZNodeName fromName) {
+                    this.fromName = fromName;
+                }
+
+                @Override
+                public Pair<ZNodePath, O> apply(Pair<ZNodePath, O> input) {
+                    if (input.second().record() instanceof Records.ChildrenGetter) {
+                        synchronized (trie) {
+                            ValueNode<SequentialZNode> node = trie.root();
+                            Iterator<ZNodeName> sequences = SequenceIterator.forName(fromName);
+                            ZNodeName name;
+                            do {
+                                name = sequences.next();
+                                ValueNode<SequentialZNode> next = node.get(name);
+                                if (next != null) {
+                                    node = next;
+                                    name = EmptyZNodeLabel.getInstance();
+                                } else {
+                                    break;
+                                }
+                            } while (sequences.hasNext());
+
+                            // TODO should we check for deleted children?
+                            
+                            Map<String, String> fromLabels = ImmutableMap.of();
+                            for (Map.Entry<ZNodeName, ValueNode<SequentialZNode>> entry: node.entrySet()) {
+                                Optional<ZNodeLabel> label = Optional.absent();
+                                if (name instanceof EmptyZNodeLabel) { 
+                                    if (entry.getKey() instanceof ZNodeLabel) {
+                                        label = Optional.of((ZNodeLabel) entry.getKey());
+                                    }
+                                } else {
+                                    if (entry.getKey().startsWith(name)) {
+                                        ZNodeName remaining = ((RelativeZNodePath) entry.getKey()).suffix(name.length());
+                                        if (remaining instanceof ZNodeLabel) {
+                                            label = Optional.of((ZNodeLabel) remaining);
+                                        } else {
+                                            assert (! (remaining instanceof EmptyZNodeLabel));
+                                        }
+                                    }
+                                }
+                                if (label.isPresent()) {
+                                    if (fromLabels.isEmpty()) {
+                                        fromLabels = Maps.newHashMapWithExpectedSize(node.size());
+                                    }
+                                    assert (entry.getValue().get().toPath().isDone());
+                                    try {
+                                        fromLabels.put(entry.getValue().get().toPath().get(0L, TimeUnit.SECONDS).label().toString(), label.get().toString());
+                                    } catch (Exception e) {
+                                        throw new UnsupportedOperationException(e);
+                                    }
+                                }
+                            }
+
+                            // This is not ideal, but we break the layers of abstraction
+                            // by assuming that the underlying record list is mutable
+                            // instead of creating a new record
+                            // we do this because O is a type parameter and so
+                            // not instantiable
+                            List<String> children = ((Records.ChildrenGetter) input.second().record()).getChildren();
+                            ListIterator<String> itr = children.listIterator();
+                            while (itr.hasNext()) {
+                                String child = itr.next();
+                                String translated = fromLabels.get(child);
+                                if (translated != null) {
+                                    itr.set(translated);
+                                }
+                            }
+                        }
+                    }
+                    return input;
+                }
+            }
+        }
+
+        protected final class Delete extends RequestAction<Operations.Requests.Delete> {
+
+            protected Delete(Operations.Requests.Delete task) {
+                super(task);
+            }
+            
+            @Override
+            protected boolean iterate() throws Exception {
+                if (future != null) {
+                    if (future.isDone()) {
+                        assert (isDone());
+                        if (this == node.get().dependents().peek()) {
+                            node.get().dependents().remove(this);
+                            try {
+                                Pair<ZNodePath,O> result = future.get();
+                                Operations.maybeError(result.second().record(), KeeperException.Code.NONODE);
+                                if (node.remove()) {
+                                    Action<?,?> next;
+                                    while ((next = node.get().dependents().poll()) != null) {
+                                        next.reset();
+                                        next.run();
+                                    }
+                                    node.parent().get().get().run();
+                                } else {
+                                    throw new ConcurrentModificationException();
+                                }
+                            } finally {
+                                node.get().run();
+                            }
+                        }
+                    }
+                    return false;
+                }
+                if (!node.get().toPath().isDone() || !node.get().dependents().isEmpty()) {
+                    if (!node.get().dependents().contains(this)) {
+                        node.get().dependents().add(this);
+                        return false;
+                    }
+                    if (!node.get().toPath().isDone() || (this != node.get().dependents().peek())) {
+                        return false;
+                    }
+                }
+                ZNodePath path = node.get().toPath().get();
+                if (sequences.hasNext()) {
+                    ZNodeName name = sequences.next();
+                    ValueNode<SequentialZNode> next = node.get(name);
+                    if (next != null) {
+                        if (this == node.get().dependents().peek()) {
+                            node.get().dependents().remove(this);
+                        }
+                        node = next;
+                        return true;
+                    }
+                    if (sequences.hasNext()) {
+                        throw new KeeperException.NoNodeException();
+                    }
+                    for (ZNodeName k: node.keySet()) {
+                        if (k.startsWith(name)) {
+                            if (!node.get().dependents().contains(this)) {
+                                node.get().dependents().add(this);
+                            }
+                            sequences = ImmutableList.of(name).iterator();
+                            return false;
+                        }
+                    }
+                    if (this == node.get().dependents().peek()) {
+                        node.get().dependents().remove(this);
+                    }
+                    path = path.join(name);
+                } else {
+                    if (this != node.get().dependents().peek()) {
+                        node.get().dependents().addFirst(this);
+                    }
+                }
+                delegate().task().setPath(path);
+                future = submit(Processors.constant(path));
+                future.addListener(node.get(), MoreExecutors.directExecutor());
+                return false;
+            }
+        }
+        
+        protected static final Function<Pair<? extends ZNodePath,?>,ZNodePath> GET_PATH = new GetFirst<ZNodePath>();
+        
+        protected static final class Response<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<O> implements Callable<Optional<Pair<ZNodePath,O>>> {
+
+            public static <O extends Operation.ProtocolResponse<?>> CallablePromiseTask<Response<O>,Pair<ZNodePath,O>> create(
+                    Processor<? super O, ? extends ZNodePath> toPath,
+                    ListenableFuture<O> future,
+                    Promise<Pair<ZNodePath,O>> promise) {
+                return CallablePromiseTask.listen(new Response<O>(toPath, future), promise);
+            }
+
+            private final Processor<? super O, ? extends ZNodePath> toPath;
+            
+            protected Response(
+                    Processor<? super O, ? extends ZNodePath> toPath,
+                    ListenableFuture<O> future) {
+                super(future);
+                this.toPath = toPath;
+            }
+            
+            @Override
+            public Optional<Pair<ZNodePath,O>> call() throws Exception {
+                if (isDone()) {
+                    O response = get();
+                    return Optional.of(Pair.create((ZNodePath) toPath.apply(response), response));
+                }
+                return Optional.absent();
+            }
+        }
+        
+        protected static final class FromPathGetter implements Processor<Operation.ProtocolResponse<?>, ZNodePath> {
+
+            public static FromPathGetter create(ZNodePath path) {
+                return new FromPathGetter(path);
+            }
+            
+            private final ZNodePath path;
+            
+            protected FromPathGetter(ZNodePath path) {
+                this.path = path;
+            }
+            
+            @Override
+            public ZNodePath apply(Operation.ProtocolResponse<?> input) {
+                if (input.record() instanceof Records.PathGetter) {
+                    return ZNodePath.fromString(((Records.PathGetter) input.record()).getPath());
+                } else {
+                    return path;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Iterates over subsequences of a path ending in either a sequential label or the last label.
+     */
+    protected static final class SequenceIterator extends AbstractIterator<ZNodeName> {
+
+        public static SequenceIterator forName(ZNodeName name) {
+            final Iterator<ZNodeLabel> labels;
+            if (name instanceof EmptyZNodeLabel) {
+                labels = ImmutableSet.<ZNodeLabel>of().iterator();
+            } else if (name instanceof ZNodeLabel) {
+                labels = Iterators.singletonIterator((ZNodeLabel) name);
+            } else {
+                labels = ((RelativeZNodePath) name).iterator();
+            }
+            return forLabels(labels);
+        }
+        
+        public static SequenceIterator forLabels(Iterator<ZNodeLabel> labels) {
+            return new SequenceIterator(labels);
+        }
+        
+        private final Iterator<ZNodeLabel> labels;
+
+        private SequenceIterator(Iterator<ZNodeLabel> labels) {
+            this.labels = labels;
+        }
+
+        @Override
+        protected ZNodeName computeNext() {
+            if (!labels.hasNext()) {
+                return endOfData();
+            } else {
+                List<String> next = Lists.newLinkedList();
+                Optional<? extends Sequential<String,?>> sequential;
+                do {
+                    String label = labels.next().toString();
+                    next.add(label);
+                    sequential = Sequential.maybeFromString(label);
+                } while (labels.hasNext() && !sequential.isPresent());
+                return ZNodeName.fromString((next.size() == 1) ? Iterables.getOnlyElement(next) : ZNodeLabelVector.join(next.iterator()));
             }
         }
     }

@@ -56,7 +56,6 @@ import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.TimeValue;
-import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.LockableZNodeCache;
@@ -829,41 +828,6 @@ public final class VolumeOperationExecutor<T extends ConnectionClientExecutor<? 
                 return Optional.absent();
             }
         }
-    }
-    
-    protected abstract static class OperationStep<V> extends ToStringListenableFuture<V> implements Runnable {
-
-        protected final PromiseTask<VolumeOperationDirective, Boolean> request;
-        protected boolean hasRun;
-        
-        protected OperationStep(
-                PromiseTask<VolumeOperationDirective, Boolean> request) {
-            this.request = request;
-            this.hasRun = false;
-        }
-
-        @Override
-        public synchronized void run() {
-            if (request.isDone()) {
-                if (!isDone()) {
-                    cancel(false);
-                }
-            } else if (isDone()) {
-                if (!request.isDone() && !hasRun) {
-                    hasRun = true;
-                    try {
-                        doRun();
-                    } catch (Exception e) {
-                        request.setException(e);
-                    }
-                }
-            } else {
-                request.addListener(this, MoreExecutors.directExecutor());
-                addListener(this, MoreExecutors.directExecutor());
-            }
-        }
-        
-        protected abstract void doRun() throws Exception;
     }
     
     protected static final class VolumeLookups extends SimpleToStringListenableFuture<List<Object>> {

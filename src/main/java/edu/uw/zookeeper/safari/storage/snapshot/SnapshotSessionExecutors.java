@@ -79,6 +79,7 @@ import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
+import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
@@ -244,7 +245,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                 } else if (schema.get().getDeclaration() == StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.class) {
                     watches.run();
                 } else if (schema.get().getDeclaration() == StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.Ephemeral.class) {
-                    final AbsoluteZNodePath unescaped = (AbsoluteZNodePath) ZNodePath.root().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.Ephemeral.converter().reverse().convert(event.getPath().label()));
+                    final AbsoluteZNodePath unescaped = (AbsoluteZNodePath) ZNodePath.root().join(ZNodeName.fromString(EscapedConverter.getInstance().reverse().convert(event.getPath().label().toString())));
                     sequentials.trie().remove(unescaped);
                 }
                 break;
@@ -277,7 +278,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                     try {
                         watches.send(Pair.create((AbsoluteZNodePath) node.path(),
                                 new Watch(watch.session().name().longValue(), 
-                                        root.join(watch.name()), 
+                                        root.join(ZNodeLabel.fromString(watch.name())), 
                                         watch.data().get())));
                     } catch (RejectedExecutionException e) {}
                 }
@@ -407,7 +408,7 @@ public final class SnapshotSessionExecutors<O extends Operation.ProtocolResponse
                                 final String label = (index >= 0) ? ephemeral.name().toString().substring(index+1) : ephemeral.name().toString();
                                 final Optional<? extends Sequential<String, ?>> sequential = Sequential.maybeFromString(label);
                                 if (sequential.isPresent()) {
-                                    SequentialNode.putIfAbsent(trie, ZNodePath.root().join(ephemeral.name()));
+                                    SequentialNode.putIfAbsent(trie, ZNodePath.root().join(ZNodeName.fromString(ephemeral.name())));
                                     Watchers.Query.call(
                                             queryProcessor,
                                             queryCallback, 

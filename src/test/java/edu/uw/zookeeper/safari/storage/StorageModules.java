@@ -63,11 +63,23 @@ public class StorageModules {
             final Component<?> storage,
             final Iterable<? extends Component<?>> components,
             final Iterable<? extends SafariModule> modules) {
+        return newStorageSingletonClient(
+                storage,
+                components, 
+                modules,
+                Names.named("client"));
+    }
+
+    public static Component<?> newStorageSingletonClient(
+            final Component<?> storage,
+            final Iterable<? extends Component<?>> components,
+            final Iterable<? extends SafariModule> modules,
+            final Named name) {
         return newStorageClient(
                 ImmutableList.<Component<?>>of(storage), 
                 0, 
                 components, 
-                Names.named("client"), 
+                name, 
                 ImmutableList.<com.google.inject.Module>of(),
                 StorageClientProvider.class,
                 modules,

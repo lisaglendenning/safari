@@ -75,7 +75,7 @@ public class ControlSchema extends ControlZNode<Void> {
 
             public static final AbsoluteZNodePath PATH = Safari.PATH.join(LABEL);
             
-            protected static final Function<ServerInetAddressView, Hash.Hashed> HASHER =
+            public static final Function<ServerInetAddressView, Hash.Hashed> HASHER =
                 new Function<ServerInetAddressView, Hash.Hashed>() {
                     @Override
                     public Hash.Hashed apply(ServerInetAddressView value) {
@@ -204,7 +204,7 @@ public class ControlSchema extends ControlZNode<Void> {
 
             public static final AbsoluteZNodePath PATH = Safari.PATH.join(LABEL);
             
-            protected static final Function<EnsembleView<ServerInetAddressView>, Hash.Hashed> HASHER = new Function<EnsembleView<ServerInetAddressView>, Hash.Hashed>() {
+            public static final Function<EnsembleView<ServerInetAddressView>, Hash.Hashed> HASHER = new Function<EnsembleView<ServerInetAddressView>, Hash.Hashed>() {
                 @Override
                 public Hash.Hashed apply(EnsembleView<ServerInetAddressView> value) {
                     return Hash.default32().apply(EnsembleView.toString(value));
@@ -365,7 +365,7 @@ public class ControlSchema extends ControlZNode<Void> {
 
             public static final AbsoluteZNodePath PATH = Safari.PATH.join(LABEL);
             
-            protected static final Function<ZNodePath, Hash.Hashed> HASHER = new Function<ZNodePath, Hash.Hashed>() {
+            public static final Function<ZNodePath, Hash.Hashed> HASHER = new Function<ZNodePath, Hash.Hashed>() {
                 @Override
                 public Hash.Hashed apply(ZNodePath value) {
                     return Hash.default32().apply(value.toString());

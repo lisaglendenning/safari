@@ -2,8 +2,6 @@ package edu.uw.zookeeper.safari.storage.schema;
 
 import java.util.Map;
 
-import com.google.common.base.Converter;
-
 import edu.uw.zookeeper.common.Hex;
 import edu.uw.zookeeper.data.Name;
 import edu.uw.zookeeper.data.NameTrie;
@@ -180,85 +178,20 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
         }
     }
     
-    public static abstract class EscapedNamedZNode<V> extends NamedStorageNode<V,ZNodeName> {
+    public static abstract class EscapedNamedZNode<V> extends NamedStorageNode<V,String> {
 
         @Name(type=NameType.PATTERN)
         public static final String LABEL = ".+";
 
-        /**
-         * TODO: ambiguous if backslash is adjacent to a slash
-         */
-        public static final class EscapedConverter extends Converter<ZNodeName, ZNodeName> {
-
-            protected EscapedConverter() {}
-            
-            @Override
-            protected ZNodeLabel doForward(ZNodeName input) {
-                StringBuilder sb = new StringBuilder(input.length()+1);
-                for (int i=0; i<input.length(); ++i) {
-                    char c = input.charAt(i);
-                    switch (c) {
-                    case '/':
-                        sb.append('\\');
-                        break;
-                    case '\\':
-                        sb.append('\\').append('\\');
-                        break;
-                    default:
-                        sb.append(c);
-                        break;
-                    }
-                }
-                if (sb.length() == 0) {
-                    // special case to avoid empty label
-                    sb.append('\\');
-                }
-                return ZNodeLabel.fromString(sb.toString());
-            }
-
-            @Override
-            protected ZNodeName doBackward(ZNodeName input) {
-                StringBuilder sb = new StringBuilder(input.length());
-                for (int i=0; i<input.length(); ++i) {
-                    char c = input.charAt(i);
-                    switch (c) {
-                    case '\\':
-                        if (i+1 < input.length()) {
-                            if (input.charAt(i+1) == '\\') {
-                                sb.append('\\');
-                                ++i;
-                            } else {
-                                sb.append('/');
-                            }
-                        } else {
-                            assert (i == 0);
-                            // special case for root path
-                        }
-                        break;
-                    default:
-                        sb.append(c);
-                        break;
-                    }
-                }
-                return ZNodeName.fromString(sb.toString());
-            }
-        }
-
-        protected static final EscapedConverter CONVERTER = new EscapedConverter();
-        
-        public static EscapedConverter converter() {
-            return CONVERTER;
-        }
-        
         protected EscapedNamedZNode(
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,
                 NameTrie.Pointer<? extends StorageZNode<?>> parent) {
-            this(CONVERTER.reverse().convert(parent.name()), schema, codec, parent);
+            this(EscapedConverter.getInstance().reverse().convert(parent.name().toString()), schema, codec, parent);
         }
         
         protected EscapedNamedZNode(
-                ZNodeName name,
+                String name,
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,
                 NameTrie.Pointer<? extends StorageZNode<?>> parent) {
@@ -266,7 +199,7 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
         }
 
         protected EscapedNamedZNode(
-                ZNodeName name,
+                String name,
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,
                 Records.ZNodeStatGetter stat,

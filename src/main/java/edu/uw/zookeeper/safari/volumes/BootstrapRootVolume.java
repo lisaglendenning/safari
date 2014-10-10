@@ -16,11 +16,9 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.Pair;
-
 import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.IMultiRequest;
@@ -32,8 +30,8 @@ import edu.uw.zookeeper.safari.control.schema.ControlZNode;
 import edu.uw.zookeeper.safari.control.volumes.VolumesSchemaRequests;
 import edu.uw.zookeeper.safari.schema.volumes.RegionAndLeaves;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeDescriptor;
-import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
+import edu.uw.zookeeper.safari.storage.volumes.CreateVolume;
 
 /**
  *  synchronously create root volume and assign it to given region if there are no volumes
@@ -98,7 +96,7 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
         // if the bootstrapped root volume exists and is assigned to us, then create the backend volume
         // we need to do this before the lease manager runs to maintain volume invariants
         if (bootstrapped.booleanValue()) {
-            bootstrapped = CreateStorageVolume.call(root.second().getId(), version, storage).get();
+            bootstrapped = CreateVolume.call(root.second().getId(), version, storage).get();
         }
         return bootstrapped;
     }
@@ -251,50 +249,6 @@ public final class BootstrapRootVolume<O extends Operation.ProtocolResponse<?>> 
                 }
             }
             return Futures.immediateFuture(value);
-        }
-    }
-    
-    protected static final class CreateStorageVolume<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<List<O>, Boolean> {
-        
-        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> call(
-                Identifier id,
-                UnsignedLong version,
-                Materializer<StorageZNode<?>,O> materializer) {
-            final ZNodePath path = StorageSchema.Safari.Volumes.Volume.pathOf(id);
-            final ZNodePath rootPath = path.join(StorageSchema.Safari.Volumes.Volume.Root.LABEL);
-            final ZNodePath logPath = path.join(StorageSchema.Safari.Volumes.Volume.Log.LABEL);
-            final ZNodePath versionPath = logPath.join(ZNodeLabel.fromString(version.toString()));
-            ImmutableList.Builder<ListenableFuture<O>> futures = ImmutableList.builder();
-            for (ZNodePath p: ImmutableList.of(
-                    path, 
-                    rootPath,
-                    logPath,
-                    versionPath)) {
-                futures.add(materializer.create(p).call());
-            }
-            return Futures.transform(
-                    Futures.allAsList(futures.build()), 
-                    new BootstrapRootVolume.CreateStorageVolume<O>(versionPath, materializer));
-        }
-        
-        protected final ZNodePath path;
-        protected final Materializer<StorageZNode<?>,O> materializer;
-        
-        protected CreateStorageVolume(
-                ZNodePath path,
-                Materializer<StorageZNode<?>,O> materializer) {
-            this.path = path;
-            this.materializer = materializer;
-        }
-
-        @Override
-        public ListenableFuture<Boolean> apply(List<O> input)
-                throws Exception {
-            Optional<Operation.Error> error = null;
-            for (O response: input) {
-                error = Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS, KeeperException.Code.NONODE);
-            }
-            return Futures.immediateFuture(Boolean.valueOf(!error.isPresent()));
         }
     }
 }

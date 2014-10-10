@@ -75,6 +75,9 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
         return create(prefix, labelOf, codec, client, sessions, futureTransform(GetAll.create(queries), Union.create()));
     }
     
+    /**
+     * Assumes prefix exists.
+     */
     public static ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> create(
             final ZNodePath prefix,
             final Function<ZNodePath,ZNodeLabel> labelOf,

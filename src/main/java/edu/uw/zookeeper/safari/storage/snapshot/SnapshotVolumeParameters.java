@@ -1,5 +1,7 @@
 package edu.uw.zookeeper.safari.storage.snapshot;
 
+import com.google.common.base.MoreObjects;
+import com.google.common.base.Objects;
 import com.google.common.primitives.UnsignedLong;
 
 import edu.uw.zookeeper.data.ZNodeName;
@@ -21,13 +23,36 @@ public final class SnapshotVolumeParameters {
     public Identifier getVolume() {
         return volume;
     }
+    
     public ZNodeName getBranch() {
         return branch;
     }
+    
     public UnsignedLong getVersion() {
         return version;
     }
+
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this)
+                .add("volume", getVolume())
+                .add("version", getVersion())
+                .add("branch", getBranch()).toString();
+    }
     
-    // TODO equals toString
+    @Override
+    public boolean equals(Object obj) {
+        if (! (obj instanceof SnapshotVolumeParameters)) {
+            return false;
+        }
+        SnapshotVolumeParameters other = (SnapshotVolumeParameters) obj;
+        return Objects.equal(getVolume(), other.getVolume())
+                && Objects.equal(getVersion(), other.getVersion())
+                && Objects.equal(getBranch(), other.getBranch());
+    }
     
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(getVolume());
+    }
 }

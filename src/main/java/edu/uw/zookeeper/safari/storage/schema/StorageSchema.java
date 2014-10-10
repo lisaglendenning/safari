@@ -595,7 +595,7 @@ public class StorageSchema extends StorageZNode<Void> {
                                         }
 
                                         public Ephemeral(
-                                                ZNodeName name,
+                                                String name,
                                                 ValueNode<ZNodeSchema> schema,
                                                 ByteCodec<Object> codec,
                                                 Pointer<StorageZNode<?>> parent) {
@@ -662,7 +662,7 @@ public class StorageSchema extends StorageZNode<Void> {
                                         }
 
                                         public Watch(
-                                                ZNodeName name,
+                                                String name,
                                                 ValueNode<ZNodeSchema> schema,
                                                 ByteCodec<Object> codec,
                                                 Pointer<StorageZNode<?>> parent) {

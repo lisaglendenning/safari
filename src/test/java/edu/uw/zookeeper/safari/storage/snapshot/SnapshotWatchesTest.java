@@ -44,7 +44,6 @@ import edu.uw.zookeeper.data.SimpleNameTrie;
 import edu.uw.zookeeper.data.ValueNode;
 import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
-import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.data.ZNodeSchema;
 import edu.uw.zookeeper.data.NameTrie.Pointer;
@@ -56,6 +55,7 @@ import edu.uw.zookeeper.safari.Component;
 import edu.uw.zookeeper.safari.Modules;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.schema.PrefixCreator;
+import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 @RunWith(JUnit4.class)
@@ -101,7 +101,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                     }
 
                     public Watch(
-                            ZNodeName name,
+                            String name,
                             ValueNode<ZNodeSchema> schema,
                             ByteCodec<Object> codec,
                             Pointer<StorageZNode<?>> parent) {
@@ -188,7 +188,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
         final Function<ZNodePath,ZNodeLabel> labelOf = new Function<ZNodePath,ZNodeLabel>() {
             @Override
             public ZNodeLabel apply(ZNodePath input) {
-                return (ZNodeLabel) StorageZNode.EscapedNamedZNode.converter().convert(input.suffix(prefix));
+                return ZNodeLabel.fromString(EscapedConverter.getInstance().convert(input.suffix(prefix).toString()));
             }
         };
         final List<List<FourLetterWords.Wchc>> inputs = Lists.newArrayListWithCapacity(2);
@@ -217,6 +217,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 return Long.valueOf(input.longValue() << 8);
             }
         };
+        
         final Callable<Void> callable = new Callable<Void>() {
             @Override
             public Void call() throws Exception {
@@ -307,7 +308,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                         for (StorageZNode<?> child: session.values()) {
                             WatchesSchema.Watches.Session.Watch watch = (WatchesSchema.Watches.Session.Watch) child;
                             assertEquals(Watcher.WatcherType.Data, watch.data().get());
-                            builder.put(Long.valueOf(session.name().longValue()), prefix.join(watch.name()));
+                            builder.put(Long.valueOf(session.name().longValue()), prefix.join(ZNodeLabel.fromString(watch.name())));
                         }
                     }
                 } finally {
@@ -318,6 +319,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 return null;
             }
         };
+        
         callWithService(
                 injector, 
                 callable);

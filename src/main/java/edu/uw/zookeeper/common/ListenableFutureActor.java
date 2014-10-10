@@ -10,7 +10,7 @@ import com.google.common.util.concurrent.MoreExecutors;
 import edu.uw.zookeeper.common.Actors;
 import edu.uw.zookeeper.common.TaskExecutor;
 
-public abstract class ListenableFutureActor<I,V,T extends ListenableFuture<V>> extends Actors.PeekingQueuedActor<T> implements TaskExecutor<I,V> {
+public abstract class ListenableFutureActor<I,V,T extends ListenableFuture<?>> extends Actors.PeekingQueuedActor<T> implements TaskExecutor<I,V> {
 
     protected ListenableFutureActor(
             Queue<T> mailbox,
