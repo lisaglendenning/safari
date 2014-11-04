@@ -15,9 +15,11 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import com.google.common.base.Function;
+import com.google.common.base.Functions;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ForwardingMap;
 import com.google.common.collect.ForwardingQueue;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
@@ -32,6 +34,7 @@ import com.google.inject.name.Names;
 
 import edu.uw.zookeeper.client.ConnectionClientExecutorService;
 import edu.uw.zookeeper.common.ChainedFutures;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
@@ -56,6 +59,7 @@ import edu.uw.zookeeper.safari.Modules;
 import edu.uw.zookeeper.safari.peer.protocol.JacksonModule;
 import edu.uw.zookeeper.safari.schema.PrefixCreator;
 import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
+import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 @RunWith(JUnit4.class)
@@ -91,21 +95,46 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                     super(schema, codec, parent);
                 }
 
-                @ZNode(dataType=Watcher.WatcherType.class)
-                public static class Watch extends StorageZNode.EscapedNamedZNode<Watcher.WatcherType> {
+                @ZNode                
+                public static class Values extends StorageZNode<Void> {
 
-                    public Watch(ValueNode<ZNodeSchema> schema,
+                    @Name
+                    public static final ZNodeLabel LABEL = ZNodeLabel.fromString("values");
+
+                    public Values(ValueNode<ZNodeSchema> schema,
                             ByteCodec<Object> codec,
                             Pointer<StorageZNode<?>> parent) {
                         super(schema, codec, parent);
                     }
 
-                    public Watch(
-                            String name,
-                            ValueNode<ZNodeSchema> schema,
-                            ByteCodec<Object> codec,
-                            Pointer<StorageZNode<?>> parent) {
-                        super(name, schema, codec, parent);
+                    @ZNode(dataType=Watcher.WatcherType.class)
+                    public static class Watch extends StorageZNode.EscapedNamedZNode<Watcher.WatcherType> {
+    
+                        public Watch(ValueNode<ZNodeSchema> schema,
+                                ByteCodec<Object> codec,
+                                Pointer<StorageZNode<?>> parent) {
+                            super(schema, codec, parent);
+                        }
+    
+                        public Watch(
+                                String name,
+                                ValueNode<ZNodeSchema> schema,
+                                ByteCodec<Object> codec,
+                                Pointer<StorageZNode<?>> parent) {
+                            super(name, schema, codec, parent);
+                        }
+                        
+                        @ZNode(dataType=Long.class)
+                        public static class Ephemeral extends StorageZNode<Long> {
+
+                            public static final ZNodeLabel LABEL = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.Values.Watch.Ephemeral.LABEL;
+                            
+                            public Ephemeral(ValueNode<ZNodeSchema> schema,
+                                    ByteCodec<Object> codec,
+                                    Pointer<StorageZNode<?>> parent) {
+                                super(schema, codec, parent);
+                            }
+                        }
                     }
                 }
             }
@@ -184,6 +213,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
         final TimeValue timeOut = TimeValue.seconds(16L);
         final int nservers = 2;
         final int nsessions = 2;
+        final int depth = 3;
         final ZNodePath prefix = ZNodePath.root();
         final Function<ZNodePath,ZNodeLabel> labelOf = new Function<ZNodePath,ZNodeLabel>() {
             @Override
@@ -191,25 +221,40 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 return ZNodeLabel.fromString(EscapedConverter.getInstance().convert(input.suffix(prefix).toString()));
             }
         };
-        final List<List<FourLetterWords.Wchc>> inputs = Lists.newArrayListWithCapacity(2);
+        final List<Object> inputs = Lists.newArrayListWithCapacity(SnapshotWatches.Phase.values().length);
+        final ImmutableMap.Builder<ZNodePath, Long> ephemerals = ImmutableMap.builder();
         Long session = Long.valueOf(1L);
-        for (@SuppressWarnings("unused") SnapshotWatches.Phase phase: SnapshotWatches.Phase.values()) {
-            List<FourLetterWords.Wchc> wchcs = Lists.newArrayListWithCapacity(nservers);
-            for (int i=0; i<nservers; ++i) {
-                ImmutableSetMultimap.Builder<Long,ZNodePath> builder = ImmutableSetMultimap.builder();
-                for (int j=0; j<nsessions; ++j) {
-                    ZNodePath path = ZNodePath.root();
-                    int p = 0;
-                    do {
-                        builder.put(session, path);
-                        path = path.join(ZNodeLabel.fromString(session.toString()));
-                        ++p;
-                    } while (p < 3);
-                    session = Long.valueOf(session.longValue() + 1L);
+        for (SnapshotWatches.Phase phase: SnapshotWatches.Phase.values()) {
+            switch (phase) {
+            case POST_PHASE:
+            case PRE_PHASE:
+                List<FourLetterWords.Wchc> wchcs = Lists.newArrayListWithCapacity(nservers);
+                for (int i=0; i<nservers; ++i) {
+                    ImmutableSetMultimap.Builder<Long,ZNodePath> builder = ImmutableSetMultimap.builder();
+                    for (int j=0; j<nsessions; ++j) {
+                        ZNodePath path = ZNodePath.root();
+                        int d = 0;
+                        do {
+                            builder.put(session, path);
+                            path = path.join(ZNodeLabel.fromString(session.toString()));
+                            ++d;
+                        } while (d < depth);
+                        if (phase == SnapshotWatches.Phase.PRE_PHASE) {
+                            // make some leaf paths ephemeral for the watcher
+                            ephemerals.put(path, session);
+                        }
+                        session = Long.valueOf(session.longValue() + 1L);
+                    }
+                    wchcs.add(FourLetterWords.Wchc.fromMultimap(builder.build()));
                 }
-                wchcs.add(FourLetterWords.Wchc.fromMultimap(builder.build()));
+                inputs.add(wchcs);
+                break;
+            case SNAPSHOT:
+                inputs.add(Pair.create(Long.valueOf(1L), ephemerals.build()));
+                break;
+            default:
+                fail(String.valueOf(phase));
             }
-            inputs.add(wchcs);
         }
         final Function<Long, Long> toFrontend = new Function<Long, Long>() {
             @Override
@@ -219,6 +264,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
         };
         
         final Callable<Void> callable = new Callable<Void>() {
+            @SuppressWarnings("unchecked")
             @Override
             public Void call() throws Exception {
                 final Serializers.ByteCodec<Object> codec = injector.getInstance(Key.get(new TypeLiteral<Serializers.ByteCodec<Object>>(){}));
@@ -250,7 +296,11 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                         servers);
 
                 for (SnapshotWatches.Phase phase: SnapshotWatches.Phase.values()) {
-                    final List<FourLetterWords.Wchc> wchcs = inputs.get(phase.ordinal());
+                    if (phase == SnapshotWatches.Phase.SNAPSHOT) {
+                        ((ChainedFutures<ListenableFuture<?>,?,?>) snapshot.chain()).add(Futures.immediateFuture(inputs.get(phase.ordinal())));
+                        continue;
+                    }
+                    final List<FourLetterWords.Wchc> wchcs = (List<FourLetterWords.Wchc>) inputs.get(phase.ordinal());
                     
                     List<Promise<FourLetterWords.Wchc>> futures = Lists.newArrayListWithCapacity(servers.size());
                     for (QueueSupplier<Promise<FourLetterWords.Wchc>> server: servers) {
@@ -275,12 +325,15 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                     }
                     case POST_PHASE:
                     {
-                        assertEquals(nsessions*nservers*SnapshotWatches.Phase.values().length, sessions.size());
+                        assertEquals(nsessions*nservers*2, sessions.size());
                         for (Map.Entry<Long, PromiseTask<Long,Long>> lookup: sessions.entrySet()) {
                             Long session = toFrontend.apply(lookup.getKey());
                             Collection<ZNodePath> values = null;
-                            for (List<FourLetterWords.Wchc> input: inputs) {
-                                for (FourLetterWords.Wchc wchc: input) {
+                            for (SnapshotWatches.Phase p: SnapshotWatches.Phase.values()) {
+                                if (p == SnapshotWatches.Phase.SNAPSHOT) {
+                                    continue;
+                                }
+                                for (FourLetterWords.Wchc wchc: (List<FourLetterWords.Wchc>) inputs.get(p.ordinal())) {
                                     values = wchc.getValues(lookup.getKey());
                                     if (!values.isEmpty()) {
                                         builder.putAll(session, values);
@@ -292,7 +345,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                         break;
                     }
                     default:
-                        throw new AssertionError();
+                        fail(String.valueOf(phase));
                     }
                     assertEquals(builder.build(), ((FourLetterWords.Wchc) snapshot.chain().getLast().get(timeOut.value(), timeOut.unit())).asMultimap());
                 }
@@ -300,21 +353,29 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 final FourLetterWords.Wchc result = snapshot.call().get();
                 assertSame(snapshot.chain().getLast().get(), result);
                 
-                ImmutableSetMultimap.Builder<Long,ZNodePath> builder = ImmutableSetMultimap.builder();
                 client.cache().lock().readLock().lock();
                 try {
+                    ImmutableSetMultimap.Builder<Long,ZNodePath> builder = ImmutableSetMultimap.builder();
+                    Function<ZNodePath, Long> getEphemeral = Functions.forMap(ephemerals.build(), null);
                     for (StorageZNode<?> node: client.cache().cache().get(client.schema().apply(WatchesSchema.Watches.class).path()).values()) {
                         WatchesSchema.Watches.Session session = (WatchesSchema.Watches.Session) node;
-                        for (StorageZNode<?> child: session.values()) {
-                            WatchesSchema.Watches.Session.Watch watch = (WatchesSchema.Watches.Session.Watch) child;
+                        for (StorageZNode<?> child: session.get(WatchesSchema.Watches.Session.Values.LABEL).values()) {
+                            WatchesSchema.Watches.Session.Values.Watch watch = (WatchesSchema.Watches.Session.Values.Watch) child;
                             assertEquals(Watcher.WatcherType.Data, watch.data().get());
-                            builder.put(Long.valueOf(session.name().longValue()), prefix.join(ZNodeLabel.fromString(watch.name())));
+                            ZNodePath path = prefix.join(ZNodeLabel.fromString(watch.name()));
+                            builder.put(Long.valueOf(session.name().longValue()), path);
+                            Long ephemeral = getEphemeral.apply(path);
+                            if (ephemeral != null) {
+                                assertEquals(ephemeral, watch.get(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL).data().get());
+                            } else {
+                                assertFalse(watch.containsKey(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL));
+                            }
                         }
                     }
+                    assertEquals(result.asMultimap(), builder.build());
                 } finally {
                     client.cache().lock().readLock().unlock();
                 }
-                assertEquals(result.asMultimap(), builder.build());
                 
                 return null;
             }

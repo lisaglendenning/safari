@@ -9,6 +9,7 @@ import edu.uw.zookeeper.data.NameType;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.Serializes;
 import edu.uw.zookeeper.data.ValueNode;
+import edu.uw.zookeeper.data.ZNode;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodeSchema;
@@ -206,6 +207,107 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
                 long stamp,
                 NameTrie.Pointer<? extends StorageZNode<?>> parent) {
             super(name, schema, codec, null, stat, stamp, parent);
+        }
+    }
+
+    @ZNode(dataType=Boolean.class)
+    public static class CommitZNode extends StorageZNode<Boolean> {
+        
+        @Name
+        public static final ZNodeLabel LABEL = ZNodeLabel.fromString("commit");
+
+        protected CommitZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+            super(schema, codec, parent);
+        }
+
+        protected CommitZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                Boolean data,
+                Records.ZNodeStatGetter stat,
+                long stamp,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+            super(schema, codec, data, stat, stamp, parent);
+        }
+
+        protected CommitZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                Boolean data,
+                Records.ZNodeStatGetter stat,
+                long stamp,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent,
+                Map<ZNodeName, StorageZNode<?>> children) {
+            super(schema, codec, data, stat, stamp, parent, children);
+        }
+    }
+
+    @ZNode
+    public static class SessionsZNode extends StorageZNode<Void> {
+        
+        @Name
+        public static final ZNodeLabel LABEL = ZNodeLabel.fromString("sessions");
+
+        protected SessionsZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+            super(schema, codec, parent);
+        }
+
+        protected SessionsZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                Records.ZNodeStatGetter stat,
+                long stamp,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+            super(schema, codec, null, stat, stamp, parent);
+        }
+
+        protected SessionsZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                Records.ZNodeStatGetter stat,
+                long stamp,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent,
+                Map<ZNodeName, StorageZNode<?>> children) {
+            super(schema, codec, null, stat, stamp, parent, children);
+        }
+    }
+
+    @ZNode
+    public static class ValuesZNode extends StorageZNode<Void> {
+        
+        @Name
+        public static final ZNodeLabel LABEL = ZNodeLabel.fromString("values");
+
+        protected ValuesZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+            super(schema, codec, parent);
+        }
+
+        protected ValuesZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                Records.ZNodeStatGetter stat,
+                long stamp,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+            super(schema, codec, null, stat, stamp, parent);
+        }
+
+        protected ValuesZNode(
+                ValueNode<ZNodeSchema> schema,
+                Serializers.ByteCodec<Object> codec,
+                Records.ZNodeStatGetter stat,
+                long stamp,
+                NameTrie.Pointer<? extends StorageZNode<?>> parent,
+                Map<ZNodeName, StorageZNode<?>> children) {
+            super(schema, codec, null, stat, stamp, parent, children);
         }
     }
 }

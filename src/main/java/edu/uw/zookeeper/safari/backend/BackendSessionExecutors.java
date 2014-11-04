@@ -19,6 +19,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
+import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.common.AbstractPair;
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.CallablePromiseTask;
@@ -26,23 +27,29 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
+import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.ConnectMessage;
 import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolConnection;
+import edu.uw.zookeeper.protocol.ProtocolRequestMessage;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.SessionListener;
-import edu.uw.zookeeper.protocol.Message.ClientSession;
-import edu.uw.zookeeper.protocol.Operation.Response;
 import edu.uw.zookeeper.protocol.client.ConnectTask;
+import edu.uw.zookeeper.protocol.client.XidGenerator;
 import edu.uw.zookeeper.protocol.proto.IWatcherEvent;
+import edu.uw.zookeeper.protocol.proto.Records;
+import edu.uw.zookeeper.protocol.proto.Records.Request;
+import edu.uw.zookeeper.safari.VersionedId;
 import edu.uw.zookeeper.safari.control.volumes.VolumeBranchesCache;
 import edu.uw.zookeeper.safari.control.volumes.VolumeDescriptorCache;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenRequest;
 import edu.uw.zookeeper.safari.peer.protocol.MessageSessionOpenResponse;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
+import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.storage.snapshot.SnapshotSessionExecutors;
+import edu.uw.zookeeper.safari.storage.snapshot.RecreateLocalSessionSnapshots;
 import edu.uw.zookeeper.safari.storage.volumes.VolumeVersionCache;
 
 public final class BackendSessionExecutors extends AbstractIdleService implements TaskExecutor<MessageSessionOpenRequest, MessageSessionOpenResponse>, Iterable<BackendSessionExecutors.BackendSessionExecutor> {
@@ -81,7 +88,7 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
                 final Function<ConnectTask<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> connectToClient) {
             return new AsyncFunction<MessageSessionOpenRequest, ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>>() {
                 @Override
-                public ListenableFuture<ShardedClientExecutor<? extends ProtocolConnection<? super ClientSession, ? extends Response, ?, ?, ?>>> apply(
+                public ListenableFuture<ShardedClientExecutor<? extends ProtocolConnection<? super Message.ClientSession, ? extends Operation.Response, ?, ?, ?>>> apply(
                         final MessageSessionOpenRequest request) throws Exception {
                     return Futures.transform(
                             Futures.transform(
@@ -100,14 +107,25 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
             final BackendSessionExecutors instance = BackendSessionExecutors.create(
                     clientFactory);
             monitor.add(instance);
-            SnapshotSessionExecutors.listen(
+            RecreateLocalSessionSnapshots.listen(
                     instance, 
                     storage, 
-                    new Function<Long, ShardedClientExecutor<?>>() {
+                    new Function<Long, BackdoorExecutor>() {
+                        // shouldn't matter, so just use zero
+                        final XidGenerator xid = new XidGenerator() {
+                            @Override
+                            public int get() {
+                                return 0;
+                            }
+                            @Override
+                            public int next() {
+                                return 0;
+                            }
+                        };
                         @Override
-                        public ShardedClientExecutor<?> apply(Long input) {
+                        public BackdoorExecutor apply(Long input) {
                             BackendSessionExecutor executor = instance.get(input);
-                            return (executor == null) ? null : executor.client();
+                            return (executor == null) ? null : new BackdoorExecutor(executor.client(), xid);
                         }
                     });
             return instance;
@@ -172,6 +190,69 @@ public final class BackendSessionExecutors extends AbstractIdleService implement
     @Override
     public Iterator<BackendSessionExecutor> iterator() {
         return sessions.values().iterator();
+    }
+    
+    protected static final class BackdoorExecutor implements ClientExecutor<Records.Request, ShardedServerResponseMessage<?>, SessionListener>, Connection.Listener<Operation.Response> {
+        
+        private final ShardedClientExecutor<?> client;
+        private final XidGenerator xid;
+        
+        protected BackdoorExecutor(
+                ShardedClientExecutor<?> client,
+                XidGenerator xid) {
+            this.client = client;
+            this.xid = xid;
+        }
+
+        @Override
+        public ListenableFuture<ShardedServerResponseMessage<?>> submit(
+                Records.Request request) {
+            return client.submit(ShardedRequestMessage.valueOf(
+                    VersionedId.zero(),
+                    ProtocolRequestMessage.of(xid.next(), request)));
+        }
+
+        @Override
+        public ListenableFuture<ShardedServerResponseMessage<?>> submit(
+                Request request,
+                Promise<ShardedServerResponseMessage<?>> promise) {
+            return client.submit(
+                    ShardedRequestMessage.valueOf(
+                            VersionedId.zero(),
+                            ProtocolRequestMessage.of(xid.next(), request)), 
+                    promise);
+        }
+
+        @Override
+        public void handleConnectionState(
+                final Automaton.Transition<Connection.State> state) {
+            client.connection().execute(new Runnable(){
+                @Override
+                public void run() {
+                    client.handleConnectionState(state);
+                }
+            });
+        }
+
+        @Override
+        public void handleConnectionRead(final Operation.Response message) {
+            client.connection().execute(new Runnable(){
+                @Override
+                public void run() {
+                    client.handleConnectionRead(message);
+                }
+            });
+        }
+
+        @Override
+        public void subscribe(SessionListener listener) {
+            client.subscribe(listener);
+        }
+
+        @Override
+        public boolean unsubscribe(SessionListener listener) {
+            return client.unsubscribe(listener);
+        }
     }
 
     protected final class SessionOpen implements Runnable, Callable<Optional<MessageSessionOpenResponse>> {

@@ -72,8 +72,9 @@ public final class RoleListener implements Function<RegionRoleService, List<? ex
         case LEADING:
             return ImmutableList.of(
                     InjectingRoleListener.RegionRoleServiceModule.create(input),
-                    CleanSnapshot.module(),
-                    ExpireSnapshotSessions.module());
+                    GarbageCollectSnapshot.module(),
+                    CommitSessionSnapshots.module(),
+                    AbortClosedSessionSnapshots.module());
         default:
             return ImmutableList.of();
         }

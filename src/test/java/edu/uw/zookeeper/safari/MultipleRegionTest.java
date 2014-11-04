@@ -134,10 +134,10 @@ public class MultipleRegionTest extends AbstractMainTest {
                 callable);
     }
 
-    @Test//(timeout=45000)
+    @Test(timeout=45000)
     public void testTransfer() throws Exception {
         final int num_regions = 2;
-        final long pause = 4000L;
+        final long pause = 6000L;
         
         final List<Component<?>> components = SafariModules.newSingletonSafariRegions(num_regions);
         final List<Component<?>> regions = Lists.newArrayListWithCapacity(num_regions);
@@ -188,7 +188,7 @@ public class MultipleRegionTest extends AbstractMainTest {
     @Test(timeout=75000)
     public void testSplitMerge() throws Exception {
         final int num_regions = 2;
-        final long pause = 4000L;
+        final long pause = 6000L;
         
         List<Component<?>> components = SafariModules.newSingletonSafariRegions(num_regions);
         final List<Component<?>> regions = Lists.newArrayListWithCapacity(num_regions);

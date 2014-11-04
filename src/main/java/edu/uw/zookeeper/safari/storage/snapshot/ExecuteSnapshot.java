@@ -3,8 +3,10 @@ package edu.uw.zookeeper.safari.storage.snapshot;
 import static com.google.common.base.Preconditions.checkArgument;
 import io.netty.buffer.Unpooled;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.ConcurrentModificationException;
 import java.util.Deque;
 import java.util.Iterator;
@@ -61,6 +63,7 @@ import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.net.ClientConnectionFactory;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.protocol.client.ConnectionClientExecutor;
+import edu.uw.zookeeper.client.ChildToPath;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.DeleteSubtree;
 import edu.uw.zookeeper.client.FixedQuery;
@@ -95,6 +98,7 @@ import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.RelativeZNodePath;
 import edu.uw.zookeeper.data.Sequential;
+import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.SimpleNameTrie;
 import edu.uw.zookeeper.data.StampedValue;
 import edu.uw.zookeeper.data.ValueNode;
@@ -247,9 +251,10 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                                     throws Exception {
                                 Iterator<ExecuteSnapshot.Action<?>> actions = input.descendingIterator();
                                 while (actions.hasNext()) {
-                                    Object result = actions.next().get();
-                                    if (result instanceof Long) {
-                                        return (Long) result;
+                                    ExecuteSnapshot.Action<?> action = actions.next();
+                                    Object result = action.get();
+                                    if (action instanceof CreateSnapshot) {
+                                        return (Long) ((Pair<?,?>) result).first();
                                     }
                                 }
                                 throw new AssertionError();
@@ -300,8 +305,9 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         this.sequentials = SequentialTranslator.create(fromRoot, toRoot, toClient);
     }
     
+    @SuppressWarnings("unchecked")
     @Override
-    public Optional<? extends Action<?>> apply(ChainedFutures.DequeChain<Action<?>,?> input) {
+    public Optional<? extends Action<?>> apply(ChainedFutures.DequeChain<Action<?>,?> input) throws Exception {
         Optional<? extends ListenableFuture<?>> last = input.isEmpty() ? Optional.<ListenableFuture<?>>absent() : Optional.of(input.getLast());
         if (last.isPresent()) {
             try {
@@ -313,11 +319,11 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
         }
         if (!last.isPresent() || (last.get() instanceof DeleteExistingSnapshot)) {
-            return Optional.of(CreateSnapshotPrefix.create(toVolume.getVolume(), toVolume.getVersion(), toClient));
-        } else if (last.get() instanceof CreateSnapshotPrefix) {
+            return Optional.of(CreateSnapshotSkeleton.create(toVolume.getVolume(), toVolume.getVersion(), toVolume.getBranch(), materializer.codec(), toClient));
+        } else if (last.get() instanceof CreateSnapshotSkeleton) {
             return Optional.of(
                     PrepareSnapshotWatches.create(
-                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(toVolume.getVolume(), toVolume.getVersion()),
+                            StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.pathOf(toVolume.getVolume(), toVolume.getVersion()),
                         new Function<ZNodePath,ZNodeLabel>() {
                             @Override
                             public ZNodeLabel apply(ZNodePath input) {
@@ -363,8 +369,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             if (previous instanceof PrepareSnapshotWatches) {
                 return Optional.of(
                         CreateSnapshot.call(
-                                new WalkSnapshotter(ZxidTracker.zero(),
-                                        SettableFuturePromise.<Long>create())));
+                                new WalkSnapshotter(ZxidTracker.zero())));
             } else if (previous instanceof CreateSnapshot) {
                 return Optional.absent();
             } else {
@@ -372,6 +377,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
         } else if (last.get() instanceof CreateSnapshot) {
             CallSnapshotWatches watches = (CallSnapshotWatches) Iterators.get(input.descendingIterator(), 1);
+            ((ChainedFutures<ListenableFuture<?>,?,?>) watches.chain().chain()).add(last.get());
             return Optional.of((CallSnapshotWatches) CallSnapshotWatches.create(watches.chain()));
         }
         return Optional.absent();
@@ -494,37 +500,47 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
     /**
      * Assumes that version, root, and toBranch is already created.
      */
-    public static final class CreateSnapshotPrefix extends Action<Boolean> {
+    public static final class CreateSnapshotSkeleton extends Action<Boolean> {
         
-        public static <O extends Operation.ProtocolResponse<?>> CreateSnapshotPrefix create(
+        public static <O extends Operation.ProtocolResponse<?>> CreateSnapshotSkeleton create(
                 Identifier toVolume,
                 UnsignedLong toVersion,
+                ZNodeName toBranch,
+                Serializers.ByteSerializer<Object> serializer,
                 ClientExecutor<? super Records.Request,O,?> client) {
             final AbsoluteZNodePath snapshotPath = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.pathOf(toVolume, toVersion);
-            ImmutableList<AbsoluteZNodePath> paths = 
-                    ImmutableList.of(
-                            snapshotPath,
-                            snapshotPath.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.LABEL),
-                            snapshotPath.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.LABEL));
-            return new CreateSnapshotPrefix(Created.create(paths, client));
+            Operations.Requests.Create create = Operations.Requests.create();
+            ImmutableList.Builder<Records.Request> requests = ImmutableList.builder();
+            AbsoluteZNodePath path = snapshotPath;
+            requests.add(create.setPath(path).build());
+            path = path.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Prefix.LABEL);
+            try {
+                requests.add(create.setPath(path).setData(serializer.toBytes(toBranch)).build());
+            } catch (IOException e) {
+                throw new AssertionError(e);
+            }
+            path = snapshotPath.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.LABEL);
+            requests.add(create.setPath(path).build());
+            path = path.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.LABEL);
+            requests.add(create.setPath(path).build());
+            path = snapshotPath.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.LABEL);
+            requests.add(create.setPath(path).build());
+            path = path.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.LABEL);
+            requests.add(create.setPath(path).build());
+            return new CreateSnapshotSkeleton(Created.create(requests.build(), client));
         }
         
-        protected CreateSnapshotPrefix(ListenableFuture<Boolean> future) {
+        protected CreateSnapshotSkeleton(ListenableFuture<Boolean> future) {
             super(future);
         }
 
         protected static class Created<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Callable<Optional<Boolean>> {
 
             public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Boolean> create(
-                    List<? extends ZNodePath> paths,
+                    List<? extends Records.Request> requests,
                     ClientExecutor<? super Records.Request,O,?> client) {
-                ImmutableList.Builder<Records.Request> creates = 
-                        ImmutableList.builder();
-                for (ZNodePath path: paths) {
-                    creates.add(Operations.Requests.create().setPath(path).build());
-                }
                 CallablePromiseTask<Created<O>,Boolean> task = CallablePromiseTask.create(new Created<O>(
-                        SubmittedRequests.submit(client, creates.build())), 
+                        SubmittedRequests.submit(client, requests)), 
                         SettableFuturePromise.<Boolean>create());
                 task.task().addListener(task, MoreExecutors.directExecutor());
                 return task;
@@ -669,10 +685,10 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         }
     }
     
-    public static final class CreateSnapshot extends Action<Long> {
+    public static final class CreateSnapshot extends Action<Pair<Long,Map<ZNodePath,Long>>> {
         
-        public static CreateSnapshot call(Callable<ListenableFuture<Long>> callable) {
-            ListenableFuture<Long> future;
+        public static CreateSnapshot call(Callable<? extends ListenableFuture<Pair<Long,Map<ZNodePath,Long>>>> callable) {
+            ListenableFuture<Pair<Long,Map<ZNodePath,Long>>> future;
             try {
                 future = callable.call();
             } catch (Exception e) {
@@ -681,7 +697,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             return new CreateSnapshot(future);
         }
         
-        protected CreateSnapshot(ListenableFuture<Long> future) {
+        protected CreateSnapshot(ListenableFuture<Pair<Long,Map<ZNodePath,Long>>> future) {
             super(future);
         }
     }
@@ -695,6 +711,8 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             return new SortedChildrenIterator();
         }
         
+        private static final Comparator<String> COMPARATOR = Sequential.comparator();
+
         protected SortedChildrenIterator() {}
         
         @Override
@@ -704,11 +722,11 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                 final ZNodePath path = ZNodePath.fromString(((Records.PathGetter) input.getValue()).getPath());
                 final ImmutableSortedSet<String> children = 
                         ImmutableSortedSet.copyOf(
-                                Sequential.comparator(), 
+                                COMPARATOR, 
                                 ((Records.ChildrenGetter) response).getChildren());
                 return Iterators.transform(
                                 children.iterator(),
-                                TreeWalker.ChildToPath.forParent(path));
+                                ChildToPath.forParent(path));
             } else {
                 return ImmutableSet.<AbsoluteZNodePath>of().iterator();
             }
@@ -743,10 +761,10 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         }
     }
     
-    protected final class WalkSnapshotter extends ForwardingListenableFuture<Long> implements Callable<ListenableFuture<Long>>, AsyncFunction<ZNodePath, Long>, FutureCallback<Long>, Runnable, TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> {
+    protected final class WalkSnapshotter extends ForwardingListenableFuture<Pair<Long,Map<ZNodePath, Long>>> implements Callable<ListenableFuture<Pair<Long,Map<ZNodePath, Long>>>>, AsyncFunction<ZNodePath, Long>, FutureCallback<Long>, Runnable, TaskExecutor<StampedValue<? extends Operations.PathBuilder<? extends Records.Request,?>>, Pair<ZNodePath,O>> {
 
         protected final Logger logger;
-        protected final Promise<Long> promise;
+        protected final Promise<Pair<Long,Map<ZNodePath, Long>>> promise;
         protected final Map<Walker, ListenableFuture<Long>> walkers;
         protected final EphemeralsSnapshotter<O> ephemerals;
         protected final NotificationsSnapshotter<O> changes;
@@ -755,11 +773,10 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         protected final Map<ZNodePath, Long> ephemeralOwners;
         
         protected WalkSnapshotter(
-                ZxidTracker fromZxid,
-                Promise<Long> promise) {
+                ZxidTracker fromZxid) {
             this.logger = LogManager.getLogger(this);
             this.fromZxid = fromZxid;
-            this.promise = promise;
+            this.promise = SettableFuturePromise.create();
             this.ephemeralOwners = Maps.newHashMap();
             this.walk = TreeWalker.<ListenableFuture<Long>>builder()
                     .setIterator(SortedChildrenIterator.create())
@@ -770,7 +787,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                                 .setSync(true)))
                     .setClient(fromClient);
             this.ephemerals = EphemeralsSnapshotter.create(
-                    StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(toVolume.getVolume(), toVolume.getVersion()),
+                    StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.pathOf(toVolume.getVolume(), toVolume.getVersion()),
                     toRoot,
                     sessions,
                     sequentials,
@@ -783,7 +800,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         }
         
         @Override
-        public ListenableFuture<Long> call() throws Exception {
+        public ListenableFuture<Pair<Long,Map<ZNodePath, Long>>> call() throws Exception {
             if (!isDone()) {
                 apply(fromRoot);
                 fromClient.subscribe(changes);
@@ -845,7 +862,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         public synchronized void run() {
             if (!isDone()) {
                 if (walkers.isEmpty() && changes.isEmpty()) {
-                    promise.set(Long.valueOf(fromZxid.get()));
+                    promise.set(Pair.create(Long.valueOf(fromZxid.get()), (Map<ZNodePath,Long>) ImmutableMap.copyOf(ephemeralOwners)));
                 }
             } else {
                 changes.stop();
@@ -857,7 +874,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         }
         
         @Override
-        protected ListenableFuture<Long> delegate() {
+        protected ListenableFuture<Pair<Long,Map<ZNodePath, Long>>> delegate() {
             return promise;
         }
         
@@ -1444,7 +1461,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
         }
         
-        protected final class SessionPrefix implements TaskExecutor<Long, ZNodePath>, Function<Long, ZNodePath> {
+        protected final class SessionPrefix implements TaskExecutor<Long, ZNodePath>, AsyncFunction<Long, ZNodePath> {
 
             protected final AsyncFunction<Long, Long> sessions;
             protected final ZNodePath prefix;
@@ -1466,13 +1483,33 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
             
             @Override
-            public ZNodePath apply(Long input) {
+            public ListenableFuture<ZNodePath> apply(Long input) {
                 if (input == null) {
-                    return null;
+                    return Futures.immediateFuture(null);
                 }
-                final ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Session.labelOf(input.longValue()));
-                client.submit(Operations.Requests.create().setPath(path).build());
-                return path;
+                ZNodePath path = prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.Session.labelOf(input.longValue()));
+                Operations.Requests.Create create = Operations.Requests.create();
+                @SuppressWarnings("unchecked")
+                ListenableFuture<List<O>> future = Futures.allAsList(
+                        client.submit(create.setPath(path).build()),
+                        client.submit(create.setPath(path.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.Session.Values.LABEL)).build()));
+                return Futures.transform(future, new Callback(create.getPath()));
+            }
+            
+            protected final class Callback implements AsyncFunction<List<O>, ZNodePath> {
+                private final ZNodePath path;
+                
+                public Callback(ZNodePath path) {
+                    this.path = path;
+                }
+                
+                @Override
+                public ListenableFuture<ZNodePath> apply(List<O> input) throws Exception {
+                    for (O response: input) {
+                        Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS);
+                    }
+                    return Futures.immediateFuture(path);
+                }
             }
         }
         

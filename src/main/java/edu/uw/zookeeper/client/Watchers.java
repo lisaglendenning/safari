@@ -47,7 +47,6 @@ import edu.uw.zookeeper.data.ZNodeSchema;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.ProtocolState;
 import edu.uw.zookeeper.protocol.proto.Records;
-import edu.uw.zookeeper.safari.schema.SafariZNode;
 
 public abstract class Watchers {
     
@@ -75,6 +74,43 @@ public abstract class Watchers {
                         Watcher.Event.EventType.NodeCreated, 
                         Watcher.Event.EventType.NodeChildrenChanged, 
                         Watcher.Event.EventType.NodeDeleted));
+    }
+
+    
+    public static abstract class ForwardingCallback<V, T extends FutureCallback<?>> implements FutureCallback<V> {
+        
+        protected ForwardingCallback() {}
+        
+        @Override
+        public void onFailure(Throwable t) {
+            delegate().onFailure(t);
+        }
+        
+        @Override
+        public String toString() {
+            return toString(MoreObjects.toStringHelper(this)).toString();
+        }
+        
+        protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper toString) {
+            return toString.addValue(delegate());
+        }
+        
+        protected abstract T delegate();
+    }
+    
+    public static abstract class SimpleForwardingCallback<V,T extends FutureCallback<?>> extends ForwardingCallback<V,T> {
+        
+        private final T delegate;
+        
+        protected SimpleForwardingCallback(
+                T delegate) {
+            this.delegate = delegate;
+        }
+        
+        @Override
+        protected final T delegate() {
+            return delegate;
+        }
     }
     
     public static class SetExceptionCallback<T,V> extends ToStringListenableFuture<V> implements FutureCallback<T> {
@@ -704,9 +740,9 @@ public abstract class Watchers {
         }
     }
 
-    public static final class PathToNodeCallback<U extends SafariZNode<U,?>, V extends U, T extends FutureCallback<? super V>> implements FutureCallback<ZNodePath> {
+    public static final class PathToNodeCallback<U extends NameTrie.Node<U>, V extends U, T extends FutureCallback<? super V>> implements FutureCallback<ZNodePath> {
 
-        public static <U extends SafariZNode<U,?>, V extends U, T extends FutureCallback<? super V>> PathToNodeCallback<U,V,T> create(
+        public static <U extends NameTrie.Node<U>, V extends U, T extends FutureCallback<? super V>> PathToNodeCallback<U,V,T> create(
                 T callback,
                 NameTrie<U> trie) {
             return new PathToNodeCallback<U,V,T>(trie, callback);

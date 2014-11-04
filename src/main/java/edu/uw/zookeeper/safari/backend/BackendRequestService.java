@@ -36,7 +36,6 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.FutureTransition;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TaskExecutor;
 import edu.uw.zookeeper.common.ToStringListenableFuture.SimpleToStringListenableFuture;
 import edu.uw.zookeeper.net.Connection;

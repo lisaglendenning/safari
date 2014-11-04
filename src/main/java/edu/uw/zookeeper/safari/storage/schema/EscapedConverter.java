@@ -11,6 +11,10 @@ public final class EscapedConverter extends Converter<String, String> {
         return Instance.get();
     }
     
+    public static char escapeChar() {
+        return '\\';
+    }
+    
     private static enum Instance {
         INSTANCE;
         
@@ -54,15 +58,11 @@ public final class EscapedConverter extends Converter<String, String> {
             char c = input.charAt(i);
             switch (c) {
             case '\\':
-                if (i+1 < input.length()) {
-                    if (input.charAt(i+1) == '\\') {
-                        sb.append('\\');
-                        ++i;
-                    } else {
-                        sb.append('/');
-                    }
-                } else {
-                    // eat ending escape
+                if ((i+1 < input.length()) && (input.charAt(i+1) == '\\')) {
+                    sb.append('\\');
+                    ++i;
+                } else if (input.length() > 1) {
+                    sb.append('/');
                 }
                 break;
             default:

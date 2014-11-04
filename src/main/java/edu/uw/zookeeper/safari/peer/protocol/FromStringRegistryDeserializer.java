@@ -21,4 +21,9 @@ public class FromStringRegistryDeserializer extends FromStringDeserializer<Objec
             throws IOException, JsonProcessingException {
         return Serializers.getInstance().toClass(value, handledType());
     }
+
+    @Override
+    protected Object _deserializeFromEmptyString() throws IOException {
+        return _deserialize("", null);
+    }
 }

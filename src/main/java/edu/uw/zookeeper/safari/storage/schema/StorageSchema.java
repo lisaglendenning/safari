@@ -64,7 +64,7 @@ public class StorageSchema extends StorageZNode<Void> {
         public static class Volumes extends StorageZNode<Void> {
     
             @Name
-            public static ZNodeLabel LABEL = ZNodeLabel.fromString("volumes");
+            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("volumes");
 
             public static final AbsoluteZNodePath PATH = Safari.PATH.join(LABEL);
             
@@ -132,7 +132,7 @@ public class StorageSchema extends StorageZNode<Void> {
                 public static class Root extends StorageZNode<byte[]> {
     
                     @Name
-                    public static ZNodeLabel LABEL = ZNodeLabel.fromString("root");
+                    public static final ZNodeLabel LABEL = ZNodeLabel.fromString("root");
 
                     public static AbsoluteZNodePath pathOf(Identifier volume) {
                         return Volume.pathOf(volume).join(LABEL);
@@ -149,7 +149,7 @@ public class StorageSchema extends StorageZNode<Void> {
                 public static class Log extends StorageZNode<Void> implements NavigableMap<ZNodeName,StorageZNode<?>> {
     
                     @Name
-                    public static ZNodeLabel LABEL = ZNodeLabel.fromString("log");
+                    public static final ZNodeLabel LABEL = ZNodeLabel.fromString("log");
 
                     public static final AbsoluteZNodePath PATH = Volume.PATH.join(LABEL);
 
@@ -416,7 +416,7 @@ public class StorageSchema extends StorageZNode<Void> {
                         public static class Lease extends StorageZNode<UnsignedLong> {
     
                             @Name
-                            public static ZNodeLabel LABEL = ZNodeLabel.fromString("lease");
+                            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("lease");
 
                             public static final AbsoluteZNodePath PATH = Version.PATH.join(LABEL);
 
@@ -440,7 +440,7 @@ public class StorageSchema extends StorageZNode<Void> {
                         public static class Xalpha extends StorageZNode<Long> {
                             
                             @Name
-                            public static ZNodeLabel LABEL = ZNodeLabel.fromString("xalpha");
+                            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("xalpha");
 
                             public static final AbsoluteZNodePath PATH = Version.PATH.join(LABEL);
 
@@ -464,7 +464,7 @@ public class StorageSchema extends StorageZNode<Void> {
                         public static class Xomega extends StorageZNode<Long> {
                             
                             @Name
-                            public static ZNodeLabel LABEL = ZNodeLabel.fromString("xomega");
+                            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("xomega");
 
                             public static final AbsoluteZNodePath PATH = Version.PATH.join(LABEL);
 
@@ -488,7 +488,7 @@ public class StorageSchema extends StorageZNode<Void> {
                         public static class Snapshot extends StorageZNode<Void> {
 
                             @Name
-                            public static ZNodeLabel LABEL = ZNodeLabel.fromString("snapshot");
+                            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("snapshot");
 
                             public static final AbsoluteZNodePath PATH = Version.PATH.join(LABEL);
 
@@ -506,6 +506,10 @@ public class StorageSchema extends StorageZNode<Void> {
                                 return (Version) parent().get();
                             }
                             
+                            public Prefix prefix() {
+                                return (Prefix) get(Prefix.LABEL);
+                            }
+                            
                             public Commit commit() {
                                 return (Commit) get(Commit.LABEL);
                             }
@@ -519,11 +523,8 @@ public class StorageSchema extends StorageZNode<Void> {
                             }
 
                             @ZNode(dataType=Boolean.class)
-                            public static class Commit extends StorageZNode<Boolean> {
+                            public static class Commit extends StorageZNode.CommitZNode {
                                 
-                                @Name
-                                public static ZNodeLabel LABEL = ZNodeLabel.fromString("commit");
-
                                 public static final AbsoluteZNodePath PATH = Snapshot.PATH.join(LABEL);
 
                                 public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
@@ -541,12 +542,36 @@ public class StorageSchema extends StorageZNode<Void> {
                                     return (Snapshot) parent().get();
                                 }
                             }
+
+                            @ZNode(dataType=ZNodeName.class)
+                            public static class Prefix extends StorageZNode<ZNodeName> {
+
+                                @Name
+                                public static final ZNodeLabel LABEL = ZNodeLabel.fromString("prefix");
+
+                                public static final AbsoluteZNodePath PATH = Snapshot.PATH.join(LABEL);
+
+                                public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
+                                    return Snapshot.pathOf(id, version).join(LABEL);
+                                }
+
+                                public Prefix(
+                                        ValueNode<ZNodeSchema> schema,
+                                        Serializers.ByteCodec<Object> codec,
+                                        NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                    super(schema, codec, parent);
+                                }
+                                
+                                public Snapshot snapshot() {
+                                    return (Snapshot) parent().get();
+                                }
+                            }
                             
                             @ZNode
                             public static class Ephemerals extends StorageZNode<Void> {
 
                                 @Name
-                                public static ZNodeLabel LABEL = ZNodeLabel.fromString("ephemerals");
+                                public static final ZNodeLabel LABEL = ZNodeLabel.fromString("ephemerals");
 
                                 public static final AbsoluteZNodePath PATH = Snapshot.PATH.join(LABEL);
 
@@ -564,46 +589,176 @@ public class StorageSchema extends StorageZNode<Void> {
                                     return (Snapshot) parent().get();
                                 }
                                 
-                                @ZNode
-                                public static class Session extends StorageZNode.SessionZNode<Void> {
+                                public Commit commit() {
+                                    return (Commit) get(Commit.LABEL);
+                                }
+                                
+                                public Sessions sessions() {
+                                    return (Sessions) get(Sessions.LABEL);
+                                }
 
-                                    public static final AbsoluteZNodePath PATH = Ephemerals.PATH.join(ZNodeLabel.fromString(LABEL));
+                                @ZNode(dataType=Boolean.class)
+                                public static class Commit extends StorageZNode.CommitZNode {
+                                   
+                                    public static final AbsoluteZNodePath PATH = Ephemerals.PATH.join(LABEL);
 
-                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
-                                        return Ephemerals.pathOf(id, version).join(labelOf(session));
+                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
+                                        return Ephemerals.pathOf(id, version).join(LABEL);
                                     }
 
-                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, SessionIdHex session) {
-                                        return Ephemerals.pathOf(id, version).join(labelOf(session));
+                                    public Commit(
+                                            ValueNode<ZNodeSchema> schema,
+                                            Serializers.ByteCodec<Object> codec,
+                                            NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                        super(schema, codec, parent);
                                     }
                                     
-                                    public Session(ValueNode<ZNodeSchema> schema,
+                                    public Ephemerals ephemerals() {
+                                        return (Ephemerals) parent().get();
+                                    }
+                                }
+
+                                @ZNode
+                                public static class Sessions extends StorageZNode.SessionsZNode {
+
+                                    public static final AbsoluteZNodePath PATH = Ephemerals.PATH.join(LABEL);
+
+                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
+                                        return Ephemerals.pathOf(id, version).join(LABEL);
+                                    }
+                        
+                                    public Sessions(ValueNode<ZNodeSchema> schema,
                                             ByteCodec<Object> codec,
                                             Pointer<StorageZNode<?>> parent) {
                                         super(schema, codec, parent);
                                     }
                                     
+                                    public Ephemerals ephemerals() {
+                                        return (Ephemerals) parent().get();
+                                    }
+                                    
                                     @ZNode
-                                    public static class Ephemeral extends StorageZNode.EscapedNamedZNode<byte[]> {
-
-                                        public static final AbsoluteZNodePath PATH = Session.PATH.join(ZNodeLabel.fromString(LABEL));
-
-                                        public Ephemeral(ValueNode<ZNodeSchema> schema,
+                                    public static class Session extends StorageZNode.SessionZNode<Void> {
+    
+                                        public static final AbsoluteZNodePath PATH = Sessions.PATH.join(ZNodeLabel.fromString(LABEL));
+    
+                                        public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
+                                            return Sessions.pathOf(id, version).join(labelOf(session));
+                                        }
+    
+                                        public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, SessionIdHex session) {
+                                            return Sessions.pathOf(id, version).join(labelOf(session));
+                                        }
+                                        
+                                        public Session(ValueNode<ZNodeSchema> schema,
                                                 ByteCodec<Object> codec,
                                                 Pointer<StorageZNode<?>> parent) {
                                             super(schema, codec, parent);
                                         }
-
-                                        public Ephemeral(
-                                                String name,
-                                                ValueNode<ZNodeSchema> schema,
-                                                ByteCodec<Object> codec,
-                                                Pointer<StorageZNode<?>> parent) {
-                                            super(name, schema, codec, parent);
+                                        
+                                        public Commit commit() {
+                                            return (Commit) get(Commit.LABEL);
+                                        }
+    
+                                        @ZNode(dataType=Boolean.class)
+                                        public static class Commit extends StorageZNode.CommitZNode {
+    
+                                            public static final AbsoluteZNodePath PATH = Session.PATH.join(LABEL);
+    
+                                            public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
+                                                return Session.pathOf(id, version, session).join(LABEL);
+                                            }
+    
+                                            public Commit(
+                                                    ValueNode<ZNodeSchema> schema,
+                                                    Serializers.ByteCodec<Object> codec,
+                                                    NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                                super(schema, codec, parent);
+                                            }
+                                            
+                                            public Session session() {
+                                                return (Session) parent().get();
+                                            }
                                         }
                                         
-                                        public Session session() {
-                                            return (Session) parent().get();
+                                        @ZNode
+                                        public static class Values extends StorageZNode.ValuesZNode {
+    
+                                            public static final AbsoluteZNodePath PATH = Session.PATH.join(LABEL);
+    
+                                            public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
+                                                return Session.pathOf(id, version, session).join(LABEL);
+                                            }
+                                
+                                            public Values(ValueNode<ZNodeSchema> schema,
+                                                    ByteCodec<Object> codec,
+                                                    Pointer<StorageZNode<?>> parent) {
+                                                super(schema, codec, parent);
+                                            }
+                                            
+                                            public Session session() {
+                                                return (Session) parent().get();
+                                            }
+                                            
+                                            @ZNode
+                                            public static class Ephemeral extends StorageZNode.EscapedNamedZNode<byte[]> {
+        
+                                                public static final AbsoluteZNodePath PATH = Values.PATH.join(ZNodeLabel.fromString(LABEL));
+        
+                                                public Ephemeral(ValueNode<ZNodeSchema> schema,
+                                                        ByteCodec<Object> codec,
+                                                        Pointer<StorageZNode<?>> parent) {
+                                                    super(schema, codec, parent);
+                                                }
+        
+                                                public Ephemeral(
+                                                        String name,
+                                                        ValueNode<ZNodeSchema> schema,
+                                                        ByteCodec<Object> codec,
+                                                        Pointer<StorageZNode<?>> parent) {
+                                                    super(name, schema, codec, parent);
+                                                }
+                                                
+                                                public Commit commit() {
+                                                    return (Commit) get(Commit.LABEL);
+                                                }
+                                                
+                                                public Sequence sequence() {
+                                                    return (Sequence) get(Sequence.LABEL);
+                                                }
+                                                
+                                                @ZNode(dataType=Number.class)
+                                                public static class Sequence extends StorageZNode<Number> {
+
+                                                    @Name
+                                                    public static final ZNodeLabel LABEL = ZNodeLabel.fromString("sequence");
+                                                    
+                                                    public static final AbsoluteZNodePath PATH = Values.PATH.join(LABEL);
+            
+                                                    public Sequence(ValueNode<ZNodeSchema> schema,
+                                                            ByteCodec<Object> codec,
+                                                            Pointer<StorageZNode<?>> parent) {
+                                                        super(schema, codec, parent);
+                                                    }
+                                                }
+                                                
+                                                @ZNode(dataType=Boolean.class)
+                                                public static class Commit extends StorageZNode.CommitZNode {
+    
+                                                    public static final AbsoluteZNodePath PATH = Ephemeral.PATH.join(LABEL);
+    
+                                                    public Commit(
+                                                            ValueNode<ZNodeSchema> schema,
+                                                            Serializers.ByteCodec<Object> codec,
+                                                            NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                                        super(schema, codec, parent);
+                                                    }
+                                                    
+                                                    public Ephemeral ephemeral() {
+                                                        return (Ephemeral) parent().get();
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -613,7 +768,7 @@ public class StorageSchema extends StorageZNode<Void> {
                             public static class Watches extends StorageZNode<Void> {
 
                                 @Name
-                                public static ZNodeLabel LABEL = ZNodeLabel.fromString("watches");
+                                public static final ZNodeLabel LABEL = ZNodeLabel.fromString("watches");
 
                                 public static final AbsoluteZNodePath PATH = Snapshot.PATH.join(LABEL);
 
@@ -630,47 +785,177 @@ public class StorageSchema extends StorageZNode<Void> {
                                 public Snapshot snapshot() {
                                     return (Snapshot) parent().get();
                                 }
+                                
+                                public Commit commit() {
+                                    return (Commit) get(Commit.LABEL);
+                                }
+                                
+                                public Sessions sessions() {
+                                    return (Sessions) get(Sessions.LABEL);
+                                }
+
+                                @ZNode(dataType=Boolean.class)
+                                public static class Commit extends StorageZNode.CommitZNode {
+
+                                    public static final AbsoluteZNodePath PATH = Watches.PATH.join(LABEL);
+
+                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
+                                        return Watches.pathOf(id, version).join(LABEL);
+                                    }
+
+                                    public Commit(
+                                            ValueNode<ZNodeSchema> schema,
+                                            Serializers.ByteCodec<Object> codec,
+                                            NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                        super(schema, codec, parent);
+                                    }
                                     
+                                    public Watches watches() {
+                                        return (Watches) parent().get();
+                                    }
+                                }
+
                                 @ZNode
-                                public static class Session extends StorageZNode.SessionZNode<Void> {
+                                public static class Sessions extends StorageZNode.SessionsZNode {
 
-                                    public static final AbsoluteZNodePath PATH = Ephemerals.PATH.join(ZNodeLabel.fromString(LABEL));
+                                    public static final AbsoluteZNodePath PATH = Watches.PATH.join(LABEL);
 
-                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
-                                        return Watches.pathOf(id, version).join(labelOf(session));
+                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version) {
+                                        return Watches.pathOf(id, version).join(LABEL);
                                     }
-
-                                    public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, SessionIdHex session) {
-                                        return Watches.pathOf(id, version).join(labelOf(session));
-                                    }
-                                    
-                                    public Session(ValueNode<ZNodeSchema> schema,
+                        
+                                    public Sessions(ValueNode<ZNodeSchema> schema,
                                             ByteCodec<Object> codec,
                                             Pointer<StorageZNode<?>> parent) {
                                         super(schema, codec, parent);
                                     }
-
-                                    @ZNode(dataType=Watcher.WatcherType.class)
-                                    public static class Watch extends StorageZNode.EscapedNamedZNode<Watcher.WatcherType> {
-
-                                        public static final AbsoluteZNodePath PATH = Session.PATH.join(ZNodeLabel.fromString(LABEL));
+                                    
+                                    public Watches watches() {
+                                        return (Watches) parent().get();
+                                    }
+                                
+                                    @ZNode
+                                    public static class Session extends StorageZNode.SessionZNode<Void> {
+    
+                                        public static final AbsoluteZNodePath PATH = Sessions.PATH.join(ZNodeLabel.fromString(LABEL));
+    
+                                        public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
+                                            return Sessions.pathOf(id, version).join(labelOf(session));
+                                        }
+    
+                                        public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, SessionIdHex session) {
+                                            return Sessions.pathOf(id, version).join(labelOf(session));
+                                        }
                                         
-                                        public Watch(ValueNode<ZNodeSchema> schema,
+                                        public Session(ValueNode<ZNodeSchema> schema,
                                                 ByteCodec<Object> codec,
                                                 Pointer<StorageZNode<?>> parent) {
                                             super(schema, codec, parent);
                                         }
-
-                                        public Watch(
-                                                String name,
-                                                ValueNode<ZNodeSchema> schema,
-                                                ByteCodec<Object> codec,
-                                                Pointer<StorageZNode<?>> parent) {
-                                            super(name, schema, codec, parent);
-                                        }
                                         
-                                        public Session session() {
-                                            return (Session) parent().get();
+                                        public Commit commit() {
+                                            return (Commit) get(Commit.LABEL);
+                                        }
+    
+                                        @ZNode(dataType=Boolean.class)
+                                        public static class Commit extends StorageZNode.CommitZNode {
+    
+                                            public static final AbsoluteZNodePath PATH = Session.PATH.join(LABEL);
+    
+                                            public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
+                                                return Session.pathOf(id, version, session).join(LABEL);
+                                            }
+    
+                                            public Commit(
+                                                    ValueNode<ZNodeSchema> schema,
+                                                    Serializers.ByteCodec<Object> codec,
+                                                    NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                                super(schema, codec, parent);
+                                            }
+                                            
+                                            public Session session() {
+                                                return (Session) parent().get();
+                                            }
+                                        }
+    
+                                        @ZNode
+                                        public static class Values extends StorageZNode.ValuesZNode {
+    
+                                            public static final AbsoluteZNodePath PATH = Session.PATH.join(LABEL);
+    
+                                            public static AbsoluteZNodePath pathOf(Identifier id, UnsignedLong version, long session) {
+                                                return Session.pathOf(id, version, session).join(LABEL);
+                                            }
+                                
+                                            public Values(ValueNode<ZNodeSchema> schema,
+                                                    ByteCodec<Object> codec,
+                                                    Pointer<StorageZNode<?>> parent) {
+                                                super(schema, codec, parent);
+                                            }
+                                            
+                                            public Session session() {
+                                                return (Session) parent().get();
+                                            }
+                                            
+                                            @ZNode(dataType=Watcher.WatcherType.class)
+                                            public static class Watch extends StorageZNode.EscapedNamedZNode<Watcher.WatcherType> {
+        
+                                                public static final AbsoluteZNodePath PATH = Values.PATH.join(ZNodeLabel.fromString(LABEL));
+                                                
+                                                public Watch(ValueNode<ZNodeSchema> schema,
+                                                        ByteCodec<Object> codec,
+                                                        Pointer<StorageZNode<?>> parent) {
+                                                    super(schema, codec, parent);
+                                                }
+        
+                                                public Watch(
+                                                        String name,
+                                                        ValueNode<ZNodeSchema> schema,
+                                                        ByteCodec<Object> codec,
+                                                        Pointer<StorageZNode<?>> parent) {
+                                                    super(name, schema, codec, parent);
+                                                }
+                                                
+                                                public Commit commit() {
+                                                    return (Commit) get(Commit.LABEL);
+                                                }
+                                                
+                                                public Ephemeral ephemeral() {
+                                                    return (Ephemeral) get(Ephemeral.LABEL);
+                                                }
+                                                
+                                                @ZNode(dataType=Long.class)
+                                                public static class Ephemeral extends StorageZNode<Long> {
+
+                                                    @Name
+                                                    public static final ZNodeLabel LABEL = ZNodeLabel.fromString("ephemeral");
+                                                    
+                                                    public static final AbsoluteZNodePath PATH = Values.PATH.join(LABEL);
+            
+                                                    public Ephemeral(ValueNode<ZNodeSchema> schema,
+                                                            ByteCodec<Object> codec,
+                                                            Pointer<StorageZNode<?>> parent) {
+                                                        super(schema, codec, parent);
+                                                    }
+                                                }
+    
+                                                @ZNode(dataType=Boolean.class)
+                                                public static class Commit extends StorageZNode.CommitZNode {
+    
+                                                    public static final AbsoluteZNodePath PATH = Watch.PATH.join(LABEL);
+    
+                                                    public Commit(
+                                                            ValueNode<ZNodeSchema> schema,
+                                                            Serializers.ByteCodec<Object> codec,
+                                                            NameTrie.Pointer<? extends StorageZNode<?>> parent) {
+                                                        super(schema, codec, parent);
+                                                    }
+                                                    
+                                                    public Watch watch() {
+                                                        return (Watch) parent().get();
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -685,7 +970,7 @@ public class StorageSchema extends StorageZNode<Void> {
         public static class Sessions extends StorageZNode<Void> {
     
             @Name
-            public static ZNodeLabel LABEL = ZNodeLabel.fromString("sessions");
+            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("sessions");
 
             public static final AbsoluteZNodePath PATH = Safari.PATH.join(LABEL);
 

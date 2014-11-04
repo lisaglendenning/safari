@@ -172,6 +172,10 @@ public class ExecuteSnapshotTest extends AbstractMainTest {
                     ExecuteSnapshot.module());
                 Long value = snapshot.getInstance(Key.get(new TypeLiteral<AsyncFunction<Boolean,Long>>(){}, Snapshot.class)).apply(Boolean.TRUE).get();
                 assertEquals(zxid, value.longValue());
+
+                // check skeleton
+                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Prefix.pathOf(volume, Index.TO.get(versions));
+                assertEquals(ZNodeLabel.empty(), serializer.fromBytes(((Records.DataGetter) Index.TO.get(snapshotClients).submit(Operations.Requests.getData().setPath(path).build()).get().record()).getData(), ZNodeName.class));
                 
                 // check result
                 path = StorageSchema.Safari.Volumes.Volume.Root.pathOf(volume); 
@@ -230,7 +234,8 @@ public class ExecuteSnapshotTest extends AbstractMainTest {
                 }
                 
                 // check ephemerals
-                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.pathOf(volume, Index.TO.get(versions)).join(ZNodeLabel.fromString(SessionIdHex.valueOf(toFrontend.apply(client.session().get().getSessionId())).toString()));
+                SessionIdHex session = SessionIdHex.valueOf(toFrontend.apply(client.session().get().getSessionId()));
+                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.pathOf(volume, Index.TO.get(versions)).join(StorageZNode.SessionZNode.labelOf(session)).join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.Session.Values.LABEL);
                 children = ((Records.ChildrenGetter) Index.TO.get(snapshotClients).submit(Operations.Requests.getChildren().setPath(path).build()).get().record()).getChildren();
                 assertEquals(2, children.size());
                 ZNodeName name = ZNodeName.fromString("ephemerals/ephemeral");
@@ -258,7 +263,7 @@ public class ExecuteSnapshotTest extends AbstractMainTest {
                                         ((Records.DataGetter) Index.TO.get(snapshotClients).submit(Operations.Requests.getData().setPath(path).build()).get().record()).getData()))));
                 
                 // check watches
-                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.pathOf(volume, Index.TO.get(versions)).join(ZNodeLabel.fromString(SessionIdHex.valueOf(toFrontend.apply(client.session().get().getSessionId())).toString()));
+                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.pathOf(volume, Index.TO.get(versions)).join(StorageZNode.SessionZNode.labelOf(session)).join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.Values.LABEL);
                 children = ((Records.ChildrenGetter) Index.TO.get(snapshotClients).submit(Operations.Requests.getChildren().setPath(path).build()).get().record()).getChildren();
                 name = ZNodeName.fromString(ZNodeLabelVector.join("sequentials", Index.TO.get(sequentials).get(1).toString()));
                 assertEquals(ImmutableList.of(EscapedConverter.getInstance().convert(name.toString())), children);

@@ -14,6 +14,7 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
+import com.google.common.base.Functions;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
@@ -32,10 +33,14 @@ import edu.uw.zookeeper.client.FourLetterCommand;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.ChainedFutures;
+import edu.uw.zookeeper.common.FutureChain;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.common.ValueFuture;
+import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Operations;
+import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.Serializers.ByteCodec;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodePath;
@@ -47,10 +52,10 @@ import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 
-public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<ListenableFuture<FourLetterWords.Wchc>, ChainedFutures.ListChain<ListenableFuture<FourLetterWords.Wchc>,?>> {
+public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain.FutureListChain<ListenableFuture<?>>> {
 
     public static enum Phase {
-        PRE_PHASE, POST_PHASE;
+        PRE_PHASE, SNAPSHOT, POST_PHASE;
     }
     
     public static <U,V> Transform<U,V> transform(
@@ -85,24 +90,32 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
             final ClientExecutor<? super Records.Request, ?, ?> client,
             final Supplier<? extends ListenableFuture<? extends AsyncFunction<Long, Long>>> sessions,
             final Supplier<? extends ListenableFuture<FourLetterWords.Wchc>> query) {
-        final AsyncFunction<Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>>,FourLetterWords.Wchc> create = new AsyncFunction<Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>>,FourLetterWords.Wchc>() {
+        final AsyncFunction<Pair<? extends Map<ZNodePath,Long>, Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>>>,FourLetterWords.Wchc> create = new AsyncFunction<Pair<? extends Map<ZNodePath,Long>, Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>>>,FourLetterWords.Wchc>() {
             @Override
-            public ListenableFuture<FourLetterWords.Wchc> apply(Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>> input)
+            public ListenableFuture<FourLetterWords.Wchc> apply(Pair<? extends Map<ZNodePath,Long>, Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>>> input)
                     throws Exception {
                 return CreateWatches.call(
                         prefix, 
                         labelOf, 
                         codec, 
                         client, 
-                        input);
+                        input.first(),
+                        input.second());
             }
         };
-        final AsyncFunction<FourLetterWords.Wchc, FourLetterWords.Wchc> translate = new AsyncFunction<FourLetterWords.Wchc, FourLetterWords.Wchc>() {
+        final AsyncFunction<Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>>, FourLetterWords.Wchc> translate = new AsyncFunction<Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>>, FourLetterWords.Wchc>() {
             @Override
-            public ListenableFuture<FourLetterWords.Wchc> apply(FourLetterWords.Wchc input) throws Exception {
+            public ListenableFuture<FourLetterWords.Wchc> apply(final Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>> input) throws Exception {
                 return Futures.transform(
-                        TranslateSessions.call(input, sessions), 
-                        create);
+                        TranslateSessions.call(input.first(), sessions), 
+                        new AsyncFunction<Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>>, FourLetterWords.Wchc>(){
+                            @Override
+                            public ListenableFuture<FourLetterWords.Wchc> apply(
+                                    Queue<ValueFuture<? extends Collection<ZNodePath>, Long, ?>> futures)
+                                    throws Exception {
+                                return create.apply(Pair.create(input.second(), futures));
+                            }
+                        });
             }
         };
         return ChainedFutures.<FourLetterWords.Wchc>castLast(
@@ -114,40 +127,46 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
     }
     
     private final Supplier<? extends ListenableFuture<FourLetterWords.Wchc>> query;
-    private final AsyncFunction<FourLetterWords.Wchc, FourLetterWords.Wchc> creator;
+    private final AsyncFunction<Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>>, FourLetterWords.Wchc> creator;
     
     protected SnapshotWatches(
             Supplier<? extends ListenableFuture<FourLetterWords.Wchc>> query,
-            AsyncFunction<FourLetterWords.Wchc, FourLetterWords.Wchc> creator) {
+            AsyncFunction<Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>>, FourLetterWords.Wchc> creator) {
         this.query = query;
         this.creator = creator;
     }
     
     @Override
-    public Optional<? extends ListenableFuture<FourLetterWords.Wchc>> apply(
-            ChainedFutures.ListChain<ListenableFuture<FourLetterWords.Wchc>, ?> input) throws Exception {
+    public Optional<? extends ListenableFuture<?>> apply(
+            FutureChain.FutureListChain<ListenableFuture<?>> input) throws Exception {
         if (input.size() >= Phase.values().length) {
             return Optional.absent();
         }
         Phase phase = Phase.values()[input.size()];
-        final ListenableFuture<FourLetterWords.Wchc> query = this.query.get();
         final ListenableFuture<FourLetterWords.Wchc> future;
         switch (phase) {
         case PRE_PHASE:
         {
-            future = query;
+            future = this.query.get();
             break;
+        }
+        case SNAPSHOT:
+        {
+            throw new IllegalStateException();
         }
         case POST_PHASE:
         {
+            final ListenableFuture<FourLetterWords.Wchc> query = this.query.get();
             final FourLetterWords.Wchc previous = (FourLetterWords.Wchc) input.get(Phase.PRE_PHASE.ordinal()).get();
+            @SuppressWarnings("unchecked")
+            final Map<ZNodePath,Long> ephemerals = ((Pair<Long, Map<ZNodePath,Long>>) input.get(Phase.SNAPSHOT.ordinal()).get()).second();
             future = Futures.transform(
                     Futures.transform(
                             query, 
-                            new Function<FourLetterWords.Wchc, FourLetterWords.Wchc>() {
+                            new Function<FourLetterWords.Wchc, Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>>>() {
                                 @Override
-                                public FourLetterWords.Wchc apply(FourLetterWords.Wchc input) {
-                                    return Union.create().apply(ImmutableList.of(previous, input));
+                                public Pair<FourLetterWords.Wchc, ? extends Map<ZNodePath,Long>> apply(FourLetterWords.Wchc input) {
+                                    return Pair.create(Union.create().apply(ImmutableList.of(previous, input)), ephemerals);
                                 }
                             }), 
                     creator);
@@ -171,8 +190,9 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
                 final Function<ZNodePath,ZNodeLabel> labelOf,
                 final ByteCodec<Object> codec,
                 final ClientExecutor<? super Records.Request, O, ?> client,
+                final Map<ZNodePath,Long> ephemerals,
                 final Queue<ValueFuture<? extends Collection<ZNodePath>,Long,?>> values) throws IOException {
-            CreateWatches<O> instance = new CreateWatches<O>(values, EntryToRequests.create(prefix, labelOf, codec), client);
+            CreateWatches<O> instance = new CreateWatches<O>(values, EntryToRequests.create(prefix, labelOf, Functions.forMap(ephemerals, null), codec), client);
             instance.run();
             return instance;
         }
@@ -269,25 +289,31 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
         }
     }
 
-    protected static final class SessionToPath implements Function<Long, ZNodePath> {
-        public static SessionToPath create(
+    protected static final class SessionValuesPaths implements Function<Long, ImmutableList<AbsoluteZNodePath>> {
+        
+        public static SessionValuesPaths create(
                 ZNodePath prefix) {
-            return new SessionToPath(prefix);
+            return new SessionValuesPaths(prefix);
         }
         
         private final ZNodePath prefix;
         
-        public SessionToPath(
+        public SessionValuesPaths(
                 ZNodePath prefix) {
             this.prefix = prefix;
         }
         
         @Override
-        public ZNodePath apply(Long input) {
-            return prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Session.labelOf(input.longValue()));
+        public ImmutableList<AbsoluteZNodePath> apply(Long input) {
+            final AbsoluteZNodePath session = (AbsoluteZNodePath) prefix.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.labelOf(input.longValue()));
+            final AbsoluteZNodePath values = session.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.Values.LABEL);
+            return ImmutableList.of(session, values);
         }
     }
     
+    /**
+     * Not threadsafe.
+     */
     public static final class EntryToRequests implements Function<Map.Entry<Long, ? extends Collection<ZNodePath>>, List<Records.Request>> {
 
         /**
@@ -298,37 +324,56 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
         public static EntryToRequests create(
                 final ZNodePath prefix,
                 final Function<ZNodePath,ZNodeLabel> labelOf,
-                final ByteCodec<Object> codec) throws IOException {
-            final Operations.Requests.Create createSession = Operations.Requests.create();
-            // the only watches reported by wchc/wchp are data watches
-            final Operations.Requests.Create createWatch = Operations.Requests.create().setData(codec.toBytes(
-                         Watcher.WatcherType.Data));
-            return new EntryToRequests(createSession, createWatch, SessionToPath.create(prefix), labelOf);
+                final Function<ZNodePath, Long> ephemerals,
+                final Serializers.ByteSerializer<Object> serializer) throws IOException {
+            return new EntryToRequests(serializer, ephemerals, SessionValuesPaths.create(prefix), labelOf);
         }
         
+        private final Serializers.ByteSerializer<Object> serializer;
         private final Operations.Requests.Create createSession;
         private final Operations.Requests.Create createWatch;
-        private final Function<Long, ZNodePath> prefix;
+        private final Operations.Requests.Create createEphemeral;
+        private final Function<ZNodePath, Long> ephemerals;
+        private final Function<Long, ImmutableList<AbsoluteZNodePath>> prefix;
         private final Function<ZNodePath,ZNodeLabel> labelOf;
         
         protected EntryToRequests(
-                Operations.Requests.Create createSession,
-                Operations.Requests.Create createWatch,
-                Function<Long, ZNodePath> prefix,
+                Serializers.ByteSerializer<Object> serializer,
+                Function<ZNodePath, Long> ephemerals,
+                Function<Long, ImmutableList<AbsoluteZNodePath>> prefix,
                 Function<ZNodePath,ZNodeLabel> labelOf) {
-            this.createSession = createSession;
-            this.createWatch = createWatch;
+            this.serializer = serializer;
+            this.createSession = Operations.Requests.create();
+            // the only watches reported by wchc/wchp are data watches
+            try {
+                this.createWatch = Operations.Requests.create().setData(serializer.toBytes(
+                        Watcher.WatcherType.Data));
+            } catch (IOException e) {
+                throw new AssertionError(e);
+            }
+            this.createEphemeral = Operations.Requests.create();
+            this.ephemerals = ephemerals;
             this.prefix = prefix;
             this.labelOf = labelOf;
         }
         
         @Override
         public List<Records.Request> apply(Map.Entry<Long, ? extends Collection<ZNodePath>> input) {
-            List<Records.Request> requests = Lists.newArrayListWithCapacity(input.getValue().size()+1);
-            ZNodePath path = prefix.apply(input.getKey());
-            requests.add(createSession.setPath(path).build());
+            List<Records.Request> requests = Lists.newArrayListWithCapacity(input.getValue().size()*2+2);
+            for (ZNodePath path: prefix.apply(input.getKey())) {
+                requests.add(createSession.setPath(path).build());
+            }
             for (ZNodePath watch: input.getValue()) {
-                requests.add(createWatch.setPath(path.join(labelOf.apply(watch))).build());
+                requests.add(createWatch.setPath(createSession.getPath().join(labelOf.apply(watch))).build());
+                Long ephemeral = this.ephemerals.apply(watch);
+                if (ephemeral != null) {
+                    try {
+                        requests.add(createEphemeral.setPath(createWatch.getPath().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.Values.Watch.Ephemeral.LABEL))
+                                .setData(serializer.toBytes(ephemeral)).build());
+                    } catch (IOException e) {
+                        throw new AssertionError(e);
+                    }
+                }
             }
             return requests;
         }
