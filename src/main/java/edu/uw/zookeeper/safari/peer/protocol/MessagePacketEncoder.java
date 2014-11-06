@@ -40,10 +40,9 @@ public class MessagePacketEncoder implements Encoder<MessagePacket, MessagePacke
     @Override
     public void encode(MessagePacket input, ByteBuf output)
             throws IOException {
-        input.getHeader().encode(output);
         ByteBufOutputStream stream = new ByteBufOutputStream(output);
         try {
-            writer.writeValue(stream, input.getBody());
+            writer.writeValue(stream, input);
         } finally {
             stream.close();
         }

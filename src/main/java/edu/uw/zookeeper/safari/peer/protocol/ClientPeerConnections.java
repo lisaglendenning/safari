@@ -53,7 +53,7 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
             CachedFunction<Identifier, ServerInetAddressView> lookup,
             ClientConnectionFactory<? extends Connection<? super MessagePacket,? extends MessagePacket,?>> connections) {
         super(identifier, timeOut, executor, connections, ImmutableList.<Service.Listener>of());
-        this.handshake = MessagePacket.of(MessageHandshake.of(identifier));
+        this.handshake = MessagePacket.valueOf(MessageHandshake.of(identifier));
         this.addressLookup = lookup;
         this.lookups = CachedLookup.fromCache(
                 peers, 
@@ -100,7 +100,8 @@ public class ClientPeerConnections extends PeerConnections<ClientPeerConnection<
         return lookups.asLookup();
     }
 
-    protected ListenableFuture<MessagePacket<MessageHandshake>> handshake(ClientPeerConnection<?> peer) {
+    @SuppressWarnings("rawtypes")
+    protected ListenableFuture<MessagePacket> handshake(ClientPeerConnection<?> peer) {
         return peer.write(handshake);
     }
 

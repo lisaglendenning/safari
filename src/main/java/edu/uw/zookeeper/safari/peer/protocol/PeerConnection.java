@@ -75,7 +75,7 @@ public abstract class PeerConnection<T extends Connection<? super MessagePacket,
     }
 
     @Override
-    public <V extends MessagePacket> ListenableFuture<V> write(V input) {
+    public ListenableFuture<MessagePacket> write(MessagePacket input) {
         heartbeat.send(input);
         return super.write(input);
     }
@@ -148,7 +148,7 @@ public abstract class PeerConnection<T extends Connection<? super MessagePacket,
                 Set<Pair<Runnable,Executor>> listeners,
                 Promise<Void> promise,
                 Logger logger) {
-            super(MessagePacket.of(MessageHeartbeat.getInstance()), connection, parameters, executor, listeners, promise, logger);
+            super(MessagePacket.valueOf(MessageHeartbeat.getInstance()), connection, parameters, executor, listeners, promise, logger);
         }
 
         @Override

@@ -75,7 +75,7 @@ public class ServerPeerConnections extends PeerConnections<ServerPeerConnection<
         
         @Override
         public void handleConnectionRead(MessagePacket event) {
-            if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.getHeader().type()) {
+            if (MessageType.MESSAGE_TYPE_HANDSHAKE == event.getType()) {
                 MessageHandshake body = (MessageHandshake) event.getBody();
                 connection.unsubscribe(this);
                 ServerPeerConnection<?> peer = ServerPeerConnection.create(identifier(), body.getIdentifier(), connection, timeOut, executor);

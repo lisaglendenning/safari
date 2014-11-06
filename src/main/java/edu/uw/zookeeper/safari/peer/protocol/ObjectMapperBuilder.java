@@ -85,7 +85,8 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 .add(BoundVolumeOperatorSerializer.create())
                 .add(VolumeLogEntrySerializer.create())
                 .add(SafariExceptionSerializer.create())
-                .add(ShardedResponseMessageSerializer.create());
+                .add(ShardedResponseMessageSerializer.create())
+                .add(MessagePacketSerializer.create());
             return serializers.build();
         }
 
@@ -105,7 +106,8 @@ public class ObjectMapperBuilder extends edu.uw.zookeeper.jackson.databind.Objec
                 .put(BoundVolumeOperator.class, BoundVolumeOperatorDeserializer.create())
                 .put(VolumeLogEntry.class, VolumeLogEntryDeserializer.create())
                 .put(SafariException.class, SafariExceptionDeserializer.create())
-                .put(ShardedResponseMessage.class, ShardedResponseMessageDeserializer.create());
+                .put(ShardedResponseMessage.class, ShardedResponseMessageDeserializer.create())
+                .put(MessagePacket.class, MessagePacketDeserializer.create());
             return deserializers.build();
         }
         

@@ -51,7 +51,7 @@ public class MessageXomegaSender extends Watchers.StopServiceOnFailure<StorageSc
     @Override
     public void onSuccess(StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega result) {
         if ((result != null) && (result.data().get() != null)) {
-            MessagePacket<MessageXomega> message = MessagePacket.of(MessageXomega.valueOf(result.version().id(), result.data().get()));
+            MessagePacket<MessageXomega> message = MessagePacket.valueOf(MessageXomega.valueOf(result.version().id(), result.data().get()));
             for (ServerPeerConnection<?> connection: connections) {
                 // TODO handle error?
                 connection.write(message);

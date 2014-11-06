@@ -162,7 +162,7 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
 
         @Override
         public void handleConnectionRead(MessagePacket message) {
-            switch (message.getHeader().type()) {
+            switch (message.getType()) {
             case MESSAGE_TYPE_SESSION_RESPONSE:
             {
                 MessageSessionResponse body = (MessageSessionResponse) message.getBody();
@@ -224,7 +224,7 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
             
             protected class OpenSessionTask extends PromiseTask<MessageSessionOpenRequest, MessageSessionOpenResponse> implements Runnable {
 
-                private Optional<ListenableFuture<MessagePacket<MessageSessionOpenRequest>>> write;
+                private Optional<ListenableFuture<MessagePacket>> write;
 
                 public OpenSessionTask(
                         MessageSessionOpenRequest request,
@@ -240,7 +240,7 @@ public class ClientPeerConnectionDispatchers implements Supplier<CachedFunction<
                             if (!write.isPresent()) {
                                 if (connects.putIfAbsent(task.getIdentifier(), this) == null) {
                                     try {
-                                        write = Optional.of(connection.write(MessagePacket.of(task)));
+                                        write = Optional.of(connection.write(MessagePacket.valueOf(task)));
                                         write.get().addListener(this, MoreExecutors.directExecutor());
                                     } finally {
                                         this.addListener(this, MoreExecutors.directExecutor());

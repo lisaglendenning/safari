@@ -297,11 +297,12 @@ public class ClientPeerConnectionExecutor extends AbstractActor<ClientPeerConnec
         @Override
         public RequestTask submit(final RequestTask task) {
             MessagePacket<MessageSessionRequest> message = 
-                    MessagePacket.of(MessageSessionRequest.of(frontend.id(), task.task()));
+                    MessagePacket.valueOf(MessageSessionRequest.of(frontend.id(), task.task()));
             // task in queue before writing
             if (pending.offer(task)) {
                 if (state() != State.TERMINATED) {
-                    ListenableFuture<MessagePacket<MessageSessionRequest>> write = dispatcher.connection().write(message);
+                    @SuppressWarnings("rawtypes")
+                    ListenableFuture<MessagePacket> write = dispatcher.connection().write(message);
                     Futures.addCallback(write, task);
                     task.addListener(this, MoreExecutors.directExecutor());
                 } else {

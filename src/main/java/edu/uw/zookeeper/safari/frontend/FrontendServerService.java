@@ -20,7 +20,6 @@ import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.client.CreateOrEquals;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
-import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.net.ConnectionFactory.ConnectionsListener;
 import edu.uw.zookeeper.net.ServerConnectionFactory;

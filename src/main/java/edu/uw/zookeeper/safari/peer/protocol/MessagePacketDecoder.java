@@ -5,15 +5,11 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
 
 import java.io.IOException;
-import java.util.Map;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
-import com.google.common.collect.ImmutableMap;
-
 import edu.uw.zookeeper.net.Decoder;
 import edu.uw.zookeeper.protocol.LoggingMarker;
 
@@ -27,15 +23,11 @@ public class MessagePacketDecoder implements Decoder<MessagePacket, MessagePacke
     }
     
     protected final Logger logger;
-    protected final Map<MessageType, ObjectReader> readers;
+    protected final ObjectReader reader;
     
     public MessagePacketDecoder(ObjectReader reader, Logger logger) {
         this.logger = checkNotNull(logger);
-        ImmutableMap.Builder<MessageType, ObjectReader> readers = ImmutableMap.builder();
-        for (Map.Entry<MessageType, Class<? extends MessageBody>> e: MessageTypes.registeredTypes()) {
-            readers.put(e.getKey(), reader.withType(e.getValue()));
-        }
-        this.readers = readers.build();
+        this.reader = reader.withType(MessagePacket.class);
     }
 
     @Override
@@ -52,10 +44,7 @@ public class MessagePacketDecoder implements Decoder<MessagePacket, MessagePacke
         }
         ByteBufInputStream stream = new ByteBufInputStream(input);
         try {
-            MessageHeader header = MessageHeader.decode(input);
-            MessageBody body = readers.get(header.type()).readValue(stream);
-            MessagePacket<?> message = MessagePacket.of(header, body);
-            return message;
+            return reader.readValue(stream);
         } finally {
             stream.close();
         }

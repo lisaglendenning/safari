@@ -179,7 +179,7 @@ public final class XomegaCache extends LoggingServiceListener<ClientPeerConnecti
         @SuppressWarnings("unchecked")
         @Override
         public void handleConnectionRead(final MessagePacket message) {
-            if (message.getHeader().type() == MessageType.MESSAGE_TYPE_XOMEGA) {
+            if (message.getType() == MessageType.MESSAGE_TYPE_XOMEGA) {
                 final MessageXomega body = (MessageXomega) message.getBody();
                 Pair<UnsignedLong, ?> value = cache.get(body.getVersion().getValue());
                 if (value == null) {

@@ -280,7 +280,7 @@ public class BackendRequestService extends ServiceListenersService {
         @Override
         public void handleConnectionRead(MessagePacket message) {
             logger.debug("{}", message);
-            switch (message.getHeader().type()) {
+            switch (message.getType()) {
             case MESSAGE_TYPE_HANDSHAKE:
             case MESSAGE_TYPE_HEARTBEAT:
                 break;
@@ -333,7 +333,7 @@ public class BackendRequestService extends ServiceListenersService {
                 }
             } catch (KeeperException e) {
                 onSuccess(
-                        MessagePacket.of(
+                        MessagePacket.valueOf(
                                 MessageSessionResponse.of(
                                         message.getIdentifier(), 
                                         ShardedServerResponseMessage.valueOf(
@@ -402,7 +402,7 @@ public class BackendRequestService extends ServiceListenersService {
                         }
                         mine.add(session);
                     }
-                    onSuccess(MessagePacket.of(response));
+                    onSuccess(MessagePacket.valueOf(response));
                 }
             }
         }
@@ -444,7 +444,7 @@ public class BackendRequestService extends ServiceListenersService {
 
             @Override
             public void onSuccess(ShardedResponseMessage<?> response) {
-                dispatcher().onSuccess(MessagePacket.of(MessageSessionResponse.of(
+                dispatcher().onSuccess(MessagePacket.valueOf(MessageSessionResponse.of(
                         executor().session(), response)));
             }
 
