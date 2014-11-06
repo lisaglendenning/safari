@@ -6,10 +6,13 @@ import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
@@ -18,6 +21,7 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
@@ -34,13 +38,13 @@ import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Services;
-import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.NameTrie;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.ValueNode;
 import edu.uw.zookeeper.data.WatchEvent;
 import edu.uw.zookeeper.data.WatchListeners;
+import edu.uw.zookeeper.data.WatchMatchListener;
 import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
@@ -96,89 +100,126 @@ public final class AbortClosedSessionSnapshots extends WatchMatchServiceListener
             Service service) {
         final Set<AbsoluteZNodePath> snapshots = Collections.synchronizedSet(
                 Sets.<AbsoluteZNodePath>newHashSet());
-        AbortClosedSessionSnapshots instance = new AbortClosedSessionSnapshots(snapshots, materializer, cacheEvents, service);
-        Watchers.CacheNodeCreatedListener.create(
-                materializer.cache(),
-                service, 
-                cacheEvents,
-                instance.new SnapshotWatcher(snapshots, instance.logger()),
-                instance.logger()).listen();
+        final Logger logger = LogManager.getLogger(AbortClosedSessionSnapshots.class);
+        final AbortSessionSnapshotCallback<Boolean> callback = AbortSessionSnapshotCallback.create(snapshots, materializer, Watchers.StopServiceOnFailure.create(service), logger);
+        ClosedSessionsSnapshotWatcher.listen(snapshots, callback, materializer, cacheEvents, service, logger);
+        final AbortClosedSessionSnapshots instance = new AbortClosedSessionSnapshots(
+                snapshots,
+                cacheEvents, 
+                service,
+                Watchers.FutureCallbackListener.create(
+                        Watchers.EventToPathCallback.create(callback), 
+                        WatchMatcher.exact(
+                                StorageSchema.Safari.Sessions.Session.PATH, 
+                                Watcher.Event.EventType.NodeDeleted),
+                        logger));
         instance.listen();
         return instance;
     }
 
-    protected final Materializer<StorageZNode<?>,?> materializer;
     protected final Set<AbsoluteZNodePath> snapshots;
-    protected final AsyncFunction<? super ZNodePath, ?> abort;
     
     protected AbortClosedSessionSnapshots(
             Set<AbsoluteZNodePath> snapshots,
-            final Materializer<StorageZNode<?>,?> materializer,
             WatchListeners cacheEvents,
-            Service service) {
-        super(service, 
-                cacheEvents, 
-                WatchMatcher.exact(
-                        StorageSchema.Safari.Sessions.Session.PATH, 
-                        Watcher.Event.EventType.NodeDeleted));
-        this.materializer = materializer;
+            Service service,
+            WatchMatchListener listener) {
+        super(service, cacheEvents, listener);
         this.snapshots = snapshots;
-        this.abort = AbortSessionSnapshot.create(materializer);
-    }
-
-    @Override
-    public void handleWatchEvent(WatchEvent event) {
-        super.handleWatchEvent(event);
-        ImmutableList<AbsoluteZNodePath> toAbort = ImmutableList.of();
-        final ZNodeLabel label = (ZNodeLabel) event.getPath().label();
-        synchronized (snapshots) {
-            for (AbsoluteZNodePath path: snapshots) {
-                StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot snapshot = 
-                        (StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot) materializer.cache().cache().get(path);
-                // only abort committed snapshot state
-                if ((snapshot != null) && (snapshot.commit() != null)) {
-                    for (StorageZNode<?> node: snapshot.values()) {
-                        StorageZNode<?> session = node.get(label);
-                        if (session != null) {
-                            toAbort = ImmutableList.<AbsoluteZNodePath>builder()
-                            .addAll(toAbort)
-                            .add((AbsoluteZNodePath) session.path()).build();
-                        }
-                    }
-                }
-            }
-        }
-        for (AbsoluteZNodePath path: toAbort) {
-            abort(path);
-        }
     }
     
     @Override
     public void terminated(Service.State from) {
         super.terminated(from);
-        stop();
+        snapshots.clear();
     }
     
     @Override
     public void failed(Service.State from, Throwable failure) {
         super.failed(from, failure);
-        stop();
+        snapshots.clear();
         Services.stop(service);
     }
     
-    protected ListenableFuture<?> abort(ZNodePath path) {
-        ListenableFuture<?> future;
-        try {
-            future = abort.apply(path);
-        } catch (Exception e) {
-            future = Futures.immediateFailedFuture(e);
+    protected static final class AbortSessionSnapshotCallback<V> extends Watchers.SimpleForwardingCallback<ZNodePath, FutureCallback<? super V>> implements AsyncFunction<ZNodePath, V> {
+
+        public static AbortSessionSnapshotCallback<Boolean> create(
+                Set<AbsoluteZNodePath> snapshots,
+                Materializer<StorageZNode<?>,?> materializer,
+                FutureCallback<? super Boolean> callback,
+                Logger logger) {
+            final AbortSessionSnapshot abort = AbortSessionSnapshot.create(materializer);
+            return create(snapshots, abort, materializer.cache().cache(), callback, logger);
         }
-        Futures.addCallback(future, Watchers.FailWatchListener.create(this));
-        return future;
-    }
-    
-    protected void stop() {
-        snapshots.clear();
+
+        public static <V> AbortSessionSnapshotCallback<V> create(
+                Set<AbsoluteZNodePath> snapshots,
+                AsyncFunction<? super ZNodePath, V> abort,
+                NameTrie<StorageZNode<?>> trie,
+                FutureCallback<? super V> callback,
+                Logger logger) {
+            return new AbortSessionSnapshotCallback<V>(snapshots, abort, trie, callback, logger);
+        }
+        
+        private final Set<AbsoluteZNodePath> snapshots;
+        private final AsyncFunction<? super ZNodePath, V> abort;
+        private final NameTrie<StorageZNode<?>> trie;
+        private final Logger logger;
+        
+        protected AbortSessionSnapshotCallback(
+                Set<AbsoluteZNodePath> snapshots,
+                AsyncFunction<? super ZNodePath, V> abort,
+                NameTrie<StorageZNode<?>> trie,
+                FutureCallback<? super V> delegate,
+                Logger logger) {
+            super(delegate);
+            this.snapshots = snapshots;
+            this.abort = abort;
+            this.trie = trie;
+            this.logger = logger;
+        }
+
+        @Override
+        public ListenableFuture<V> apply(ZNodePath input) {
+            logger.debug("Aborting session snapshot {}", input);
+            ListenableFuture<V> future;
+            try {
+                future = abort.apply(input);
+            } catch (Exception e) {
+                future = Futures.immediateFailedFuture(e);
+            }
+            Futures.addCallback(future, delegate());
+            return future;
+        }
+
+        @Override
+        public void onSuccess(ZNodePath result) {
+            ImmutableList<AbsoluteZNodePath> toAbort = ImmutableList.of();
+            final ZNodeLabel label = (ZNodeLabel) result.label();
+            synchronized (snapshots) {
+                for (AbsoluteZNodePath path: snapshots) {
+                    StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot snapshot = 
+                            (StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot) trie.get(path);
+                    // only abort committed snapshot state
+                    if ((snapshot != null) && (snapshot.commit() != null) && (Objects.equal(snapshot.commit().data().get(), Boolean.TRUE))) {
+                        for (StorageZNode<?> node: snapshot.values()) {
+                            StorageZNode<?> snapshotSessions = node.get(StorageZNode.SessionsZNode.LABEL);
+                            if (snapshotSessions != null) {
+                                StorageZNode<?> session = snapshotSessions.get(label);
+                                if ((session != null) && !session.containsKey(StorageZNode.CommitZNode.LABEL)) {
+                                    toAbort = ImmutableList.<AbsoluteZNodePath>builder()
+                                    .addAll(toAbort)
+                                    .add((AbsoluteZNodePath) session.path()).build();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for (AbsoluteZNodePath path: toAbort) {
+                apply(path);
+            }
+        }
     }
     
     protected static final class AbortSessionSnapshot implements AsyncFunction<ZNodePath, Boolean> {
@@ -358,22 +399,45 @@ public final class AbortClosedSessionSnapshots extends WatchMatchServiceListener
     /**
      * Tracks committed snapshots and checks for expired sessions when snapshot state is committed.
      */
-    protected final class SnapshotWatcher extends LoggingWatchMatchListener {
+    protected static final class ClosedSessionsSnapshotWatcher extends LoggingWatchMatchListener {
+        
+        public static Watchers.CacheNodeCreatedListener<StorageZNode<?>> listen(
+                Set<AbsoluteZNodePath> snapshots,
+                AbortSessionSnapshotCallback<?> callback,
+                Materializer<StorageZNode<?>,?> materializer,
+                WatchListeners cacheEvents,
+                Service service,
+                Logger logger) {
+            return Watchers.CacheNodeCreatedListener.listen(
+                    materializer.cache(),
+                    service, 
+                    cacheEvents,
+                    new ClosedSessionsSnapshotWatcher(snapshots, callback, materializer, logger),
+                    logger);
+        }
 
+        private final NameTrie<StorageZNode<?>> trie;
         private final Set<AbsoluteZNodePath> snapshots;
         private final PathToQuery<?,?> query;
         private final Watchers.MaybeErrorProcessor processor;
+        private final AbortSessionSnapshotCallback<?> callback;
         
         @SuppressWarnings("unchecked")
-        public SnapshotWatcher(
+        protected ClosedSessionsSnapshotWatcher(
                 Set<AbsoluteZNodePath> snapshots,
+                AbortSessionSnapshotCallback<?> callback,
+                Materializer<StorageZNode<?>,?> materializer,
                 Logger logger) {
             super(WatchMatcher.exact(
                     StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Commit.PATH, 
-                    Watcher.Event.EventType.NodeCreated, Watcher.Event.EventType.NodeDeleted), 
+                    Watcher.Event.EventType.NodeDataChanged, 
+                    Watcher.Event.EventType.NodeDeleted), 
                 logger);
+            this.trie = materializer.cache().cache();
             this.snapshots = snapshots;
-            this.query = PathToQuery.forRequests(materializer, 
+            this.callback = callback;
+            this.query = PathToQuery.forRequests(
+                    materializer, 
                     Operations.Requests.sync(), 
                     Operations.Requests.exists());
             this.processor = Watchers.MaybeErrorProcessor.maybeNoNode();
@@ -386,21 +450,26 @@ public final class AbortClosedSessionSnapshots extends WatchMatchServiceListener
         @Override
         public void handleWatchEvent(WatchEvent event) {
             super.handleWatchEvent(event);
-            final AbsoluteZNodePath snapshot = (AbsoluteZNodePath) ((AbsoluteZNodePath) event.getPath()).parent();
-            final LockableZNodeCache<StorageZNode<?>,?,?> cache = materializer.cache();
             switch (event.getEventType()) {
-            case NodeCreated:
+            case NodeDataChanged:
             {
-                snapshots.add(snapshot);
-                for (StorageZNode<?> node: cache.cache().get(snapshot).values()) {
-                    for (StorageZNode<?> session: node.values()) {
-                        ZNodePath path = StorageSchema.Safari.Sessions.Session.pathOf(((StorageZNode.SessionZNode<?>) session).name());
-                        if (!cache.cache().containsKey(path)) {
-                            Watchers.Query.call(
-                                    processor, 
-                                    new Callback((AbsoluteZNodePath) session.path()), 
-                                    query.apply(path)).run();
-                            
+                StorageZNode<?> commit = trie.get(event.getPath());
+                if ((commit != null) && Objects.equal(commit.data().get(), Boolean.TRUE)) {
+                    StorageZNode<?> snapshot = commit.parent().get();
+                    StorageZNode<?> sessions = trie.get(StorageSchema.Safari.Sessions.PATH);
+                    snapshots.add((AbsoluteZNodePath) snapshot.path());
+                    for (StorageZNode<?> node: snapshot.values()) {
+                        StorageZNode<?> snapshotSessions = node.get(StorageZNode.SessionsZNode.LABEL);
+                        if (snapshotSessions != null) {
+                            for (StorageZNode<?> session: snapshotSessions.values()) {
+                                if (!session.containsKey(StorageZNode.CommitZNode.LABEL) && !sessions.containsKey(session.parent().name())) {
+                                    Watchers.Query.call(
+                                            processor, 
+                                            new Callback((AbsoluteZNodePath) session.path()), 
+                                            query.apply(sessions.path().join(session.parent().name()))).run();
+                                    
+                                }
+                            }
                         }
                     }
                 }
@@ -408,6 +477,7 @@ public final class AbortClosedSessionSnapshots extends WatchMatchServiceListener
             }
             case NodeDeleted:
             {
+                final AbsoluteZNodePath snapshot = (AbsoluteZNodePath) ((AbsoluteZNodePath) event.getPath()).parent();
                 snapshots.remove(snapshot);
                 break;
             }
@@ -416,20 +486,24 @@ public final class AbortClosedSessionSnapshots extends WatchMatchServiceListener
             }
         }
         
-        protected final class Callback extends Watchers.FailWatchListener<Optional<Operation.Error>> {
+        protected final class Callback extends Watchers.ForwardingCallback<Optional<Operation.Error>, FutureCallback<?>> {
 
             private final AbsoluteZNodePath path;
             
             protected Callback(AbsoluteZNodePath path) {
-                super(AbortClosedSessionSnapshots.this);
                 this.path = path;
             }
             
             @Override
             public void onSuccess(Optional<Operation.Error> result) {
                 if (result.isPresent()) {
-                    abort(path);
+                    callback.apply(path);
                 }
+            }
+
+            @Override
+            protected FutureCallback<?> delegate() {
+                return callback;
             }
         }
     }

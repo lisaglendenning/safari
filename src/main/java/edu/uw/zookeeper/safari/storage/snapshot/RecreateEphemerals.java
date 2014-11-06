@@ -275,11 +275,12 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
                     // So, first we get existing sequential ephemeral children and 
                     // match against them to determine if this is the case
                     T executor = executor();
-                    ZNodePath parent = sequential.parent().get().path();
+                    ZNodePath parent = AbsoluteZNodePath.fromString(record.getPath()).parent();
                     PathToRequests getChildren = PathToRequests.forRequests(Operations.Requests.sync(), Operations.Requests.getChildren());
                     return Optional.of(
                             new GetExistingSequentialEphemeral(
-                                    SubmittedRequests.submit(executor,
+                                    SubmittedRequests.submit(
+                                            executor,
                                             getChildren.apply(parent))));
                 }
             }

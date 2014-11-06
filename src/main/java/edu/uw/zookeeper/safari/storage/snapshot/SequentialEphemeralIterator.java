@@ -79,7 +79,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
                 materializer.cache(), 
                 service, 
                 cacheEvents, 
-                WatchListener.create(
+                SequentialEphemeralListener.create(
                         ephemerals, 
                         materializer.cache().cache(), 
                         iterators, 
@@ -133,14 +133,14 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
         }
     }
     
-    protected static final class WatchListener extends LoggingWatchMatchListener {
+    protected static final class SequentialEphemeralListener extends LoggingWatchMatchListener {
 
-        public static WatchListener create(
+        public static SequentialEphemeralListener create(
                 ZNodePath ephemerals,
                 NameTrie<StorageZNode<?>> cache,
                 Map<ZNodePath, ? extends FutureCallback<ZNodePath>> callbacks,
                 Logger logger) {
-            return new WatchListener(
+            return new SequentialEphemeralListener(
                     cache,
                     callbacks,
                     WatchMatcher.exact(
@@ -154,7 +154,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
         private final NameTrie<StorageZNode<?>> cache;
         private final Map<ZNodePath, ? extends FutureCallback<ZNodePath>> callbacks;
         
-        protected WatchListener(
+        protected SequentialEphemeralListener(
                 NameTrie<StorageZNode<?>> cache,
                 Map<ZNodePath, ? extends FutureCallback<ZNodePath>> callbacks,
                 WatchMatcher matcher, 

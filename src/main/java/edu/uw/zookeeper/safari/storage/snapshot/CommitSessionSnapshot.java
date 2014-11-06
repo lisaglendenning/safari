@@ -9,6 +9,7 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Functions;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.HashMultimap;
@@ -51,7 +52,7 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
             Logger logger) {
         final FutureCallback<Object> callback = Watchers.StopServiceOnFailure.create(service);
         final SetMultimap<Long, ZNodeLabel> committed = HashMultimap.create();
-        final CommitSessionSnapshot<O> instance = new CommitSessionSnapshot<O>(((AbsoluteZNodePath) ((AbsoluteZNodePath) path.parent()).parent()).parent(), committed, isLocal, materializer, callback);
+        final CommitSessionSnapshot<O> instance = new CommitSessionSnapshot<O>(((AbsoluteZNodePath) ((AbsoluteZNodePath) path.parent()).parent()).parent(), committed, isLocal, materializer, callback, logger);
         final ImmutableList<? extends Pair<? extends FutureCallback<? super ZNodePath>, WatchMatcher>> watchers = ImmutableList.of(
                 Pair.create(
                         instance,
@@ -95,6 +96,7 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
     private final Predicate<Long> isLocal;
     private final SetMultimap<Long, ZNodeLabel> committed;
     private final PathToQuery<?,O> commit;
+    private final Logger logger;
     
     @SuppressWarnings("unchecked")
     protected CommitSessionSnapshot(
@@ -102,8 +104,10 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
             SetMultimap<Long, ZNodeLabel> committed,
             Predicate<Long> isLocal,
             Materializer<StorageZNode<?>,O> materializer,
-            FutureCallback<? super Optional<Operation.Error>> delegate) {
+            FutureCallback<? super Optional<Operation.Error>> delegate,
+            Logger logger) {
         super(delegate);
+        this.logger = logger;
         this.processor = Watchers.MaybeErrorProcessor.maybeError(KeeperException.Code.NONODE, KeeperException.Code.NODEEXISTS);
         this.isLocal = isLocal;
         this.sessions = sessions;
@@ -128,41 +132,43 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
     public void onSuccess(ZNodePath result) {
         StorageZNode<?> node = cache.get(result);
         StorageZNode<?> values = (node != null) ? node.parent().get() : cache.get(((AbsoluteZNodePath) result).parent());
-        Long id = Long.valueOf(((values != null) ?
-                    ((StorageZNode.SessionZNode<?>) values.parent().get()).name() :
+        StorageZNode<?> session = (values != null) ? values.parent().get() : cache.get(((AbsoluteZNodePath) ((AbsoluteZNodePath) result).parent()).parent());
+        Long id = Long.valueOf(((session != null) ?
+                    ((StorageZNode.SessionZNode<?>) session).name() :
                     SessionIdHex.valueOf(((AbsoluteZNodePath) ((AbsoluteZNodePath) result).parent()).parent().label().toString())).longValue());
         if (node != null) {
-            if (!committed.containsKey(id) && (!node.parent().get().parent().get().containsKey(StorageZNode.CommitZNode.LABEL) || !isLocal.apply(id))) {
+            if (!committed.containsKey(id) && (session.containsKey(StorageZNode.CommitZNode.LABEL) || !isLocal.apply(id))) {
                 return;
             }
-            if (!node.containsKey(StorageZNode.CommitZNode.LABEL)) {
-                committed.remove(id, (ZNodeLabel) node.parent().name());
-                return;
-            } else {
-                if (!committed.put(id, (ZNodeLabel) node.parent().name())) {
+            if (node.containsKey(StorageZNode.CommitZNode.LABEL)) {
+                final ZNodeLabel v = (ZNodeLabel) node.parent().name();
+                if (!committed.put(id, v)) {
                     return;
                 }
+                logger.debug("snapshot {} committed for session {} in {}", v, id, sessions);
             }
         } else {
             if (values == null) {
                 committed.removeAll(id);
                 return;
             }
-            if (!committed.remove(id, result.label())) {
-                return;
-            }
         }
         Set<ZNodeLabel> committed = this.committed.get(id);
         if ((committed != null) && (values.size() == committed.size())) {
             assert (committed.equals(values.keySet()));
-            node = values.parent().get();
-            if (!node.containsKey(StorageZNode.CommitZNode.LABEL)) {
+            if (!session.containsKey(StorageZNode.CommitZNode.LABEL)) {
+                logger.debug("committing session snapshot {} in {}", id, sessions);
                 Watchers.Query.call(
                         processor,
                         delegate(),
-                        commit.apply(node.path()));
+                        commit.apply(session.path()));
             }
         }
+    }
+    
+    @Override
+    protected MoreObjects.ToStringHelper toString(MoreObjects.ToStringHelper toString) {
+        return super.toString(toString.addValue(sessions));
     }
     
     protected final class SessionCommitListener extends Watchers.ForwardingCallback<ZNodePath, CommitSessionSnapshot<O>> {
@@ -178,7 +184,9 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
             StorageZNode<?> node = cache.get(result);
             if (node != null) {
                 Long id = Long.valueOf(((StorageZNode.SessionZNode<?>) node.parent().get()).name().longValue());
-                committed.removeAll(id);
+                if (!committed.removeAll(id).isEmpty()) {
+                    logger.debug("session snapshot {} committed in {}", id, sessions);
+                }
             }
         }
 
@@ -229,8 +237,9 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
                             if (node != null) {
                                 result = node.path();
                                 for (StorageZNode<?> value: node.values()) {
-                                    if (!value.containsKey(StorageZNode.CommitZNode.LABEL)) {
+                                    if (value.containsKey(StorageZNode.CommitZNode.LABEL)) {
                                         delegate().onSuccess(value.path());
+                                    } else {
                                         Watchers.Query.call(
                                                 processor,
                                                 delegate().delegate(),
