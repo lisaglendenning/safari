@@ -42,7 +42,7 @@ import edu.uw.zookeeper.safari.schema.SchemaClientService;
 /**
  * Assumes all versions and all resident logs are watched
  */
-public class OutdatedEntryRejecter<O extends Operation.ProtocolResponse<?>> extends Watchers.StopServiceOnFailure<ControlSchema.Safari.Volumes.Volume.Log.Version.Entry> {
+public class OutdatedEntryRejecter<O extends Operation.ProtocolResponse<?>> extends Watchers.StopServiceOnFailure<ControlSchema.Safari.Volumes.Volume.Log.Version.Entry,Service> {
 
     public static Module module() {
         return new Module();

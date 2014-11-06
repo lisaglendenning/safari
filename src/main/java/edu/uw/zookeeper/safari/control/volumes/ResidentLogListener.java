@@ -84,7 +84,7 @@ public final class ResidentLogListener implements FutureCallback<ControlSchema.S
                 service, 
                 logger, 
                 Watchers.MaybeErrorProcessor.maybeNoNode(), 
-                Watchers.StopServiceOnFailure.<Object>create(service));
+                Watchers.StopServiceOnFailure.create(service,logger));
     }
     
     @SuppressWarnings("unchecked")

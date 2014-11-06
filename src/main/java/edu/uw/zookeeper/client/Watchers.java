@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
@@ -52,10 +53,11 @@ public abstract class Watchers {
     
     @SuppressWarnings("unchecked")
     public static <O extends Operation.ProtocolResponse<?>> Watchers.RunnableServiceListener<?> watchChildren(
-            ZNodePath path,
-            ClientExecutor<? super Records.Request,O,?> client,
-            Service service,
-            WatchListeners notifications) {
+            final ZNodePath path,
+            final ClientExecutor<? super Records.Request,O,?> client,
+            final WatchListeners notifications,
+            final Service service,
+            final Logger logger) {
         final Watchers.FixedQueryRunnable<O,?> query = Watchers.FixedQueryRunnable.create(
                 FixedQuery.forIterable(
                     client, 
@@ -63,8 +65,8 @@ public abstract class Watchers {
                             Operations.Requests.sync(), 
                             Operations.Requests.getChildren().setWatch(true))
                             .apply(path)),
-                Watchers.MaybeErrorProcessor.maybeNoNode(),
-                Watchers.StopServiceOnFailure.create(service));
+                Watchers.UnlessErrorProcessor.create(),
+                Watchers.StopServiceOnFailure.create(service, logger));
         return Watchers.RunnableServiceListener.listen(
                 query, 
                 service, 
@@ -184,16 +186,38 @@ public abstract class Watchers {
         }
     }
     
-    public static class StopServiceOnFailure<V> implements FutureCallback<V> {
+    public static class StopServiceOnFailure<V, T extends Service> implements FutureCallback<V> {
 
-        public static <V> StopServiceOnFailure<V> create(Service service) {
-            return new StopServiceOnFailure<V>(service);
+        public static <V, T extends Service> StopServiceOnFailure<V,T> create(T service, Logger logger) {
+            return new StopServiceOnFailure<V,T>(service, logger);
+        }
+
+        public static <V, T extends Service> StopServiceOnFailure<V,T> create(T service) {
+            return new StopServiceOnFailure<V,T>(service);
         }
         
-        protected final Service service;
+        protected final Logger logger;
+        protected final T service;
 
-        protected StopServiceOnFailure(Service service) {
+        protected StopServiceOnFailure(
+                T service,
+                Logger logger) {
             this.service = service;
+            this.logger = logger;
+        }
+
+        protected StopServiceOnFailure(
+                T service) {
+            this.service = service;
+            this.logger = LogManager.getLogger(this);
+        }
+        
+        public T service() {
+            return service;
+        }
+        
+        public Logger logger() {
+            return logger;
         }
         
         @Override
@@ -202,7 +226,13 @@ public abstract class Watchers {
 
         @Override
         public void onFailure(Throwable t) {
+            logger.warn("", t);
             Services.stop(service);
+        }
+        
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this).addValue(service).toString();
         }
     }
     
@@ -976,6 +1006,24 @@ public abstract class Watchers {
                 }
             }
             return endOfData();
+        }
+    }
+    
+    public static class UnlessErrorProcessor<O extends Operation.ProtocolResponse<?>> implements Processor<List<? extends O>, List<? extends O>> {
+    
+        public static <O extends Operation.ProtocolResponse<?>> UnlessErrorProcessor<O> create() {
+            return new UnlessErrorProcessor<O>();
+        }
+        
+        public UnlessErrorProcessor() {}
+        
+        @Override
+        public List<? extends O> apply(
+                final List<? extends O> input) throws Exception {
+            for (Operation.ProtocolResponse<?> response: input) {
+                Operations.unlessError(response.record());
+            }
+            return input;
         }
     }
     

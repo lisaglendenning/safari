@@ -126,7 +126,7 @@ public final class LatestVolumeVersion extends LoggingServiceListener<Service> i
         }
     }
     
-    protected static abstract class CacheListener extends Watchers.StopServiceOnFailure<ZNodePath> {
+    protected static abstract class CacheListener extends Watchers.StopServiceOnFailure<ZNodePath,Service> {
 
         protected final ConcurrentMap<Identifier, FutureTransition<UnsignedLong>> versions;
         

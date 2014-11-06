@@ -73,10 +73,10 @@ public class DirectoryEntryListener<U extends SafariZNode<U,?>, T extends U> ext
                 service);
     }
 
-    public static Watchers.FutureCallbackListener<?> entryCreatedCallback(
-            final FutureCallback<? super WatchEvent> callback,
+    public static <T extends FutureCallback<? super WatchEvent>> Watchers.FutureCallbackListener<T> entryCreatedCallback(
+            final T callback,
             final DirectoryEntryListener<?,?> service) {
-        Watchers.FutureCallbackListener<?> listener = Watchers.FutureCallbackListener.create(
+        final Watchers.FutureCallbackListener<T> listener = Watchers.FutureCallbackListener.create(
                 callback, 
                 WatchMatcher.exact(
                         service.schema().path(), 

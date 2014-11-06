@@ -6,16 +6,18 @@ import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 
 import javax.annotation.Nullable;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
@@ -31,30 +33,25 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 
 import edu.uw.zookeeper.client.ClientExecutor;
-import edu.uw.zookeeper.client.FixedQuery;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.SubmittedRequests;
 import edu.uw.zookeeper.client.Watchers;
-import edu.uw.zookeeper.data.AbsoluteZNodePath;
-import edu.uw.zookeeper.data.LockableZNodeCache;
 import edu.uw.zookeeper.data.Materializer;
+import edu.uw.zookeeper.data.NameTrie;
 import edu.uw.zookeeper.data.Operations;
-import edu.uw.zookeeper.data.WatchEvent;
-import edu.uw.zookeeper.data.WatchListeners;
-import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.common.CachedFunction;
-import edu.uw.zookeeper.common.Call;
 import edu.uw.zookeeper.common.CallablePromiseTask;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.ServiceListenersService;
 import edu.uw.zookeeper.common.ServiceMonitor;
 import edu.uw.zookeeper.common.Services;
 import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.safari.control.schema.ControlSchema;
 import edu.uw.zookeeper.safari.control.schema.ControlZNode;
@@ -62,6 +59,7 @@ import edu.uw.zookeeper.safari.peer.Peer;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnections;
 import edu.uw.zookeeper.safari.region.Region;
+import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 
 public class RegionsConnectionsService extends ServiceListenersService implements AsyncFunction<Identifier, ClientPeerConnection<?>> {
@@ -80,13 +78,18 @@ public class RegionsConnectionsService extends ServiceListenersService implement
                 @Region Identifier region,
                 SchemaClientService<ControlZNode<?>,?> control,
                 final ClientPeerConnections connections,
+                final DirectoryEntryListener<ControlZNode<?>,ControlSchema.Safari.Regions.Region> regions,
+                ScheduledExecutorService scheduler,
                 ServiceMonitor monitor) {
             RegionsConnectionsService instance = RegionsConnectionsService.defaults(
                         connections.asLookup(),
                         peer,
                         region, 
-                        control.materializer(),
-                        control.cacheEvents(),
+                        control,
+                        regions,
+                        scheduler,
+                        // TODO configurable
+                        TimeValue.seconds(10L),
                         ImmutableList.of(new Service.Listener() {
                             @Override
                             public void starting() {
@@ -106,19 +109,26 @@ public class RegionsConnectionsService extends ServiceListenersService implement
             AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
             Identifier myId,
             Identifier myRegion,
-            Materializer<ControlZNode<?>,?> control,
-            WatchListeners watch,
+            SchemaClientService<ControlZNode<?>,?> client,
+            final DirectoryEntryListener<ControlZNode<?>,ControlSchema.Safari.Regions.Region> entries,
+            final ScheduledExecutorService scheduler,
+            final TimeValue timeOut,
             Iterable<? extends Service.Listener> listeners) {
         final Logger logger = LogManager.getLogger(RegionsConnectionsService.class);
-        AsyncFunction<Identifier, Identifier> selector = 
-                SelectSelfTask.defaults(myId, myRegion, control, logger);
-        RegionsConnectionsService instance = new RegionsConnectionsService(
-                myRegion,
-                selector,
+        final RegionConnections regions = RegionConnections.create(
+                myRegion, 
+                SelectSelfTask.defaults(myId, myRegion, client.materializer(), logger), 
                 connector,
+                new Function<Runnable, ScheduledFuture<?>>() {
+                    @Override
+                    public ScheduledFuture<?> apply(Runnable input) {
+                        return scheduler.schedule(input, timeOut.value(), timeOut.unit());
+                    }
+                });
+        final RegionsConnectionsService instance = new RegionsConnectionsService(
+                regions,
                 listeners);
-        instance.new RegionCreatedListener(control.cache(), watch).listen();
-        newRegionDirectoryWatcher(instance, watch, control);
+        RegionCreatedListener.listen(entries, client.materializer().cache().cache(), instance);
         return instance;
     }
     
@@ -165,66 +175,128 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         };
         return CachedFunction.create(cached, lookup, LogManager.getLogger(RegionsConnectionsService.class));
     }
-
-    public static Watchers.RunnableServiceListener<?> newRegionDirectoryWatcher(
-            Service service,
-            WatchListeners watch,
-            ClientExecutor<? super Records.Request,?,?> client) {
-        final WatchMatcher matcher = WatchMatcher.exact(
-                ControlSchema.Safari.Regions.PATH,
-                Watcher.Event.EventType.NodeCreated,
-                Watcher.Event.EventType.NodeChildrenChanged);
-        final FixedQuery<?> query = FixedQuery.forRequests(client, 
-                Operations.Requests.sync().setPath(matcher.getPath()).build(),
-                Operations.Requests.getChildren().setPath(matcher.getPath()).setWatch(true).build());
-        return Watchers.RunnableServiceListener.listen(Call.create(query), service, watch, matcher);
-    }
     
-    private final Identifier region;
-    private final ConcurrentMap<Identifier, RegionClientPeerConnection> regions;
-    private final AsyncFunction<Identifier, Identifier> selector;
-    private final AsyncFunction<Identifier, ClientPeerConnection<?>> connector;
+    private final RegionConnections regions;
     
     protected RegionsConnectionsService(
-            Identifier region,
-            AsyncFunction<Identifier, Identifier> selector,
-            AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
+            RegionConnections regions,
             Iterable<? extends Service.Listener> listeners) {
         super(listeners);
-        this.regions = new MapMaker().makeMap();
-        this.region = region;
-        this.selector = selector;
-        this.connector = connector;
+        this.regions = regions;
     }
     
-    public ConcurrentMap<Identifier, RegionClientPeerConnection> regions() {
+    public RegionConnections regions() {
         return regions;
     }
     
     @Override
     public RegionClientPeerConnection apply(Identifier region) {
-        if (region.equals(Identifier.zero())) {
-            region = this.region;
+        switch (state()) {
+        case FAILED:
+            throw new IllegalStateException(failureCause());
+        case STARTING:
+        case RUNNING:
+            return regions.apply(region);
+        default:
+            throw new IllegalStateException();
         }
-        RegionClientPeerConnection connection = regions.get(region);
-        if (connection == null) {
-            synchronized (regions) {
-                connection = regions.get(region);
-                if (connection == null) {
-                    connection = RegionClientPeerConnection.newInstance(region, selector, connector);
-                    regions.put(region, connection);
-                }
-            }
-        }
-        return connection;
     }
     
     @Override
     protected Executor executor() {
         return MoreExecutors.directExecutor();
     }
+    
+    protected static final class RegionConnections implements Function<Identifier, RegionClientPeerConnection>, Supplier<ConcurrentMap<Identifier, RegionClientPeerConnection>> {
 
-    public static class SelectRandom<V> implements Function<List<V>, V> {
+        public static RegionConnections create(
+                Identifier region,
+                AsyncFunction<Identifier, Optional<Identifier>> selector,
+                AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
+                Function<? super Runnable, ? extends ScheduledFuture<?>> schedule) {
+            ConcurrentMap<Identifier, RegionClientPeerConnection> regions = new MapMaker().makeMap();
+            return new RegionConnections(region, selector, connector, schedule, regions);
+        }
+        
+        private final Identifier region;
+        private final ConcurrentMap<Identifier, RegionClientPeerConnection> regions;
+        private final AsyncFunction<Identifier, Optional<Identifier>> selector;
+        private final AsyncFunction<Identifier, ClientPeerConnection<?>> connector;
+        private final Function<? super Runnable, ? extends ScheduledFuture<?>> schedule;
+        
+        protected RegionConnections(
+                Identifier region,
+                AsyncFunction<Identifier, Optional<Identifier>> selector,
+                AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
+                Function<? super Runnable, ? extends ScheduledFuture<?>> schedule,
+                ConcurrentMap<Identifier, RegionClientPeerConnection> regions) {
+            this.regions = regions;
+            this.region = region;
+            this.selector = selector;
+            this.connector = connector;
+            this.schedule = schedule;
+        }
+        
+        @Override
+        public RegionClientPeerConnection apply(Identifier region) {
+            if (region.equals(Identifier.zero())) {
+                region = this.region;
+            }
+            RegionClientPeerConnection connection = regions.get(region);
+            if (connection == null) {
+                connection = RegionClientPeerConnection.create(region, selector, connector, schedule);
+                if (regions.putIfAbsent(region, connection) == null) {
+                    connection.run();
+                } else {
+                    return apply(region);
+                }
+            }
+            return connection;
+        }
+
+        @Override
+        public ConcurrentMap<Identifier, RegionClientPeerConnection> get() {
+            return regions;
+        }
+    }
+
+    protected static final class RegionCreatedListener extends Watchers.StopServiceOnFailure<ControlSchema.Safari.Regions.Region,RegionsConnectionsService> {
+    
+        public static RegionCreatedListener listen(
+                final DirectoryEntryListener<ControlZNode<?>,ControlSchema.Safari.Regions.Region> entries,
+                final NameTrie<ControlZNode<?>> trie,
+                final RegionsConnectionsService service) {
+            final RegionCreatedListener instance = new RegionCreatedListener(service);
+            service.addListener(new Service.Listener() {
+                        @Override
+                        public void running() {
+                            DirectoryEntryListener.entryCreatedCallback(
+                                    Watchers.EventToPathCallback.create(
+                                            Watchers.PathToNodeCallback.create(
+                                                    instance, trie)), 
+                                    entries);
+                        }
+                    }, 
+                    MoreExecutors.directExecutor());
+            return instance;
+        }
+        
+        protected RegionCreatedListener(
+                RegionsConnectionsService service) {
+            super(service, service.logger());
+        }
+    
+        @Override
+        public void onSuccess(ControlSchema.Safari.Regions.Region result) {
+            if (result != null) {
+                try {
+                    service().apply(result.name());
+                } catch (IllegalStateException e) {}
+            }
+        }
+    }
+
+    public static final class SelectRandom<V> implements Function<List<V>, V> {
         
         public static <V> SelectRandom<V> create() {
             return new SelectRandom<V> ();
@@ -248,7 +320,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         }
     }
     
-    public static class SelectSelfTask implements AsyncFunction<Identifier, Identifier> {
+    public static final class SelectSelfTask implements AsyncFunction<Identifier, Optional<Identifier>> {
 
         public static SelectSelfTask defaults(
                 Identifier myId,
@@ -261,27 +333,27 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         
         protected final Identifier myId;
         protected final Identifier myRegion;
-        protected final AsyncFunction<Identifier, Identifier> fallback;
+        protected final AsyncFunction<Identifier, Optional<Identifier>> fallback;
         
         public SelectSelfTask(
                 Identifier myId,
                 Identifier myEnsemble,
-                AsyncFunction<Identifier, Identifier> fallback) {
+                AsyncFunction<Identifier, Optional<Identifier>> fallback) {
             this.myId = myId;
             this.myRegion = myEnsemble;
             this.fallback = fallback;
         }
 
         @Override
-        public ListenableFuture<Identifier> apply(Identifier region)
+        public ListenableFuture<Optional<Identifier>> apply(Identifier region)
                 throws Exception {
             return region.equals(myRegion) ?
-                    Futures.immediateFuture(myId) : 
+                    Futures.immediateFuture(Optional.of(myId)) : 
                         fallback.apply(region);
         }
     }
     
-    public static class SelectMemberTask<T> implements AsyncFunction<Identifier, Identifier> {
+    public static final class SelectMemberTask<T> implements AsyncFunction<Identifier, Optional<Identifier>> {
 
         public static SelectMemberTask<List<Identifier>> defaults(
                 Materializer<ControlZNode<?>,?> materializer,
@@ -292,17 +364,17 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         }
         
         protected final CachedFunction<Identifier, ? extends T> memberLookup;
-        protected final AsyncFunction<? super T, Identifier> selector;
+        protected final AsyncFunction<? super T, Optional<Identifier>> selector;
         
         public SelectMemberTask(
                 CachedFunction<Identifier, ? extends T> memberLookup,
-                AsyncFunction<? super T, Identifier> selector) {
+                AsyncFunction<? super T, Optional<Identifier>> selector) {
             this.memberLookup = memberLookup;
             this.selector = selector;
         }
 
         @Override
-        public ListenableFuture<Identifier> apply(Identifier ensemble)
+        public ListenableFuture<Optional<Identifier>> apply(Identifier ensemble)
                 throws Exception {
             // never used cached members
             return Futures.transform(
@@ -311,7 +383,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         }
     }
 
-    public static class SelectPresentMemberTask implements AsyncFunction<List<Identifier>, Identifier> {
+    public static final class SelectPresentMemberTask implements AsyncFunction<List<Identifier>, Optional<Identifier>> {
 
         public static SelectPresentMemberTask random(
                 ClientExecutor<? super Records.Request, ?, ?> client,
@@ -336,21 +408,21 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         }
         
         @Override
-        public ListenableFuture<Identifier> apply(
+        public ListenableFuture<Optional<Identifier>> apply(
                 List<Identifier> members) {
             logger.debug("Selecting from region members {}", members);
             return SelectPresentMemberFunction.submit(members, selector, client, logger);
         }
     }
     
-    public static final class SelectPresentMemberFunction<O extends Operation.ProtocolResponse<?>> extends ForwardingListenableFuture<List<O>> implements Callable<Optional<Identifier>>, Runnable {
+    public static final class SelectPresentMemberFunction<O extends Operation.ProtocolResponse<?>> extends ForwardingListenableFuture<List<O>> implements Callable<Optional<Optional<Identifier>>>, Runnable {
 
-        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Identifier> submit(
+        public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<Optional<Identifier>> submit(
                 List<Identifier> members,
                 Function<List<Identifier>, Identifier> selector,
                 ClientExecutor<? super Records.Request, O, ?> client,
                 Logger logger) {
-            final Promise<Identifier> promise = SettableFuturePromise.create();
+            final Promise<Optional<Identifier>> promise = SettableFuturePromise.create();
             @SuppressWarnings("unchecked")
             final PathToRequests toRequests = PathToRequests.forRequests(Operations.Requests.sync(), Operations.Requests.exists());
             final ImmutableList.Builder<Records.Request> requests = ImmutableList.builder();
@@ -370,20 +442,19 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         private final List<Identifier> members;
         private final Function<List<Identifier>, Identifier> selector;
         private final SubmittedRequests<? extends Records.Request,O> future;
-        private final CallablePromiseTask<?,Identifier> delegate;
+        private final CallablePromiseTask<?,Optional<Identifier>> delegate;
         
         protected SelectPresentMemberFunction(
                 List<Identifier> members,
                 Function<List<Identifier>, Identifier> selector,
                 SubmittedRequests<? extends Records.Request,O> future,
                 Logger logger,
-                Promise<Identifier> promise) {
+                Promise<Optional<Identifier>> promise) {
             this.future = future;
             this.logger = logger;
             this.members = members;
             this.selector = selector;
-            this.delegate = CallablePromiseTask.create(this, promise);
-            addListener(this, MoreExecutors.directExecutor());
+            this.delegate = CallablePromiseTask.listen(this, promise);
         }
 
         @Override
@@ -392,7 +463,7 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         }
 
         @Override
-        public Optional<Identifier> call() throws Exception {
+        public Optional<Optional<Identifier>> call() throws Exception {
             if (isDone()) {
                 final List<O> responses = get();
                 final List<Identifier> living = Lists.newArrayListWithCapacity(members.size());
@@ -402,9 +473,15 @@ public class RegionsConnectionsService extends ServiceListenersService implement
                         living.add(member);
                     }
                 }
-                final Identifier selected = selector.apply(living);
-                logger.info("Selected {} from live region members: {}", selected, living);
-                return Optional.of(selected);
+                final Identifier selected;
+                if (living.isEmpty()) {
+                    selected = null;
+                    logger.info("No live region members: {}", members);
+                } else {
+                    selected = selector.apply(living);
+                    logger.info("Selected {} from live region members: {}", selected, living);
+                }
+                return Optional.of(Optional.fromNullable(selected));
             }
             return Optional.absent();
         }
@@ -417,23 +494,6 @@ public class RegionsConnectionsService extends ServiceListenersService implement
         @Override
         protected ListenableFuture<List<O>> delegate() {
             return future;
-        }
-    }
-    
-    protected class RegionCreatedListener extends Watchers.CacheNodeCreatedListener<ControlZNode<?>> {
-
-        public RegionCreatedListener(
-                LockableZNodeCache<ControlZNode<?>,Records.Request,?> cache,
-                WatchListeners watch) {
-            super(ControlSchema.Safari.Regions.Region.PATH, cache, RegionsConnectionsService.this, watch);
-        }
-
-        @Override
-        public void handleWatchEvent(WatchEvent event) {
-            if (service.isRunning()) {
-                Identifier region = Identifier.valueOf(((AbsoluteZNodePath) event.getPath()).label().toString());
-                apply(region);
-            }
         }
     }
 }

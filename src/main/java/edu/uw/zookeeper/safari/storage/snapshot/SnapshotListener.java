@@ -86,7 +86,7 @@ public final class SnapshotListener extends ServiceListenersService {
         final SnapshotListener service = new SnapshotListener(
                 ImmutableList.<Service.Listener>of());
         final Watchers.MaybeErrorProcessor processor = Watchers.MaybeErrorProcessor.maybeNoNode();
-        final Watchers.StopServiceOnFailure<Optional<Operation.Error>> callback = Watchers.StopServiceOnFailure.create(service);
+        final Watchers.StopServiceOnFailure<Optional<Operation.Error>,SnapshotListener> callback = Watchers.StopServiceOnFailure.create(service);
         Watchers.FutureCallbackServiceListener.listen(
                 Watchers.EventToQueryCallback.create(
                         client.materializer(), 

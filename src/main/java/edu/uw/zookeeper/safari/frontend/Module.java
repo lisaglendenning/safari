@@ -19,6 +19,7 @@ public class Module extends AbstractCompositeSafariModule<Service> {
         return new Module(
                 module.getKey(),
                 ImmutableList.<com.google.inject.Module>of(
+                        RegionWatchers.create(),
                         RegionsConnectionsService.module(),
                         XomegaCache.module(),
                         FrontendServerExecutor.create(),

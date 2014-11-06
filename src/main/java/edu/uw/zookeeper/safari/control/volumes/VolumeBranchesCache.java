@@ -202,7 +202,7 @@ public final class VolumeBranchesCache extends LoggingServiceListener<Service> i
             callback.onFailure(t);
         }
         
-        private static final class CacheListener extends Watchers.StopServiceOnFailure<ControlSchema.Safari.Volumes.Volume.Log.Version.State> {
+        private static final class CacheListener extends Watchers.StopServiceOnFailure<ControlSchema.Safari.Volumes.Volume.Log.Version.State,Service> {
 
             private final ConcurrentMap<VersionedId, Promise<VolumeVersion<?>>> branches;
             private final AsyncFunction<Identifier, ZNodePath> idToPath;

@@ -196,7 +196,7 @@ public class FrontendServerExecutor extends AbstractModule implements SafariModu
         return new Supplier<Set<Identifier>>() {
             @Override
             public Set<Identifier> get() {
-                return regions.regions().keySet();
+                return regions.regions().get().keySet();
             }  
         };
     }

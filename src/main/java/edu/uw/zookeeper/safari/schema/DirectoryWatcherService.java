@@ -15,7 +15,7 @@ public class DirectoryWatcherService<T extends SafariZNode<?,?>> extends Service
             SchemaClientService<U,?> client,
             Iterable<? extends Service.Listener> listeners) {
         DirectoryWatcherService<T> service = create(type, client, listeners);
-        Watchers.watchChildren(service.schema().path(), client.materializer(), service, client.notifications());
+        Watchers.watchChildren(service.schema().path(), client.materializer(), client.notifications(), service, service.logger());
         return service;
     }
     

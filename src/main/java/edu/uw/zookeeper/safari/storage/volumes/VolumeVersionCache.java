@@ -138,7 +138,7 @@ public class VolumeVersionCache extends ServiceListenersService {
                         Operations.Requests.sync(), 
                         Operations.Requests.getData().setWatch(true)),
                         Watchers.MaybeErrorProcessor.maybeNoNode(), 
-                        Watchers.StopServiceOnFailure.create(instance));
+                        Watchers.StopServiceOnFailure.create(instance, instance.logger()));
         Watchers.FutureCallbackServiceListener.listen(
                 Watchers.EventToPathCallback.create(versionWatcher), 
                 instance, 
@@ -148,14 +148,15 @@ public class VolumeVersionCache extends ServiceListenersService {
                         Watcher.Event.EventType.NodeCreated, 
                         Watcher.Event.EventType.NodeDataChanged), 
                 instance.logger());
-        final RunCachedVolume runner = new RunCachedVolume(volumes, instance);
+        final RunCachedVolume runner = new RunCachedVolume(volumes, instance, instance.logger());
         VolumeVersionEntryCacheListener.listen(runner, client.materializer(), client.cacheEvents(), instance, instance.logger());
         XalphaCacheListener.listen(versionWatcher, runner, client.materializer().cache(), client.cacheEvents(), instance, instance.logger());
         versions.add(new VolumeVersionCacheListener(versionWatcher, volumes));
         VolumeLogChildrenWatcher<?,?> logWatcher = VolumeLogChildrenWatcher.defaults(
                 volumes, 
                 client.materializer(), 
-                directory);
+                directory,
+                instance.logger());
         VolumeLogChildrenWatcher.listen(
                 logWatcher, directory, client.notifications());
         entries.add(new VolumeCacheListener(logWatcher, volumes));
@@ -702,14 +703,15 @@ public class VolumeVersionCache extends ServiceListenersService {
         }
     }
     
-    protected static final class RunCachedVolume extends Watchers.StopServiceOnFailure<StorageSchema.Safari.Volumes.Volume> {
+    protected static final class RunCachedVolume extends Watchers.StopServiceOnFailure<StorageSchema.Safari.Volumes.Volume, Service> {
 
         private final CachedVolumes volumes;
 
         protected RunCachedVolume(
                 CachedVolumes volumes,
-                Service service) {
-            super(service);
+                Service service,
+                Logger logger) {
+            super(service, logger);
             this.volumes = volumes;
         }
 
@@ -906,10 +908,11 @@ public class VolumeVersionCache extends ServiceListenersService {
         protected static <O extends Operation.ProtocolResponse<?>> VolumeLogChildrenWatcher<O,?> defaults(
                 Function<Identifier, CachedVolume> volumes,
                 ClientExecutor<? super Records.Request, O, ?> client,
-                Service service) {
+                Service service,
+                Logger logger) {
             return create(volumes, client, 
                     Watchers.MaybeErrorProcessor.maybeNoNode(), 
-                    Watchers.StopServiceOnFailure.create(service));
+                    Watchers.StopServiceOnFailure.create(service, logger));
         }
 
         protected static <O extends Operation.ProtocolResponse<?>,V> VolumeLogChildrenWatcher<O,V> create(

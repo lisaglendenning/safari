@@ -247,10 +247,9 @@ public final class VolumeDescriptorCache extends ServiceListenersService {
         }
     }
     
-    protected static abstract class VolumeDescriptorsListener<V> extends Watchers.StopServiceOnFailure<V> {
+    protected static abstract class VolumeDescriptorsListener<V> extends Watchers.StopServiceOnFailure<V,Service> {
 
         protected final VolumeDescriptors descriptors;
-        protected final Logger logger;
         
         protected VolumeDescriptorsListener(
                 VolumeDescriptors descriptors,
@@ -258,7 +257,6 @@ public final class VolumeDescriptorCache extends ServiceListenersService {
                 Logger logger) {
             super(service);
             this.descriptors = descriptors;
-            this.logger = logger;
         }
     }
     

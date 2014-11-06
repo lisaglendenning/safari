@@ -7,8 +7,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Supplier;
@@ -50,7 +48,7 @@ import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public final class FrontendSessionLookup extends Watchers.StopServiceOnFailure<WatchEvent> implements AsyncFunction<Long, Long> {
+public final class FrontendSessionLookup extends Watchers.StopServiceOnFailure<WatchEvent,Service> implements AsyncFunction<Long, Long> {
 
     public static Module module() {
         return new Module();
@@ -150,7 +148,6 @@ public final class FrontendSessionLookup extends Watchers.StopServiceOnFailure<W
         return new FrontendSessionLookup(isReady, service);
     }
 
-    private final Logger logger;
     private final Supplier<Boolean> isReady;
     private final BiMap<Long, Long> values;
     private final ConcurrentMap<Long, Promise<Long>> lookups;
@@ -159,14 +156,9 @@ public final class FrontendSessionLookup extends Watchers.StopServiceOnFailure<W
             Supplier<Boolean> isReady,
             Service service) {
         super(service);
-        this.logger = LogManager.getLogger(this);
         this.isReady = isReady;
         this.values = HashBiMap.create();
         this.lookups = new MapMaker().makeMap();
-    }
-    
-    public Logger logger() {
-        return logger;
     }
     
     @Override

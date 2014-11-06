@@ -15,7 +15,7 @@ import edu.uw.zookeeper.safari.peer.protocol.ServerPeerConnection;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public class MessageXomegaSender extends Watchers.StopServiceOnFailure<StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega> {
+public class MessageXomegaSender extends Watchers.StopServiceOnFailure<StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega,Service> {
 
     public static Watchers.CacheNodeCreatedListener<StorageZNode<?>> listen(
             Iterable<ServerPeerConnection<?>> connections,

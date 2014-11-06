@@ -4,9 +4,6 @@ import io.netty.buffer.ByteBuf;
 
 import java.io.IOException;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
@@ -23,9 +20,8 @@ public class FramedMessagePacketCodec implements Codec<MessagePacket, MessagePac
     public static FramedMessagePacketCodec defaults(ObjectMapper mapper) {
         ObjectWriter writer = mapper.writer();
         ObjectReader reader = mapper.reader();
-        Logger logger = LogManager.getLogger(FramedMessagePacketCodec.class);
-        Encoder<? super MessagePacket, MessagePacket> encoder = new MessagePacketEncoder(writer, logger);
-        Decoder<? extends MessagePacket, MessagePacket> decoder = new MessagePacketDecoder(reader, logger);
+        Encoder<? super MessagePacket, MessagePacket> encoder = new MessagePacketEncoder(writer);
+        Decoder<? extends MessagePacket, MessagePacket> decoder = new MessagePacketDecoder(reader);
         return new FramedMessagePacketCodec(encoder, decoder);
     }
     

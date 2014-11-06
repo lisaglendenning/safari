@@ -1,54 +1,74 @@
 package edu.uw.zookeeper.safari.frontend;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledFuture;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.google.common.base.Function;
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.ForwardingListenableFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.ForwardingPromise.SimpleForwardingPromise;
 import edu.uw.zookeeper.common.LoggingFutureListener;
-import edu.uw.zookeeper.common.Promise;
-import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.common.ToStringListenableFuture;
 import edu.uw.zookeeper.net.Connection;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.peer.protocol.ClientPeerConnection;
+import edu.uw.zookeeper.safari.peer.protocol.MessagePacket;
 
-public class RegionClientPeerConnection extends ForwardingListenableFuture<ClientPeerConnection<?>> implements Runnable {
+@SuppressWarnings("rawtypes")
+public final class RegionClientPeerConnection extends ToStringListenableFuture<ClientPeerConnection<?>> implements Runnable, FutureCallback<ClientPeerConnection<?>>, Connection.Listener<MessagePacket> {
 
-    public static RegionClientPeerConnection newInstance(
+    public static RegionClientPeerConnection create(
             Identifier region,
-            AsyncFunction<Identifier, Identifier> selector,
-            AsyncFunction<Identifier, ClientPeerConnection<?>> connector) {
-        return new RegionClientPeerConnection(region, selector, connector);
+            AsyncFunction<Identifier, Optional<Identifier>> selector,
+            AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
+            final Function<? super Runnable, ? extends ScheduledFuture<?>> schedule) {
+        return new RegionClientPeerConnection(region, selector, connector, schedule);
     }
 
     protected final Logger logger;
     protected final Identifier region;
     protected final AsyncFunction<Identifier, ClientPeerConnection<?>> connector;
-    protected final AsyncFunction<Identifier, Identifier> selector;
-    protected ListenableFuture<ClientPeerConnection<?>> future;
-    protected ClientPeerConnection<?> connection;
+    protected final Callable<? extends ListenableFuture<? extends Optional<Identifier>>> selector;
+    protected final Callable<? extends ScheduledFuture<?>> schedule;
+    protected Optional<? extends ListenableFuture<ClientPeerConnection<?>>> future;
+    protected Optional<? extends ClientPeerConnection<?>> connection;
     
     protected RegionClientPeerConnection(
-            Identifier region,
-            AsyncFunction<Identifier, Identifier> selector,
-            AsyncFunction<Identifier, ClientPeerConnection<?>> connector) {
+            final Identifier region,
+            final AsyncFunction<Identifier, Optional<Identifier>> selector,
+            final AsyncFunction<Identifier, ClientPeerConnection<?>> connector,
+            final Function<? super Runnable, ? extends ScheduledFuture<?>> schedule) {
         this.logger = LogManager.getLogger(getClass());
         this.region = region;
-        this.selector = selector;
+        this.selector = new Callable<ListenableFuture<? extends Optional<Identifier>>>() {
+            @Override
+            public ListenableFuture<? extends Optional<Identifier>> call()
+                    throws Exception {
+                return selector.apply(region);
+            }
+        };
         this.connector = connector;
-        this.connection = null;
-        this.future = null;
+        this.schedule = new Callable<ScheduledFuture<?>>() {
+            @Override
+            public ScheduledFuture<?> call() throws Exception {
+                return schedule.apply(RegionClientPeerConnection.this);
+            }
+        };
+        this.connection = Optional.absent();
+        this.future = Optional.absent();
     }
     
     public Identifier region() {
@@ -57,59 +77,97 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
 
     @Override
     public synchronized void run() {
-        if (future == null) {
-            Identifier current = (connection == null) ? Identifier.zero() : connection.remoteAddress().getIdentifier();
-            connection = null;
-            Promise<Identifier> promise = SettableFuturePromise.create();
-            LoggingFutureListener.listen(logger, promise);
-            NotEquals task = new NotEquals(current, promise);
+        if (!future.isPresent()) {
+            if (connection.isPresent()) {
+                connection.get().unsubscribe(this);
+                connection.get().close();
+                connection = Optional.absent();
+            }
+            SelectRegionMember task = LoggingFutureListener.listen(logger, new SelectRegionMember());
             task.run();
-            future = Futures.transform(task, connector);
-            future.addListener(this, MoreExecutors.directExecutor());
-        } else if (future.isDone()) {
+            future = Optional.of(Futures.transform(task, connector));
+            LoggingFutureListener.listen(logger, this);
+            future.get().addListener(this, MoreExecutors.directExecutor());
+        } else if (future.get().isDone()) {
             try {
-                connection = future.get();
-                future = null;
+                onSuccess(future.get().get());
             } catch (InterruptedException e) {
-                throw new AssertionError(e);
+                throw Throwables.propagate(e);
             } catch (ExecutionException e) {
-                // TODO
-                throw new UnsupportedOperationException(e);
+                // we assume that we will be able to connect to a member of the
+                // other region eventually, and that regions aren't deleted
+                logger.warn("Error connecting to region {}", region, e);
+                future = Optional.absent();
+                try {
+                    schedule.call();
+                } catch (Exception e1) {
+                    onFailure(e1);
+                }
             }
         }
     }
+
+    @Override
+    public synchronized void onSuccess(ClientPeerConnection<?> result) {
+        connection = Optional.of(result);
+        future = Optional.absent();
+        connection.get().subscribe(this);
+    }
+
+    @Override
+    public synchronized void onFailure(Throwable t) {
+        future = Optional.of(Futures.<ClientPeerConnection<?>>immediateFailedFuture(t));
+    }
+
+    @Override
+    public synchronized void handleConnectionState(Automaton.Transition<Connection.State> state) {
+        switch (state.to()) {
+        case CONNECTION_CLOSED:
+        {
+            logger.info("Connection to peer {} of region {} closed", connection.get().remoteAddress().getIdentifier(), region);
+            run();
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    @Override
+    public void handleConnectionRead(MessagePacket message) {
+    }
     
     @Override
-    public String toString() {
-        return MoreObjects.toStringHelper(this).add("region", region).add("connection", connection).toString();
+    protected MoreObjects.ToStringHelper toStringHelper(MoreObjects.ToStringHelper helper) {
+        return super.toStringHelper(helper.addValue(region));
     }
     
     @Override
     protected synchronized ListenableFuture<ClientPeerConnection<?>> delegate() {
-        if ((connection != null) && 
-                (connection.state().compareTo(Connection.State.CONNECTION_CLOSING) < 0)) {
-            return Futures.<ClientPeerConnection<?>>immediateFuture(connection);
+        if (connection.isPresent() && 
+                (connection.get().state().compareTo(Connection.State.CONNECTION_CLOSING) < 0)) {
+            return Futures.<ClientPeerConnection<?>>immediateFuture(connection.get());
         } else {
-            if (future == null) {
+            if (!future.isPresent()) {
                 run();
                 return delegate();
             } else {
-                return future;
+                return future.get();
             }
         }
     }
 
-    protected class NotEquals extends PromiseTask<Identifier, Identifier> implements FutureCallback<Identifier>, Runnable {
+    protected final class SelectRegionMember extends SimpleForwardingPromise<Identifier> implements FutureCallback<Optional<Identifier>>, Runnable {
 
-        public NotEquals(Identifier task, Promise<Identifier> delegate) {
-            super(checkNotNull(task), delegate);
+        protected SelectRegionMember() {
+            super(SettableFuturePromise.<Identifier>create());
         }
 
         @Override
-        public synchronized void run() {
-            if (! isDone()) {
+        public void run() {
+            if (!isDone()) {
                 try {
-                    Futures.addCallback(selector.apply(region), this);
+                    Futures.addCallback(selector.call(), this);
                 } catch (Exception e) {
                     onFailure(e);
                 }
@@ -117,16 +175,11 @@ public class RegionClientPeerConnection extends ForwardingListenableFuture<Clien
         }
 
         @Override
-        public void onSuccess(Identifier result) {
-            if (task.equals(result)) {
-                // try again
-                run();
+        public void onSuccess(Optional<Identifier> result) {
+            if (result.isPresent()) {
+                set(result.get());
             } else {
-                if (result != null) {
-                    set(result);
-                } else {
-                    onFailure(new IllegalStateException(String.valueOf(region)));
-                }
+                onFailure(new IllegalStateException(String.valueOf(region)));
             }
         }
 

@@ -225,7 +225,7 @@ public final class LatestVolumeCache extends ServiceListenersService {
         clear();
     }
     
-    protected abstract class CacheListener<V> extends Watchers.StopServiceOnFailure<V> {
+    protected abstract class CacheListener<V> extends Watchers.StopServiceOnFailure<V,LatestVolumeCache> {
 
         private final WatchMatcher matcher;
         

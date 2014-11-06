@@ -3,8 +3,6 @@ package edu.uw.zookeeper.safari.control.volumes;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
@@ -50,7 +48,7 @@ import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeOperation;
 import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 
-public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure<ZNodePath> {
+public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure<ZNodePath,Service> {
 
     public static Module module() {
         return new Module();
@@ -120,7 +118,6 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
         return instance;
     }
     
-    protected final Logger logger;
     protected final AsyncFunction<? super VersionedId, Boolean> isResident;
     protected final AsyncFunction<VolumeOperationCoordinatorEntry, Boolean> execute;
     protected final ConcurrentMap<AbsoluteZNodePath, VolumeEntryCoordinatorListener> coordinators;
@@ -132,15 +129,10 @@ public final class VolumesEntryCoordinator extends Watchers.StopServiceOnFailure
             final Materializer<ControlZNode<?>,?> materializer,
             Service service) {
         super(service);
-        this.logger = LogManager.getLogger();
         this.isResident = isResident;
         this.execute = execute;
         this.materializer = materializer;
         this.coordinators = new MapMaker().makeMap();
-    }
-    
-    public Logger logger() {
-        return logger;
     }
 
     /**

@@ -179,7 +179,7 @@ public class RegionMemberService extends ServiceListenersService {
             final Identifier peer, 
             final Identifier region,
             final Materializer<ControlZNode<?>,?> materializer) {
-        ZNodePath path = ControlSchema.Safari.Regions.PATH.join(ZNodeLabel.fromString(region.toString())).join(ControlSchema.Safari.Regions.Region.Members.LABEL);
+        ZNodePath path = ControlSchema.Safari.Regions.Region.Members.pathOf(region);
         ImmutableList.Builder<ListenableFuture<? extends Operation.ProtocolResponse<?>>> futures = ImmutableList.builder();
         futures.add(materializer.create(path).call())
                 .add(materializer.create(path.join(ZNodeLabel.fromString(peer.toString()))).call());

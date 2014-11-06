@@ -6,29 +6,22 @@ import io.netty.buffer.ByteBufOutputStream;
 
 import java.io.IOException;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 
 import edu.uw.zookeeper.net.Encoder;
-import edu.uw.zookeeper.protocol.LoggingMarker;
 
 @SuppressWarnings("rawtypes")
-public class MessagePacketEncoder implements Encoder<MessagePacket, MessagePacket> {
+public final class MessagePacketEncoder implements Encoder<MessagePacket, MessagePacket> {
 
     public static MessagePacketEncoder defaults(ObjectMapper mapper) {
         return new MessagePacketEncoder(
-                mapper.writer(), 
-                LogManager.getLogger(MessagePacketEncoder.class));
+                mapper.writer());
     }
     
-    protected final Logger logger;
     protected final ObjectWriter writer;
     
-    public MessagePacketEncoder(ObjectWriter writer, Logger logger) {
-        this.logger = checkNotNull(logger);
+    public MessagePacketEncoder(ObjectWriter writer) {
         this.writer = checkNotNull(writer);
     }
 
@@ -45,11 +38,6 @@ public class MessagePacketEncoder implements Encoder<MessagePacket, MessagePacke
             writer.writeValue(stream, input);
         } finally {
             stream.close();
-        }
-        if (logger.isTraceEnabled()) {
-            byte[] bytes = new byte[output.readableBytes()];
-            output.getBytes(output.readerIndex(), bytes);
-            logger.trace(LoggingMarker.PROTOCOL_MARKER.get(), "Encoded: {}", new String(bytes));
         }
     }
 }

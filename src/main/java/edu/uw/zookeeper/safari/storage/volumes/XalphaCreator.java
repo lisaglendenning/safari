@@ -7,8 +7,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
@@ -69,7 +67,7 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 /**
  * Creates Xalpha for a volume version when it is the latest version and it has no entries.
  */
-public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extends Watchers.StopServiceOnFailure<ZNodePath> {
+public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extends Watchers.StopServiceOnFailure<ZNodePath, Service> {
 
     public static Module module() {
         return new Module();
@@ -197,7 +195,6 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
     private final AsyncFunction<VersionedId, Boolean> useXomega;
     private final AsyncFunction<VersionedId, Long> getXomega;
     private final ConcurrentMap<VersionedId, VersionCallback> callbacks;
-    private final Logger logger;
     
     protected XalphaCreator(
             Function<Identifier, FutureTransition<UnsignedLong>> latestVersion,
@@ -206,16 +203,11 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
             Materializer<StorageZNode<?>, O> materializer,
             Service service) {
         super(service);
-        this.logger = LogManager.getLogger(this);
         this.materializer = materializer;
         this.useXomega = useXomega;
         this.getXomega = getXomega;
         this.latestVersion = latestVersion;
         this.callbacks = new MapMaker().makeMap();
-    }
-    
-    public Logger logger() {
-        return logger;
     }
 
     @Override
