@@ -69,7 +69,6 @@ import edu.uw.zookeeper.protocol.proto.Stats;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralIterator.CommittedChildIterator;
-import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralTrieBuilder.SequentialNode;
 
 public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T extends ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> & Connection.Listener<? super Operation.Response>> extends RecreateSessionValues<T,StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.Session.Values.Ephemeral> {
 

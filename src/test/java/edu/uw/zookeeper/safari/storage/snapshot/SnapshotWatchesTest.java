@@ -68,9 +68,9 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode.SessionZNode.SessionI
 public class SnapshotWatchesTest extends AbstractMainTest {
 
     @ZNode(acl=Acls.Definition.ANYONE_ALL)
-    public static final class WatchesSchema extends StorageZNode<Void> {
+    public static final class SnapshotWatchesTestSchema extends StorageZNode<Void> {
 
-        public WatchesSchema(
+        public SnapshotWatchesTestSchema(
                 ValueNode<ZNodeSchema> schema,
                 ByteCodec<Object> codec) {
             super(schema, codec, SimpleNameTrie.<StorageZNode<?>>rootPointer());
@@ -80,7 +80,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
         public static class Watches extends StorageZNode<Void> {
 
             @Name
-            public static final ZNodeLabel LABEL = ZNodeLabel.fromString("watches");
+            public static final ZNodeLabel LABEL = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.LABEL;
 
             public Watches(ValueNode<ZNodeSchema> schema,
                     ByteCodec<Object> codec,
@@ -98,10 +98,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 }
 
                 @ZNode                
-                public static class Values extends StorageZNode<Void> {
-
-                    @Name
-                    public static final ZNodeLabel LABEL = ZNodeLabel.fromString("values");
+                public static class Values extends StorageZNode.ValuesZNode {
 
                     public Values(ValueNode<ZNodeSchema> schema,
                             ByteCodec<Object> codec,
@@ -209,7 +206,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
         }
     }
 
-    @Test//(timeout=16000)
+    @Test(timeout=16000)
     public void test() throws Exception {
         final List<Component<?>> components = Modules.newServerAndClientComponents();
         final Injector injector = stopping(components, JacksonModule.create());
@@ -271,7 +268,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
             @Override
             public Void call() throws Exception {
                 final Serializers.ByteCodec<Object> codec = injector.getInstance(Key.get(new TypeLiteral<Serializers.ByteCodec<Object>>(){}));
-                final Materializer<StorageZNode<?>,Message.ServerResponse<?>> client = Materializer.<StorageZNode<?>, Message.ServerResponse<?>>fromHierarchy(WatchesSchema.class, codec, injector.getInstance(Key.get(Component.class, Names.named("client"))).injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor());
+                final Materializer<StorageZNode<?>,Message.ServerResponse<?>> client = Materializer.<StorageZNode<?>, Message.ServerResponse<?>>fromHierarchy(SnapshotWatchesTestSchema.class, codec, injector.getInstance(Key.get(Component.class, Names.named("client"))).injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor());
                 PrefixCreator.call(client).get();
                 
                 final List<QueueSupplier<Promise<FourLetterWords.Wchc>>> servers = Lists.newArrayListWithCapacity(nservers);
@@ -286,7 +283,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 final PromiseMap<Long,Long> sessions = PromiseMap.create();
 
                 final ChainedFutures.ChainedResult<FourLetterWords.Wchc,?,?,?> snapshot = SnapshotWatches.create(
-                        client.schema().apply(WatchesSchema.Watches.class).path(), 
+                        client.schema().apply(SnapshotWatchesTestSchema.Watches.class).path(), 
                         labelOf, 
                         codec, 
                         client,
@@ -360,18 +357,18 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 try {
                     ImmutableSetMultimap.Builder<Long,ZNodePath> builder = ImmutableSetMultimap.builder();
                     Function<ZNodePath, Long> getEphemeral = Functions.forMap(ephemerals.build(), null);
-                    for (StorageZNode<?> node: client.cache().cache().get(client.schema().apply(WatchesSchema.Watches.class).path()).values()) {
-                        WatchesSchema.Watches.Session session = (WatchesSchema.Watches.Session) node;
-                        for (StorageZNode<?> child: session.get(WatchesSchema.Watches.Session.Values.LABEL).values()) {
-                            WatchesSchema.Watches.Session.Values.Watch watch = (WatchesSchema.Watches.Session.Values.Watch) child;
+                    for (StorageZNode<?> node: client.cache().cache().get(client.schema().apply(SnapshotWatchesTestSchema.Watches.class).path()).values()) {
+                        SnapshotWatchesTestSchema.Watches.Session session = (SnapshotWatchesTestSchema.Watches.Session) node;
+                        for (StorageZNode<?> child: session.get(SnapshotWatchesTestSchema.Watches.Session.Values.LABEL).values()) {
+                            SnapshotWatchesTestSchema.Watches.Session.Values.Watch watch = (SnapshotWatchesTestSchema.Watches.Session.Values.Watch) child;
                             assertEquals(Watcher.WatcherType.Data, watch.data().get());
                             ZNodePath path = prefix.join(ZNodeLabel.fromString(watch.name()));
                             builder.put(Long.valueOf(session.name().longValue()), path);
                             Long ephemeral = getEphemeral.apply(path);
                             if (ephemeral != null) {
-                                assertEquals(SessionIdHex.valueOf(ephemeral.longValue()), watch.get(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL).data().get());
+                                assertEquals(SessionIdHex.valueOf(ephemeral.longValue()), watch.get(SnapshotWatchesTestSchema.Watches.Session.Values.Watch.Ephemeral.LABEL).data().get());
                             } else {
-                                assertFalse(watch.containsKey(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL));
+                                assertFalse(watch.containsKey(SnapshotWatchesTestSchema.Watches.Session.Values.Watch.Ephemeral.LABEL));
                             }
                         }
                     }

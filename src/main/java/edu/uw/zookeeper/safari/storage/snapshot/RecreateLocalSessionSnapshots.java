@@ -36,7 +36,6 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralTrieBuilder.SequentialNode;
 
 
 public final class RecreateLocalSessionSnapshots<O extends Operation.ProtocolResponse<?>,T extends ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> & Connection.Listener<? super Operation.Response>> extends CacheNodeCreatedListener<StorageZNode<?>> {
@@ -135,7 +134,7 @@ public final class RecreateLocalSessionSnapshots<O extends Operation.ProtocolRes
             {
                 ListenableFuture<?> future;
                 try {
-                    future = SequentialEphemeralTrieBuilder.create(
+                    future = SequentialEphemeralSnapshotTrie.create(
                             snapshot, 
                             client.materializer(), 
                             logger).call();

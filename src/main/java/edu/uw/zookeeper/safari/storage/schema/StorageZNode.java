@@ -197,6 +197,14 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
         @Name(type=NameType.PATTERN)
         public static final String LABEL = ".+";
 
+        public static ZNodeLabel labelOf(ZNodeName name) {
+            return labelOf(name.toString());
+        }
+
+        public static ZNodeLabel labelOf(String name) {
+            return ZNodeLabel.fromString(EscapedConverter.getInstance().convert(name.toString()));
+        }
+        
         protected EscapedNamedZNode(
                 ValueNode<ZNodeSchema> schema,
                 Serializers.ByteCodec<Object> codec,

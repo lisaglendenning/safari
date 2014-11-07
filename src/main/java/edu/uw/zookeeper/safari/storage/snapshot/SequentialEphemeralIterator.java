@@ -51,7 +51,6 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralTrieBuilder.SequentialNode;
 
 public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListener<StorageZNode<?>> {
     
