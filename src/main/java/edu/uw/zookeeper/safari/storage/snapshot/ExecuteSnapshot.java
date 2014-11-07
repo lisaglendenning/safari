@@ -862,7 +862,17 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         public synchronized void run() {
             if (!isDone()) {
                 if (walkers.isEmpty() && changes.isEmpty()) {
-                    promise.set(Pair.create(Long.valueOf(fromZxid.get()), (Map<ZNodePath,Long>) ImmutableMap.copyOf(ephemeralOwners)));
+                    // need to map backend to frontend sessions
+                    ImmutableMap.Builder<ZNodePath, Long> ephemerals = ImmutableMap.builder();
+                    for (Map.Entry<ZNodePath, Long> entry: ephemeralOwners.entrySet()) {
+                        EphemeralsSnapshotter<?>.SessionEphemeralSnapshotter session = this.ephemerals.ephemerals.get(entry.getValue());
+                        if ((session != null) && (session.prefix.isDone())) {
+                            try {
+                                ephemerals.put(entry.getKey(), session.prefix.get().first());
+                            } catch (Exception e) {}
+                        } // else ??
+                    }
+                    promise.set(Pair.create(Long.valueOf(fromZxid.get()), (Map<ZNodePath,Long>) ephemerals.build()));
                 }
             } else {
                 changes.stop();
@@ -1445,7 +1455,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             Long session = Long.valueOf(request.stamp());
             SessionEphemeralSnapshotter ephemeral = ephemerals.get(session);
             if (ephemeral == null) {
-                ListenableFuture<ZNodePath> prefix = sessionPrefix.submit(Long.valueOf(
+                ListenableFuture<Pair<Long,ZNodePath>> prefix = sessionPrefix.submit(Long.valueOf(
                         session));
                 ephemeral = new SessionEphemeralSnapshotter(session, prefix);
                 if (ephemerals.putIfAbsent(session, ephemeral) != null) {
@@ -1461,7 +1471,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
         }
         
-        protected final class SessionPrefix implements TaskExecutor<Long, ZNodePath>, AsyncFunction<Long, ZNodePath> {
+        protected final class SessionPrefix implements TaskExecutor<Long, Pair<Long,ZNodePath>>, AsyncFunction<Long, Pair<Long,ZNodePath>> {
 
             protected final AsyncFunction<Long, Long> sessions;
             protected final ZNodePath prefix;
@@ -1474,7 +1484,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
             
             @Override
-            public ListenableFuture<ZNodePath> submit(Long request) {
+            public ListenableFuture<Pair<Long,ZNodePath>> submit(Long request) {
                 try {
                     return Futures.transform(sessions.apply(request), this);
                 } catch (Exception e) {
@@ -1483,7 +1493,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
             }
             
             @Override
-            public ListenableFuture<ZNodePath> apply(Long input) {
+            public ListenableFuture<Pair<Long,ZNodePath>> apply(Long input) {
                 if (input == null) {
                     return Futures.immediateFuture(null);
                 }
@@ -1493,22 +1503,22 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                 ListenableFuture<List<O>> future = Futures.allAsList(
                         client.submit(create.setPath(path).build()),
                         client.submit(create.setPath(path.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.Session.Values.LABEL)).build()));
-                return Futures.transform(future, new Callback(create.getPath()));
+                return Futures.transform(future, new Callback(Pair.create(input, create.getPath())));
             }
             
-            protected final class Callback implements AsyncFunction<List<O>, ZNodePath> {
-                private final ZNodePath path;
+            protected final class Callback implements AsyncFunction<List<O>, Pair<Long,ZNodePath>> {
+                private final Pair<Long,ZNodePath> value;
                 
-                public Callback(ZNodePath path) {
-                    this.path = path;
+                public Callback(Pair<Long,ZNodePath> value) {
+                    this.value = value;
                 }
                 
                 @Override
-                public ListenableFuture<ZNodePath> apply(List<O> input) throws Exception {
+                public ListenableFuture<Pair<Long,ZNodePath>> apply(List<O> input) throws Exception {
                     for (O response: input) {
                         Operations.maybeError(response.record(), KeeperException.Code.NODEEXISTS);
                     }
-                    return Futures.immediateFuture(path);
+                    return Futures.immediateFuture(value);
                 }
             }
         }
@@ -1516,12 +1526,12 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
         protected final class SessionEphemeralSnapshotter extends ListenableFutureActor<Operations.PathBuilder<? extends Records.Request,?>,Pair<ZNodePath,O>,EphemeralSnapshotOperation> {
             
             protected final Long session;
-            protected final ListenableFuture<ZNodePath> prefix;
+            protected final ListenableFuture<Pair<Long,ZNodePath>> prefix;
             protected final ClassToInstanceMap<Operations.PathBuilder<? extends Records.Request,?>> operations;
 
             protected SessionEphemeralSnapshotter(
                     Long session,
-                    ListenableFuture<ZNodePath> prefix) {
+                    ListenableFuture<Pair<Long,ZNodePath>> prefix) {
                 super(Queues.<EphemeralSnapshotOperation>newConcurrentLinkedQueue(), 
                         EphemeralsSnapshotter.this.logger);
                 this.session = session;
@@ -1579,7 +1589,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                 }
                 ZNodePath prefix;
                 try {
-                    prefix = this.prefix.get();
+                    prefix = this.prefix.get().second();
                 } catch (Exception e) {
                     input.promise.setException(e);
                     return true;

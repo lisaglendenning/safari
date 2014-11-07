@@ -140,6 +140,19 @@ public abstract class StorageZNode<V> extends SafariZNode<StorageZNode<?>,V> {
             public String toString() {
                 return toString(longValue());
             }
+            
+            @Override
+            public boolean equals(Object obj) {
+                if (!(obj instanceof SessionIdHex)) {
+                    return false;
+                }
+                return longValue() == ((SessionIdHex) obj).longValue();
+            }
+            
+            @Override
+            public int hashCode() {
+                return (int) longValue();
+            }
         }
 
         @Name(type=NameType.PATTERN)

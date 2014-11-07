@@ -51,6 +51,7 @@ import edu.uw.zookeeper.protocol.Message;
 import edu.uw.zookeeper.protocol.Operation;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode.SessionZNode.SessionIdHex;
 
 public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<ListenableFuture<?>, FutureChain.FutureListChain<ListenableFuture<?>>> {
 
@@ -369,7 +370,7 @@ public final class SnapshotWatches implements ChainedFutures.ChainedProcessor<Li
                 if (ephemeral != null) {
                     try {
                         requests.add(createEphemeral.setPath(createWatch.getPath().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.Values.Watch.Ephemeral.LABEL))
-                                .setData(serializer.toBytes(ephemeral)).build());
+                                .setData(serializer.toBytes(SessionIdHex.valueOf(ephemeral.longValue()))).build());
                     } catch (IOException e) {
                         throw new AssertionError(e);
                     }

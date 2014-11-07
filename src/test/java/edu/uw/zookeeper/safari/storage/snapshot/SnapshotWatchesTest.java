@@ -39,6 +39,7 @@ import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
+import edu.uw.zookeeper.data.AbsoluteZNodePath;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Name;
@@ -61,6 +62,7 @@ import edu.uw.zookeeper.safari.schema.PrefixCreator;
 import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
+import edu.uw.zookeeper.safari.storage.schema.StorageZNode.SessionZNode.SessionIdHex;
 
 @RunWith(JUnit4.class)
 public class SnapshotWatchesTest extends AbstractMainTest {
@@ -124,9 +126,10 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                             super(name, schema, codec, parent);
                         }
                         
-                        @ZNode(dataType=Long.class)
-                        public static class Ephemeral extends StorageZNode<Long> {
+                        @ZNode(dataType=SessionIdHex.class)
+                        public static class Ephemeral extends StorageZNode<SessionIdHex> {
 
+                            @Name
                             public static final ZNodeLabel LABEL = StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Watches.Sessions.Session.Values.Watch.Ephemeral.LABEL;
                             
                             public Ephemeral(ValueNode<ZNodeSchema> schema,
@@ -206,7 +209,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
         }
     }
 
-    @Test(timeout=16000)
+    @Test//(timeout=16000)
     public void test() throws Exception {
         final List<Component<?>> components = Modules.newServerAndClientComponents();
         final Injector injector = stopping(components, JacksonModule.create());
@@ -219,6 +222,12 @@ public class SnapshotWatchesTest extends AbstractMainTest {
             @Override
             public ZNodeLabel apply(ZNodePath input) {
                 return ZNodeLabel.fromString(EscapedConverter.getInstance().convert(input.suffix(prefix).toString()));
+            }
+        };
+        final Function<Long, Long> toFrontend = new Function<Long, Long>() {
+            @Override
+            public Long apply(Long input) {
+                return Long.valueOf(input.longValue() << 8);
             }
         };
         final List<Object> inputs = Lists.newArrayListWithCapacity(SnapshotWatches.Phase.values().length);
@@ -241,7 +250,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                         } while (d < depth);
                         if (phase == SnapshotWatches.Phase.PRE_PHASE) {
                             // make some leaf paths ephemeral for the watcher
-                            ephemerals.put(path, session);
+                            ephemerals.put(((AbsoluteZNodePath) path).parent(), toFrontend.apply(session));
                         }
                         session = Long.valueOf(session.longValue() + 1L);
                     }
@@ -256,12 +265,6 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                 fail(String.valueOf(phase));
             }
         }
-        final Function<Long, Long> toFrontend = new Function<Long, Long>() {
-            @Override
-            public Long apply(Long input) {
-                return Long.valueOf(input.longValue() << 8);
-            }
-        };
         
         final Callable<Void> callable = new Callable<Void>() {
             @SuppressWarnings("unchecked")
@@ -366,7 +369,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                             builder.put(Long.valueOf(session.name().longValue()), path);
                             Long ephemeral = getEphemeral.apply(path);
                             if (ephemeral != null) {
-                                assertEquals(ephemeral, watch.get(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL).data().get());
+                                assertEquals(SessionIdHex.valueOf(ephemeral.longValue()), watch.get(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL).data().get());
                             } else {
                                 assertFalse(watch.containsKey(WatchesSchema.Watches.Session.Values.Watch.Ephemeral.LABEL));
                             }

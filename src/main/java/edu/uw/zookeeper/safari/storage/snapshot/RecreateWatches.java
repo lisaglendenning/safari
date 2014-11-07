@@ -196,7 +196,7 @@ public final class RecreateWatches<O extends Operation.ProtocolResponse<?>,T ext
             {
                 ZNodeName name;
                 try {
-                    name = (ZNodePath) input.getLast().get();
+                    name = (ZNodeName) input.getLast().get();
                 } catch (ExecutionException e) {
                     if (e.getCause() instanceof KeeperException.NoNodeException) {
                         // sequential ephemeral node has expired,

@@ -120,7 +120,7 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
         if (! send(task)) {
             task.cancel(true);
         }
-        return task;
+        return Futures.nonCancellationPropagating(task);
     }
     
     @Override

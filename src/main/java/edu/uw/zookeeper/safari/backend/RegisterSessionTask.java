@@ -13,6 +13,7 @@ import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.ForwardingPromise.SimpleForwardingPromise;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SettableFuturePromise;
+import edu.uw.zookeeper.data.CreateMode;
 import edu.uw.zookeeper.data.Operations;
 import edu.uw.zookeeper.data.Serializers;
 import edu.uw.zookeeper.data.ZNodePath;
@@ -55,7 +56,7 @@ public final class RegisterSessionTask<O extends Operation.Response, C extends P
             final ConnectMessage.Request request) {
         final Operations.DataBuilder<? extends Records.Request, ?> builder;
         if (request instanceof ConnectMessage.Request.NewRequest) {
-            builder = Operations.Requests.create();
+            builder = Operations.Requests.create().setMode(CreateMode.EPHEMERAL);
         } else {
             builder = Operations.Requests.setData();
         }

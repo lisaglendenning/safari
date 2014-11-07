@@ -924,8 +924,8 @@ public class StorageSchema extends StorageZNode<Void> {
                                                     return (Ephemeral) get(Ephemeral.LABEL);
                                                 }
                                                 
-                                                @ZNode(dataType=Long.class)
-                                                public static class Ephemeral extends StorageZNode<Long> {
+                                                @ZNode(dataType=SessionIdHex.class)
+                                                public static class Ephemeral extends StorageZNode<SessionIdHex> {
 
                                                     @Name
                                                     public static final ZNodeLabel LABEL = ZNodeLabel.fromString("ephemeral");

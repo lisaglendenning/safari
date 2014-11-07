@@ -66,8 +66,6 @@ import edu.uw.zookeeper.protocol.proto.OpCode;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.protocol.proto.Records.Request;
 import edu.uw.zookeeper.protocol.proto.Stats;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
-import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralIterator.CommittedChildIterator;
@@ -274,14 +272,7 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
                     // already been recreated, but the commit znode wasn't created.
                     // So, first we get existing sequential ephemeral children and 
                     // match against them to determine if this is the case
-                    T executor = executor();
-                    ZNodePath parent = AbsoluteZNodePath.fromString(record.getPath()).parent();
-                    PathToRequests getChildren = PathToRequests.forRequests(Operations.Requests.sync(), Operations.Requests.getChildren());
-                    return Optional.of(
-                            new GetExistingSequentialEphemeral(
-                                    SubmittedRequests.submit(
-                                            executor,
-                                            getChildren.apply(parent))));
+                    return Optional.of(new GetExistingSequentialEphemeral());
                 }
             }
             case 2:
@@ -311,9 +302,25 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
         
         protected final class GetExistingSequentialEphemeral extends ChainedTask<Optional<? extends Sequential<String,?>>> {
 
+            private final ZNodePath parent;
+            
+            protected GetExistingSequentialEphemeral() throws KeeperException {
+                this(AbsoluteZNodePath.fromString(record.getPath()).parent());
+            }
+
+            @SuppressWarnings("unchecked")
             protected GetExistingSequentialEphemeral(
-                    ListenableFuture<?> future) {
+                    ZNodePath parent) throws KeeperException {
+                this(parent, SubmittedRequests.submit(
+                                executor(),
+                                PathToRequests.forRequests(Operations.Requests.sync(), Operations.Requests.getChildren()).apply(parent)));
+            }
+            
+            protected GetExistingSequentialEphemeral(
+                    ZNodePath parent,
+                    ListenableFuture<? extends List<? extends Operation.ProtocolResponse<?>>> future) {
                 super(future);
+                this.parent = parent;
                 future.addListener(delegate, MoreExecutors.directExecutor());
             }
 
@@ -329,27 +336,27 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
                 case 1:
                 {
                     @SuppressWarnings("unchecked")
-                    List<String> children = ((Records.ChildrenGetter) Operations.unlessError(((List<O>) input.getLast().get()).get(1).record())).getChildren();
+                    List<? extends Operation.ProtocolResponse<?>> last = (List<? extends Operation.ProtocolResponse<?>>) input.getLast().get();
+                    List<String> children = ((Records.ChildrenGetter) Operations.unlessError(last.get(last.size()-1).record(), parent.toString())).getChildren();
                     @SuppressWarnings("unchecked")
                     PathToRequests exists = PathToRequests.forRequests(Operations.Requests.sync(), Operations.Requests.exists());
-                    List<Records.Request> requests = Lists.newArrayListWithCapacity(children.size()*2);
+                    List<Records.Request> requests = Lists.newArrayListWithCapacity(children.size()*exists.builders().size());
                     for (String child: children) {
                         Optional<? extends Sequential<String,?>> maybeSequential = Sequential.maybeFromString(child);
                         if (maybeSequential.isPresent()) {
-                            requests.addAll(exists.apply(sequential.parent().get().path().join(ZNodeLabel.fromString(child))));
+                            requests.addAll(exists.apply(parent.join(ZNodeLabel.fromString(child))));
                         }
                     }
-                    TaskExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>> executor = executor();
-                    return Optional.of(SubmittedRequests.submit(executor, requests));
+                    return Optional.of(SubmittedRequests.submit(executor(), requests));
                 }
                 case 2:
                 {
                     @SuppressWarnings("unchecked")
-                    SubmittedRequests<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>> last = (SubmittedRequests<ShardedRequestMessage<?>, ShardedServerResponseMessage<?>>) input.getLast();
+                    SubmittedRequests<? extends Records.Request, ? extends Operation.ProtocolResponse<?>> last = (SubmittedRequests<? extends Records.Request, ? extends Operation.ProtocolResponse<?>>) input.getLast();
                     List<Sequential<String,?>> sequentialEphemerals = Lists.newArrayListWithCapacity(last.getValue().size()/2);
                     for (int i=1; i<last.getValue().size(); i+=2) {
-                        ZNodePath path = ZNodePath.fromString(((Records.PathGetter) last.getValue().get(i).getRequest().record()).getPath());
-                        long owner = ((Records.StatGetter) Operations.unlessError(last.get().get(i).record())).getStat().getEphemeralOwner();
+                        ZNodePath path = ZNodePath.fromString(((Records.PathGetter) last.getValue().get(i)).getPath());
+                        long owner = ((Records.StatGetter) Operations.unlessError(last.get().get(i).record(), path.toString())).getStat().getEphemeralOwner();
                         if (owner != Stats.CreateStat.ephemeralOwnerNone()) {
                             sequentialEphemerals.add(Sequential.fromString(path.label().toString()));
                         }

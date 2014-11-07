@@ -207,7 +207,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
         case NodeCreated:
         {
             final Map.Entry<ZNodeName, StorageSchema.Safari.Volumes.Volume.Log.Version> last = parent.log().versions().lastEntry();
-            if ((parent.xomega() == null) && (parent == last.getValue()) || (parent == parent.log().versions().lowerEntry(last.getKey()).getValue())) {
+            if ((parent.xomega() == null) && ((parent == last.getValue()) || (parent == parent.log().versions().lowerEntry(last.getKey()).getValue()))) {
                 final VersionedId version = parent.id();
                 VolumeLeaseManager manager = managers.get(version.getValue());
                 if (manager != null) {
