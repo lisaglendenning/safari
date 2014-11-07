@@ -32,6 +32,7 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeLabel;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
+import edu.uw.zookeeper.protocol.Session;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode.SessionZNode.SessionIdHex;
@@ -145,7 +146,7 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
                 if (!committed.put(id, v)) {
                     return;
                 }
-                logger.debug("snapshot {} committed for session {} in {}", v, id, sessions);
+                logger.debug("snapshot {} committed for session {} in {}", v, Session.toString(id.longValue()), sessions);
             }
         } else {
             if (values == null) {
@@ -157,7 +158,7 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
         if ((committed != null) && (values.size() == committed.size())) {
             assert (committed.equals(values.keySet()));
             if (!session.containsKey(StorageZNode.CommitZNode.LABEL)) {
-                logger.debug("committing session snapshot {} in {}", id, sessions);
+                logger.debug("committing session snapshot {} in {}", Session.toString(id.longValue()), sessions);
                 Watchers.Query.call(
                         processor,
                         delegate(),
@@ -185,7 +186,7 @@ public final class CommitSessionSnapshot<O extends Operation.ProtocolResponse<?>
             if (node != null) {
                 Long id = Long.valueOf(((StorageZNode.SessionZNode<?>) node.parent().get()).name().longValue());
                 if (!committed.removeAll(id).isEmpty()) {
-                    logger.debug("session snapshot {} committed in {}", id, sessions);
+                    logger.debug("session snapshot {} committed in {}", Session.toString(id.longValue()), sessions);
                 }
             }
         }
