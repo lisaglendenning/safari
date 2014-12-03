@@ -16,6 +16,7 @@ import com.google.inject.Singleton;
 import com.google.inject.TypeLiteral;
 
 import edu.uw.zookeeper.common.Automaton;
+import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.LoggingServiceListener;
 import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Promise;
@@ -84,9 +85,10 @@ public final class XomegaCache extends LoggingServiceListener<ClientPeerConnecti
     @SuppressWarnings("unchecked")
     @Override
     public ListenableFuture<Long> apply(VersionedId input) throws Exception {
+        logger.entry(input);
         Pair<UnsignedLong, ?> value = cache.get(input.getValue());
         if (value == null) {
-            value = Pair.create(input.getVersion(), SettableFuturePromise.<Long>create());
+            value = Pair.create(input.getVersion(), LoggingFutureListener.listen(logger, SettableFuturePromise.<Long>create()));
             if (cache.putIfAbsent(input.getValue(), value) != null) {
                 // try again
                 return apply(input);
@@ -95,7 +97,7 @@ public final class XomegaCache extends LoggingServiceListener<ClientPeerConnecti
             int cmp = value.first().compareTo(input.getVersion());
             if (cmp < 0) {
                 assert (value.second() instanceof Long);
-                Pair<UnsignedLong, ?> updated = Pair.create(input.getVersion(), SettableFuturePromise.<Long>create());
+                Pair<UnsignedLong, ?> updated = Pair.create(input.getVersion(), LoggingFutureListener.listen(logger, SettableFuturePromise.<Long>create()));
                 if (cache.replace(input.getValue(), value, updated)) {
                     value = updated;
                 } else {
@@ -106,11 +108,7 @@ public final class XomegaCache extends LoggingServiceListener<ClientPeerConnecti
                 assert (cmp == 0);
             }
         }
-        if (value.second() instanceof Long) {
-            return Futures.immediateFuture((Long) value.second());
-        } else {
-            return (ListenableFuture<Long>) value.second();
-        }
+        return logger.exit((value.second() instanceof Long) ? Futures.immediateFuture((Long) value.second()) : (ListenableFuture<Long>) value.second());
     }
 
     @Override
@@ -137,6 +135,43 @@ public final class XomegaCache extends LoggingServiceListener<ClientPeerConnecti
     public void failed(Service.State from, Throwable failure) {
         super.failed(from, failure);
         stop();
+    }
+    
+    @SuppressWarnings("unchecked")
+    protected boolean update(MessageXomega message) {
+        logger.entry(this, message);
+        Pair<UnsignedLong, ?> value = cache.get(message.getVersion().getValue());
+        if (value == null) {
+            if (cache.putIfAbsent(message.getVersion().getValue(), Pair.create(message.getVersion().getVersion(), message.getXomega())) != null) {
+                // try again
+                return update(message);
+            } else {
+                return logger.exit(true);
+            }
+        } else {
+            int cmp = value.first().compareTo(message.getVersion().getVersion());
+            if (cmp == 0) {
+                if (value.second() instanceof Long) {
+                    // already known
+                    assert (message.getXomega().equals(value.second()));
+                    return logger.exit(false);
+                }
+            } else if (cmp > 0) {
+                return logger.exit(false);
+            } else {
+                // we don't handle out of order updates
+                assert (value.second() instanceof Long);
+            }
+            if (!cache.replace(message.getVersion().getValue(), value, Pair.create(
+                    message.getVersion().getVersion(), message.getXomega()))) {
+                // try again
+                return update(message);
+            } else if (cmp == 0) {
+                return logger.exit(((Promise<Long>) value.second()).set(message.getXomega()));
+            } else {
+                return logger.exit(true);
+            }
+        }
     }
     
     protected void stop() {
@@ -176,36 +211,10 @@ public final class XomegaCache extends LoggingServiceListener<ClientPeerConnecti
             }
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public void handleConnectionRead(final MessagePacket message) {
             if (message.getType() == MessageType.MESSAGE_TYPE_XOMEGA) {
-                final MessageXomega body = (MessageXomega) message.getBody();
-                Pair<UnsignedLong, ?> value = cache.get(body.getVersion().getValue());
-                if (value == null) {
-                    
-                } else {
-                    int cmp = value.first().compareTo(body.getVersion().getVersion());
-                    if (cmp == 0) {
-                        if (value.second() instanceof Long) {
-                            // already known
-                            assert (body.getXomega().equals(value.second()));
-                            return;
-                        }
-                    } else if (cmp > 0) {
-                        return;
-                    } else {
-                        // we don't handle out of order updates
-                        assert (value.second() instanceof Long);
-                    }
-                    if (!cache.replace(body.getVersion().getValue(), value, Pair.create(
-                            body.getVersion().getVersion(), body.getXomega()))) {
-                        // try again
-                        handleConnectionRead(message);
-                    } else if (cmp == 0) {
-                        ((Promise<Long>) value.second()).set(body.getXomega());
-                    }
-                }
+                update((MessageXomega) message.getBody());
             }
         }
     }

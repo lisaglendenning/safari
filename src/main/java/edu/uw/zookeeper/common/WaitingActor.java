@@ -34,12 +34,17 @@ public abstract class WaitingActor<T extends ListenableFuture<?>,V> extends Acto
     
     @Override
     protected synchronized void doRun() throws Exception {
+        clearWaiting();
+        super.doRun();
+    }
+    
+    public synchronized Optional<?> clearWaiting() throws Exception {
+        Optional<?> result = Optional.absent();
         if (waiting.isPresent()) {
             assert (waiting.get().isDone());
-            waiting.get().get();
+            result = Optional.of(waiting.get().get());
             waiting = Optional.absent();
         }
-        
-        super.doRun();
+        return result;
     }
 }

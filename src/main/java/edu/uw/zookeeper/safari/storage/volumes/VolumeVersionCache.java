@@ -16,7 +16,6 @@ import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Function;
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -24,7 +23,9 @@ import com.google.common.collect.MapMaker;
 import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.UnsignedLong;
+import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
@@ -36,8 +37,12 @@ import com.google.inject.Singleton;
 import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.LoggingWatchMatchListener;
 import edu.uw.zookeeper.client.PathToQuery;
+import edu.uw.zookeeper.client.PathToRequests;
+import edu.uw.zookeeper.client.WatchMatchServiceListener;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.AbstractPair;
+import edu.uw.zookeeper.common.LoggingFutureListener;
+import edu.uw.zookeeper.common.Pair;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.ServiceListenersService;
@@ -58,6 +63,7 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.Lease;
 import edu.uw.zookeeper.safari.SafariModule;
+import edu.uw.zookeeper.safari.VersionedValue;
 import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
 import edu.uw.zookeeper.safari.schema.DirectoryWatcherService;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
@@ -151,7 +157,8 @@ public class VolumeVersionCache extends ServiceListenersService {
         final RunCachedVolume runner = new RunCachedVolume(volumes, instance, instance.logger());
         VolumeVersionEntryCacheListener.listen(runner, client.materializer(), client.cacheEvents(), instance, instance.logger());
         XalphaCacheListener.listen(versionWatcher, runner, client.materializer().cache(), client.cacheEvents(), instance, instance.logger());
-        versions.add(new VolumeVersionCacheListener(versionWatcher, volumes));
+        versions.add(new VolumeVersionCacheListener(
+                        client.materializer(), volumes));
         VolumeLogChildrenWatcher<?,?> logWatcher = VolumeLogChildrenWatcher.defaults(
                 volumes, 
                 client.materializer(), 
@@ -160,6 +167,11 @@ public class VolumeVersionCache extends ServiceListenersService {
         VolumeLogChildrenWatcher.listen(
                 logWatcher, directory, client.notifications());
         entries.add(new VolumeCacheListener(logWatcher, volumes));
+        VersionStateChangeListener.listen(
+                volumes, 
+                instance, 
+                client.notifications(), 
+                instance.logger());
         return instance;
     }
 
@@ -328,6 +340,10 @@ public class VolumeVersionCache extends ServiceListenersService {
         }
     }
     
+    public static enum VersionState {
+        UNKNOWN, XALPHA, XOMEGA;
+    }
+    
     /**
      * Note that volume write lock is held when futures are set.
      * 
@@ -335,27 +351,36 @@ public class VolumeVersionCache extends ServiceListenersService {
      */
     public static final class CachedVolume implements Runnable {
         
+        private final Logger logger;
         private final ReentrantReadWriteLock lock;
         private final Identifier id;
         private final Deque<Version> versions;
         private final Set<Pending<?>> pending;
         private final LockableZNodeCache<StorageZNode<?>,?,?> cache;
         private final AbsoluteZNodePath path;
+        // only remember most recent, but enough to rollback
+        // if a version is aborted
+        private final LinkedList<VersionedValue<VersionState>> states;
         private Optional<? extends Version> latest;
-        private Promise<Version> future;
+        private Promise<Pair<? extends Version, VersionedValue<VersionState>>> future;
         
         protected CachedVolume(
                 Identifier id,
                 ReentrantReadWriteLock lock,
-                LockableZNodeCache<StorageZNode<?>,?,?> cache) {
+                LockableZNodeCache<StorageZNode<?>,?,?> cache,
+                Logger logger) {
+            this.logger = logger;
             this.id = id;
             this.lock = lock;
             this.cache = cache;
             this.path = StorageSchema.Safari.Volumes.Volume.pathOf(id);
             this.versions = Lists.newLinkedList();
+            this.states = Lists.newLinkedList();
             this.pending = Sets.newHashSet();
-            this.future = SettableFuturePromise.<Version>create();
+            this.future = null;
             this.latest = Optional.absent();
+            
+            nextFuture();
         }
         
         public Identifier getId() {
@@ -365,18 +390,37 @@ public class VolumeVersionCache extends ServiceListenersService {
         public ReentrantReadWriteLock getLock() {
             return lock;
         }
-    
+
         /**
          * assumes read lock is held
          */
+        public boolean hasPendingVersion() {
+            return !pending.isEmpty();
+        }
+        
+        /**
+         * Present if there are no pending notifications for
+         * new versions and we have seen the xalpha and either
+         * the xomega or lease for the highest version.
+         * 
+         * assumes read lock is held
+         */
         public Optional<? extends Version> getLatest() {
-            return latest;
+            return pending.isEmpty() ? latest : Optional.<Version>absent();
+        }
+        
+        /**
+         * Most recent ordered versions, high = first
+         * assumes read lock is held
+         */
+        public Deque<VersionedValue<VersionState>> getVersionState() {
+            return states;
         }
         
         /**
          * assumes read lock is held
          */
-        public ListenableFuture<Version> getFuture() {
+        public ListenableFuture<Pair<? extends Version, VersionedValue<VersionState>>> getFuture() {
             return future;
         }
     
@@ -422,6 +466,54 @@ public class VolumeVersionCache extends ServiceListenersService {
             return new RecentHistory(past, leased);
         }
 
+        public boolean updateVersionState(VersionedValue<VersionState> state) {
+            // lock ordering is important
+            cache.lock().readLock().lock();
+            try {
+                lock.writeLock().lock();
+                try {
+                    logger.entry(this, state);
+                    // tried to do this with a ListIterator but it was buggy?
+                    boolean updated = false;
+                    if (states.isEmpty() || (states.getFirst().getVersion().longValue() < state.getVersion().longValue())) {
+                        states.addFirst(state);
+                        updated = true;
+                    } else {
+                        int index = 0;
+                        for (index = 0; index < states.size(); ++index) {
+                            VersionedValue<VersionState> v = states.get(index);
+                            if (v.getVersion().equals(state.getVersion())) {
+                                if (v.getValue().compareTo(state.getValue()) < 0) {
+                                    states.set(index, state);
+                                    updated = true;
+                                }
+                                break;
+                            } else {
+                                assert (v.getVersion().longValue() > state.getVersion().longValue());
+                            }
+                        }
+                    }
+                    if (updated) {
+                        if (VersionState.UNKNOWN.compareTo(state.getValue()) < 0) {
+                            // garbage collect old versions
+                            Iterator<VersionedValue<VersionState>> itr = states.iterator();
+                            while (itr.hasNext()) {
+                                if (itr.next().getVersion().longValue() < state.getVersion().longValue()) {
+                                    itr.remove();
+                                }
+                            }
+                        }
+                        logger.trace("{}", this);
+                    }
+                    return logger.exit(updated);
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            } finally {
+                cache.lock().readLock().unlock();
+            }
+        }
+
         @Override
         public void run() {
             // lock ordering is important
@@ -429,23 +521,26 @@ public class VolumeVersionCache extends ServiceListenersService {
             try {
                 lock.writeLock().lock();
                 try {
+                    logger.entry(this);
                     final StorageSchema.Safari.Volumes.Volume node = (StorageSchema.Safari.Volumes.Volume) cache.cache().get(path);
                     if (node != null) {
                         if (pending.isEmpty()) {
                             final StorageSchema.Safari.Volumes.Volume.Log log = node.getLog();
                             if (log != null) {
-                                removeVersions(log);
-                                addVersions(updateLastVersion(log), log);
-                                updateLatest(log);
+                                boolean updated = removeVersions(log);
+                                updated = addVersions(updateLastVersion(log), log) || updated;
+                                updated = updateLatest(log) || updated;
+                                if (updated) {
+                                    set();
+                                }
                             }    
-                        } else if (latest.isPresent()) {
-                            latest = Optional.absent();
                         }
                     } else {
                         versions.clear();
                         latest = Optional.absent();
                         nextFuture().cancel(false);
                     }
+                    logger.exit();
                 } finally {
                     lock.writeLock().unlock();
                 }
@@ -454,10 +549,36 @@ public class VolumeVersionCache extends ServiceListenersService {
             }
         }
         
+        @Override
+        public String toString() {
+            lock.readLock().lock();
+            try {
+                MoreObjects.ToStringHelper toString = MoreObjects.toStringHelper(this).add("id", id);
+                if (pending.isEmpty()) {
+                    toString.add("latest", latest).add("versions", versions).add("states", states);
+                } else {
+                    toString.add("pending", pending);
+                }
+                return toString.toString();
+            } finally {
+                lock.readLock().unlock();
+            }
+        }
+
+        /**
+         * assumes cache read lock and volume write lock is held
+         */
+        protected boolean set() {
+            return nextFuture().set(Pair.create(latest.orNull(), states.peekFirst()));
+        }
+        
+        /**
+         * assumes cache read lock is held
+         */
         protected <V> void pending(ListenableFuture<V> future) {
             lock.writeLock().lock();
             try {
-                new Pending<V>(future).run();
+                LoggingFutureListener.listen(logger, new Pending<V>(future)).run();
             } finally {
                 lock.writeLock().unlock();   
             }
@@ -468,44 +589,69 @@ public class VolumeVersionCache extends ServiceListenersService {
          */
         protected boolean removeVersions(
                 final StorageSchema.Safari.Volumes.Volume.Log log) {
-            Version prev = versions.peekFirst();
-            while (!versions.isEmpty() && (log.isEmpty() || log.versions().firstEntry().getValue().name().longValue() > versions.peekFirst().getVersion().longValue())) {
+            // prune garbage collected old versions
+            Version prevLowVersion = versions.peekFirst();
+            while (!versions.isEmpty() && (log.isEmpty() || (log.versions().firstEntry().getValue().name().longValue() > versions.getFirst().getVersion().longValue()))) {
+                logger.debug("Version {} garbage collected for volume {}", versions.getFirst().getVersion(), id);
                 versions.removeFirst();
             }
-            return !Objects.equal(prev, versions.peekFirst());
+            boolean updated = prevLowVersion != versions.peekFirst();
+            // prune aborted versions
+            VersionedValue<VersionState> prevLastState = states.peekFirst();
+            while (!states.isEmpty() && (log.isEmpty() || (states.getFirst().getVersion().longValue() > log.versions().lastEntry().getValue().name().longValue()))) {
+                assert (states.getFirst().getValue() == VersionState.UNKNOWN);
+                logger.debug("Version {} aborted for volume {}", states.getFirst().getVersion(), id);
+                states.removeFirst();
+            }
+            updated = updated || prevLastState != states.peekLast();
+            return updated;
         }
         
         /**
          * assumes cache read lock and volume write lock is held
+         * 
+         * @return entry greater or equal to the last Version
          */
         protected Map.Entry<ZNodeName, StorageSchema.Safari.Volumes.Volume.Log.Version> updateLastVersion(
                 final StorageSchema.Safari.Volumes.Volume.Log log) {
-            Map.Entry<ZNodeName, StorageSchema.Safari.Volumes.Volume.Log.Version> next = null;
+            Map.Entry<ZNodeName, StorageSchema.Safari.Volumes.Volume.Log.Version> next;
             if (versions.isEmpty()) {
-                next = log.versions().firstEntry();
+                // assume we only care about two highest
+                next = log.versions().lastEntry();
+                if ((next != null) && (next.getKey() != log.versions().firstKey()) && (next.getValue().xalpha() == null)) {
+                    next = log.versions().lowerEntry(next.getKey());
+                }
             } else {
                 final StorageSchema.Safari.Volumes.Volume.Log.Version version = log.version(versions.getLast().getVersion());
                 if (versions.getLast() instanceof LeasedVersion) {
                     LeasedVersion last = (LeasedVersion) versions.getLast();
-                    if (version.xomega() != null) {
-                        final StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega xomega = version.xomega();
+                    Version updated = last;
+                    final StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega xomega = version.xomega();
+                    if (xomega != null) {
                         if (xomega.data().get() != null) {
-                            PastVersion updated = last.terminate(xomega.data().get());
-                            versions.removeLast();
-                            versions.addLast(updated);
+                            updated = last.terminate(xomega.data().get());
                             next = log.versions().higherEntry(version.parent().name());
+                        } else {
+                            next = log.versions().ceilingEntry(version.parent().name());
                         }
-                    } else if (version.lease() != null) {
+                    } else {
                         final StorageSchema.Safari.Volumes.Volume.Log.Version.Lease lease = version.lease();
-                        if (lease.stat().stamp() == lease.data().stamp()) {
-                            if (lease.stat().get().getMtime() > last.getLease().getStart()) {
-                                LeasedVersion updated = last.renew(Lease.valueOf(lease.stat().get().getMtime(), lease.data().get().longValue()));
-                                versions.removeLast();
-                                versions.addLast(updated);
-                            } else {
-                                assert (lease.stat().get().getMtime() == last.getLease().getStart());
+                        if (lease != null) {
+                            if (lease.stat().stamp() == lease.data().stamp()) {
+                                final long start = lease.stat().get().getMtime();
+                                if (start > last.getLease().getStart()) {
+                                    updated = last.renew(Lease.valueOf(start, lease.data().get().longValue()));
+                                } else {
+                                    assert (lease.stat().get().getMtime() == last.getLease().getStart());
+                                }
                             }
                         }
+                        next = log.versions().higherEntry(version.parent().name());
+                    }
+                    if (updated != last) {
+                        logger.debug("Updated version {} to {} for volume {}", last, updated, id);
+                        versions.removeLast();
+                        versions.addLast(updated);
                     }
                 } else {
                     next = log.versions().higherEntry(version.parent().name());
@@ -513,37 +659,55 @@ public class VolumeVersionCache extends ServiceListenersService {
             }
             return next;
         }
-        
+
         /**
          * assumes cache read lock and volume write lock is held
          */
         protected boolean addVersions(
                 Map.Entry<ZNodeName, StorageSchema.Safari.Volumes.Volume.Log.Version> next, 
                 final StorageSchema.Safari.Volumes.Volume.Log log) {
-            Version prev = versions.peekLast();
+            boolean updated = false;
+            Version prevHighVersion = versions.peekLast();
             while ((next != null) && (next.getValue().xalpha() != null)) {
-                final Long xalpha = next.getValue().xalpha().data().get();
-                if (xalpha != null) {
-                    if (next.getValue().xomega() != null) {
-                        final Long xomega = next.getValue().xomega().data().get();
+                final StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega xomega = next.getValue().xomega();
+                VersionState state = (xomega != null) ? VersionState.XOMEGA : VersionState.XALPHA;
+                updated = updateVersionState(VersionedValue.valueOf(next.getValue().name(), state)) || updated;
+                if (versions.isEmpty() || (versions.peekLast().getVersion().longValue() < next.getValue().name().longValue())) {
+                    final Long xalpha = next.getValue().xalpha().data().get();
+                    if (xalpha != null) {
                         if (xomega != null) {
-                            versions.addLast(new PastVersion(xalpha, xomega, next.getValue().name()));
-                            next = log.versions().higherEntry(next.getKey());
-                            continue;
-                        }
-                    } else if (next.getValue().lease() != null) {
-                        final StorageSchema.Safari.Volumes.Volume.Log.Version.Lease lease = next.getValue().lease();
-                        if (lease.stat().stamp() == lease.data().stamp()) {
-                           final UnsignedLong value = lease.data().get();
-                           if (value != null) {
-                               versions.addLast(new LeasedVersion(Lease.valueOf(lease.stat().get().getMtime(), value.longValue()), xalpha, next.getValue().name()));
-                           }
+                            if (xomega.data().get() != null) {
+                                PastVersion version = new PastVersion(xalpha, xomega.data().get(), next.getValue().name());
+                                logger.debug("Added {} for volume {}", version, id);
+                                versions.addLast(version);
+                                next = log.versions().higherEntry(next.getKey());
+                                continue;
+                            }
+                        } else {
+                            final StorageSchema.Safari.Volumes.Volume.Log.Version.Lease lease = next.getValue().lease();
+                            if (lease != null) {
+                                if (lease.stat().stamp() == lease.data().stamp()) {
+                                   final UnsignedLong duration = lease.data().get();
+                                   if (duration != null) {
+                                       LeasedVersion version = new LeasedVersion(Lease.valueOf(lease.stat().get().getMtime(), duration.longValue()), xalpha, next.getValue().name());
+                                       logger.debug("Added {} for volume {}", version, id);
+                                       versions.addLast(version);
+                                   }
+                                }
+                            }
                         }
                     }
                 }
-                break;
+                next = log.versions().higherEntry(next.getKey());
+                assert ((next == null) || (next.getValue().xalpha() == null));
             }
-            return !Objects.equal(prev, versions.peekLast());
+            while (next != null) {
+                updated = updateVersionState(VersionedValue.valueOf(next.getValue().name(), VersionState.UNKNOWN)) || updated;
+                next = log.versions().higherEntry(next.getKey());
+                assert (next == null);
+            }
+            updated = updated || (prevHighVersion != versions.peekLast());
+            return updated;
         }
 
         /**
@@ -561,8 +725,8 @@ public class VolumeVersionCache extends ServiceListenersService {
                     Version last = versions.getLast();
                     if (last.getVersion().equals(highest.getValue().name())) {
                         if (last != latest.orNull()) {
+                            logger.debug("Latest version of {} is {}", id, last);
                             latest = Optional.of(last);
-                            nextFuture().set(last);
                         }
                     } else {
                         assert (last.getVersion().longValue() < highest.getValue().name().longValue());
@@ -571,8 +735,10 @@ public class VolumeVersionCache extends ServiceListenersService {
                         }
                     }
                 }
-            } else if (latest.isPresent()) {
-                latest = Optional.absent();
+            } else {
+                if (latest.isPresent()) {
+                    latest = Optional.absent();
+                }
             }
             return (prev != latest);
         }
@@ -580,9 +746,9 @@ public class VolumeVersionCache extends ServiceListenersService {
         /**
          * assumes write lock is held
          */
-        protected Promise<Version> nextFuture() {
-            final Promise<Version> future = this.future;
-            this.future = SettableFuturePromise.<Version>create();
+        protected Promise<Pair<? extends Version, VersionedValue<VersionState>>> nextFuture() {
+            final Promise<Pair<? extends Version, VersionedValue<VersionState>>> future = this.future;
+            this.future = LoggingFutureListener.listen(logger, SettableFuturePromise.<Pair<? extends Version, VersionedValue<VersionState>>>create());
             return future;
         }
         
@@ -596,13 +762,31 @@ public class VolumeVersionCache extends ServiceListenersService {
             @Override
             public void run() {
                 if (isDone()) {
-                    lock.writeLock().lock();
+                    // lock ordering is important
+                    cache.lock().readLock().lock();
                     try {
-                        pending.remove(this);
+                        lock.writeLock().lock();
+                        try {
+                            if (pending.remove(this)) {
+                                try {
+                                    get();
+                                    if (pending.isEmpty()) {
+                                        ListenableFuture<?> future = CachedVolume.this.getFuture();
+                                        CachedVolume.this.run();
+                                        if (future == CachedVolume.this.getFuture()) {
+                                            CachedVolume.this.set();
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    future.setException(e);
+                                }
+                            }
+                        } finally {
+                            lock.writeLock().unlock();
+                        }
                     } finally {
-                        lock.writeLock().unlock();
+                        cache.lock().readLock().unlock();
                     }
-                    CachedVolume.this.run();
                 } else {
                     addListener(this, MoreExecutors.directExecutor());
                 }
@@ -618,19 +802,23 @@ public class VolumeVersionCache extends ServiceListenersService {
             return create(
                     new MapMaker().<Identifier, CachedVolume>makeMap(),
                     cache,
-                    locks);
+                    locks,
+                    LogManager.getLogger(CachedVolumes.class));
         }
         
         public static CachedVolumes create(
                 ConcurrentMap<Identifier, CachedVolume> volumes,
                 LockableZNodeCache<StorageZNode<?>,?,?> cache,
-                Function<Identifier, ReentrantReadWriteLock> locks) {
+                Function<Identifier, ReentrantReadWriteLock> locks,
+                Logger logger) {
             return new CachedVolumes(
                     volumes, 
                     cache,
-                    locks);
+                    locks,
+                    logger);
         }
         
+        private final Logger logger;
         private final ConcurrentMap<Identifier, CachedVolume> volumes;
         private final LockableZNodeCache<StorageZNode<?>,?,?> cache;
         private final Function<Identifier, ReentrantReadWriteLock> locks;
@@ -638,7 +826,9 @@ public class VolumeVersionCache extends ServiceListenersService {
         protected CachedVolumes(
                 ConcurrentMap<Identifier, CachedVolume> volumes,
                 LockableZNodeCache<StorageZNode<?>,?,?> cache,
-                Function<Identifier, ReentrantReadWriteLock> locks) {
+                Function<Identifier, ReentrantReadWriteLock> locks,
+                Logger logger) {
+            this.logger = logger;
             this.volumes = volumes;
             this.cache = cache;
             this.locks = locks;
@@ -667,7 +857,7 @@ public class VolumeVersionCache extends ServiceListenersService {
             try {
                 CachedVolume volume = volumes.get(id);
                 if (volume == null) {
-                    volume = new CachedVolume(id, lock, cache);
+                    volume = new CachedVolume(id, lock, cache, logger);
                     CachedVolume existing = volumes.putIfAbsent(id, volume);
                     assert (existing == null);
                 }
@@ -842,17 +1032,33 @@ public class VolumeVersionCache extends ServiceListenersService {
     
     protected static final class VolumeVersionCacheListener extends CachedVolumesListener {
 
-        private final FutureCallback<ZNodePath> query;
+        private final AsyncFunction<? super ZNodePath, ? extends List<? extends Operation.ProtocolResponse<?>>> query;
         
         protected VolumeVersionCacheListener(
-                FutureCallback<ZNodePath> query,
+                final ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>, ?> client,
                 CachedVolumes volumes) {
             super(volumes,
                     WatchMatcher.exact(
                         StorageSchema.Safari.Volumes.Volume.Log.Version.PATH, 
                         Watcher.Event.EventType.NodeCreated, 
                         Watcher.Event.EventType.NodeDeleted));
-            this.query = query;
+            this.query = new AsyncFunction<ZNodePath, List<Operation.ProtocolResponse<?>>>() {
+                @SuppressWarnings("unchecked")
+                final PathToRequests requests = PathToRequests.forRequests(
+                        Operations.Requests.sync(), 
+                        Operations.Requests.getData().setWatch(true));
+                @Override
+                public ListenableFuture<List<Operation.ProtocolResponse<?>>> apply(
+                        ZNodePath input) throws Exception {
+                    List<Records.Request> requests = this.requests.apply(input.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Xalpha.LABEL));
+                    ImmutableList.Builder<ListenableFuture<? extends Operation.ProtocolResponse<?>>> futures = ImmutableList.builder();
+                    for (Records.Request request: requests) {
+                        futures.add(client.submit(request));
+                    }
+                    return Futures.allAsList(futures.build());
+                }
+                
+            };
         }
         
         @Override
@@ -866,7 +1072,18 @@ public class VolumeVersionCache extends ServiceListenersService {
                 ZNodeName lastKey = log.versions().lastKey();
                 if ((node.parent().name() == lastKey) || (node.parent().name() == log.versions().lowerKey(lastKey))) {
                     if (node.xalpha() == null) {
-                        query.onSuccess(event.getPath().join(StorageSchema.Safari.Volumes.Volume.Log.Version.Xalpha.LABEL));
+                        CachedVolume volume = volumes().apply(log.volume().name());
+                        volume.getLock().writeLock().lock();
+                        try {
+                            // consider a new version pending until we verify whether it has an xalpha
+                            try {
+                                volume.pending(query.apply(event.getPath()));
+                            } catch (Exception e) {
+                                volume.future.setException(e);
+                            }
+                        } finally {
+                            volume.getLock().writeLock().unlock();
+                        }
                     }
                 }
                 break;
@@ -893,11 +1110,11 @@ public class VolumeVersionCache extends ServiceListenersService {
         protected static Watchers.FutureCallbackServiceListener<?> listen(
                 VolumeLogChildrenWatcher<?,?> callback,
                 Service service,
-                WatchListeners watch) {
+                WatchListeners cacheEvents) {
             return Watchers.FutureCallbackServiceListener.listen(
                     Watchers.EventToPathCallback.create(callback), 
                     service, 
-                    watch,
+                    cacheEvents,
                     WatchMatcher.exact(
                             StorageSchema.Safari.Volumes.Volume.Log.PATH, 
                             Watcher.Event.EventType.NodeCreated, 
@@ -953,6 +1170,7 @@ public class VolumeVersionCache extends ServiceListenersService {
         }
     }
 
+    
     protected static final class VolumeCacheListener extends CachedVolumesListener {
     
         private final FutureCallback<ZNodePath> query;
@@ -999,6 +1217,74 @@ public class VolumeVersionCache extends ServiceListenersService {
             default:
                 break;
             }
+        }
+    }
+
+    protected static final class VersionStateChangeListener extends LoggingWatchMatchListener {
+
+        /**
+         * Assumes xalpha and xomega are watched.
+         */
+        public static List<WatchMatchServiceListener> listen(
+                Function<Identifier, CachedVolume> volumes,
+                Service service,
+                WatchListeners notifications,
+                Logger logger) {
+            ImmutableList.Builder<WatchMatchServiceListener> listeners = ImmutableList.builder();
+            for (VersionState state: ImmutableList.of(VersionState.XALPHA, VersionState.XOMEGA)) {
+                listeners.add(listen(state, volumes, service, notifications, logger));
+            }
+            return listeners.build();
+        }
+        
+        public static WatchMatchServiceListener listen(
+                VersionState state,
+                Function<Identifier, CachedVolume> volumes,
+                Service service,
+                WatchListeners notifications,
+                Logger logger) {
+            ZNodePath path;
+            switch (state) {
+            case XALPHA:
+                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Xalpha.PATH;
+                break;
+            case XOMEGA:
+                path = StorageSchema.Safari.Volumes.Volume.Log.Version.Xomega.PATH;
+                break;
+            default:
+                throw new IllegalArgumentException(String.valueOf(state));
+            }
+            WatchMatchServiceListener listener = WatchMatchServiceListener.create(
+                    service, 
+                    notifications,
+                    new VersionStateChangeListener(state, volumes, path, logger));
+            listener.listen();
+            return listener;
+        }
+        
+        private final VersionState state;
+        private final Function<Identifier, CachedVolume> volumes;
+        
+        protected VersionStateChangeListener(
+                VersionState state,
+                Function<Identifier, CachedVolume> volumes,
+                ZNodePath path,
+                Logger logger) {
+            super(WatchMatcher.exact(path, Watcher.Event.EventType.NodeCreated), 
+                    logger);
+            this.state = state;
+            this.volumes = volumes;
+        }
+        
+        @Override
+        public void handleWatchEvent(WatchEvent event) {
+            super.handleWatchEvent(event);
+            AbsoluteZNodePath path = (AbsoluteZNodePath) ((AbsoluteZNodePath) event.getPath()).parent();
+            final UnsignedLong version = UnsignedLong.valueOf(path.label().toString());
+            path = (AbsoluteZNodePath) ((AbsoluteZNodePath) path.parent()).parent();
+            final Identifier id = Identifier.valueOf(path.label().toString());
+            CachedVolume volume = volumes.apply(id);
+            volume.updateVersionState(VersionedValue.valueOf(version, state));
         }
     }
 }

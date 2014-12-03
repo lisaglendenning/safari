@@ -52,9 +52,10 @@ import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
-public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListener<StorageZNode<?>> {
+
+public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNodeCreatedListener<StorageZNode<?>> {
     
-    public static <O extends Operation.ProtocolResponse<?>> SequentialEphemeralIterator create(
+    public static <O extends Operation.ProtocolResponse<?>> SequentialEphemeralSnapshotIterator create(
             ZNodePath ephemerals,
             SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>> trie,
             Set<AbsoluteZNodePath> leaves,
@@ -62,18 +63,19 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
             WatchListeners cacheEvents,
             Service service,
             Logger logger) {
-        final Map<ZNodePath, CommittedChildIterator> iterators = 
+        // initialize iterators for each parent of sequential ephemerals
+        final Map<ZNodePath, SequentialChildIterator> iterators = 
                 Collections.synchronizedMap(
-                        Maps.<ZNodePath, CommittedChildIterator>newHashMapWithExpectedSize(
+                        Maps.<ZNodePath, SequentialChildIterator>newHashMapWithExpectedSize(
                                 leaves.size()));
         for (AbsoluteZNodePath path: leaves) {
             SequentialNode<AbsoluteZNodePath> parent = trie.get(path).parent().get();
             ZNodePath k = parent.path();
             if (!iterators.containsKey(k)) {
-                iterators.put(k, CommittedChildIterator.create(parent, materializer));
+                iterators.put(k, SequentialChildIterator.create(parent, materializer));
             }
         }
-        SequentialEphemeralIterator instance = new SequentialEphemeralIterator(
+        SequentialEphemeralSnapshotIterator instance = new SequentialEphemeralSnapshotIterator(
                 iterators,
                 materializer.cache(), 
                 service, 
@@ -87,10 +89,10 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
         return instance;
     }
 
-    private final Map<ZNodePath, CommittedChildIterator> iterators;
+    private final Map<ZNodePath, SequentialChildIterator> iterators;
     
-    protected SequentialEphemeralIterator(
-            Map<ZNodePath, CommittedChildIterator> iterators,
+    protected SequentialEphemeralSnapshotIterator(
+            Map<ZNodePath, SequentialChildIterator> iterators,
             LockableZNodeCache<StorageZNode<?>,?,?> cache,
             Service service,
             WatchListeners cacheEvents,
@@ -107,7 +109,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
     /**
      * @return synchronized map
      */
-    public Map<ZNodePath, CommittedChildIterator> iterators() {
+    public Map<ZNodePath, SequentialChildIterator> iterators() {
         return iterators;
     }
 
@@ -116,7 +118,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
         super.stopping(from);
         Exception t = new CancellationException();
         synchronized (iterators) {
-            for (CommittedChildIterator v: Iterables.consumingIterable(iterators.values())) {
+            for (SequentialChildIterator v: Iterables.consumingIterable(iterators.values())) {
                 v.onFailure(t);
             }
         }
@@ -126,7 +128,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
     public void failed(Service.State from, Throwable failure) {
         super.failed(from, failure);
         synchronized (iterators) {
-            for (CommittedChildIterator v: Iterables.consumingIterable(iterators.values())) {
+            for (SequentialChildIterator v: Iterables.consumingIterable(iterators.values())) {
                 v.onFailure(failure);
             }
         }
@@ -186,12 +188,12 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
      * 
      * Iterator functions are not thread safe.
      */
-    public static final class CommittedChildIterator extends AbstractIterator<CommittedChildIterator.NextChild<?>> implements PeekingIterator<CommittedChildIterator.NextChild<?>>, FutureCallback<ZNodePath> {
+    public static final class SequentialChildIterator extends AbstractIterator<SequentialChildIterator.NextChild<?>> implements PeekingIterator<SequentialChildIterator.NextChild<?>>, FutureCallback<ZNodePath> {
 
-        public static <O extends Operation.ProtocolResponse<?>> CommittedChildIterator create(
+        public static <O extends Operation.ProtocolResponse<?>> SequentialChildIterator create(
                 SequentialNode<AbsoluteZNodePath> parent,
                 Materializer<StorageZNode<?>,O> materializer) {
-            return new CommittedChildIterator(
+            return new SequentialChildIterator(
                     WatchCommit.getCommitData(materializer),
                     parent, 
                     materializer.cache());
@@ -203,7 +205,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
         private final Iterator<SequentialNode<AbsoluteZNodePath>> children;
         private final Deque<NextChild<Promise<AbsoluteZNodePath>>> pending;
         
-        protected CommittedChildIterator(
+        protected SequentialChildIterator(
                 AsyncFunction<? super ZNodePath,?> watchCommit,
                 SequentialNode<AbsoluteZNodePath> parent,
                 LockableZNodeCache<StorageZNode<?>,?,?> cache) {
@@ -318,7 +320,7 @@ public class SequentialEphemeralIterator extends Watchers.CacheNodeCreatedListen
             @Override
             public void run() {
                 if (child.getCommitted().isDone()) {
-                    synchronized (CommittedChildIterator.this) {
+                    synchronized (SequentialChildIterator.this) {
                         pending.remove(child);
                     }
                 } else {

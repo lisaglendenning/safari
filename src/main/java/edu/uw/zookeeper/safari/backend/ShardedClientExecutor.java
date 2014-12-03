@@ -2,6 +2,7 @@ package edu.uw.zookeeper.safari.backend;
 
 import java.lang.ref.Reference;
 import java.lang.ref.SoftReference;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentMap;
@@ -22,11 +23,13 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import edu.uw.zookeeper.common.Automaton;
 import edu.uw.zookeeper.common.LoggingFutureListener;
 import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
+import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.common.ToStringListenableFuture;
@@ -50,6 +53,7 @@ import edu.uw.zookeeper.protocol.proto.OpCodeXid;
 import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.VersionedId;
+import edu.uw.zookeeper.safari.VersionedValue;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedRequestMessage;
 import edu.uw.zookeeper.safari.peer.protocol.ShardedServerResponseMessage;
 import edu.uw.zookeeper.safari.schema.volumes.AssignedVolumeBranches;
@@ -114,9 +118,9 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
     @Override
     public ListenableFuture<ShardedServerResponseMessage<?>> submit(
             ShardedRequestMessage<?> request, Promise<ShardedServerResponseMessage<?>> promise) {
-        ShardedRequestTask task = new ShardedRequestTask(
-                request, promise);
-        LoggingFutureListener.listen(logger(), task);
+        ShardedRequestTask task =
+                LoggingFutureListener.listen(logger(), 
+                        new ShardedRequestTask(request, promise));
         if (! send(task)) {
             task.cancel(true);
         }
@@ -265,7 +269,7 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
             Identifier id = StorageSchema.Safari.Volumes.shardOfPath(path);
             ShardProcessor processor = processors.get(id);
             if (processor != null) {
-                processor.responses.send(Futures.immediateFuture(notification));
+                processor.responses().handleNotification((Message.ServerResponse<IWatcherEvent>) notification);
             }
         }
 
@@ -409,27 +413,67 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                 return responses;
             }
             
-            protected abstract class TaskProcessor<V> implements Processor<V, ListenableFuture<?>> {
+            protected abstract class TaskProcessor<T extends Function<?,?>,U,V> implements Processor<U,V> {
 
-                protected Optional<VolumeVersionCache.LeasedVersion> lease;
+                private final T translator;
 
-                protected TaskProcessor() {
-                    this.lease = Optional.absent();
+                protected TaskProcessor(T translator) {
+                    this.translator = translator;
                 }
+
+                public T translator() {
+                    return translator;
+                }
+                
             }
             
-            protected final class ShardedRequestTaskProcessor extends TaskProcessor<ShardedRequestTask> {
-            
-                private final MessageRequestPrefixTranslator translator;
-            
+            protected final class ShardedRequestTaskProcessor extends TaskProcessor<MessageRequestPrefixTranslator, ShardedRequestTask, ListenableFuture<?>> {
+
+                private Optional<VolumeVersionCache.LeasedVersion> lease;
+                
                 protected ShardedRequestTaskProcessor(
                         MessageRequestPrefixTranslator translator) {
-                    this.translator = translator;
+                    super(translator);
+                    this.lease = Optional.absent();
+                }
+                
+                @Override
+                public ListenableFuture<?> apply(ShardedRequestTask input) throws Exception {
+                    Object last = getLastVersion();
+                    if (last instanceof ListenableFuture<?>) {
+                        return (ListenableFuture<?>) last;
+                    }
+                    VolumeVersionCache.Version lastVersion = (VolumeVersionCache.Version) last;
+                    final int cmp = lastVersion.getVersion().compareTo(input.task().getShard().getVersion());
+                    if (cmp < 0) {
+                        // I'm out of date
+                        version.getLock().readLock().lock();
+                        try {
+                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                            if (!latest.isPresent() || latest.get().equals(last)) {
+                                return version.getFuture();
+                            }
+                        } finally {
+                            version.getLock().readLock().unlock();
+                        }
+                        // missed an update, try again
+                        return apply(input);
+                    } else if ((cmp > 0) || (last instanceof VolumeVersionCache.PastVersion)) {
+                        // request is out of date
+                        input.setException(new OutdatedVersionException(input.task().getShard()));
+                    }
+                    final Message.ClientRequest<?> translated = 
+                            input.isDone() ? null : translator().apply(input.task().getRequest());
+                    return LoggingFutureListener.listen(
+                            logger, 
+                            PendingShardedTask.create(
+                                    input, 
+                                    new SoftReference<Message.ClientRequest<?>>(translated), 
+                                    SettableFuturePromise.<Message.ServerResponse<?>>create()));
                 }
                 
                 @SuppressWarnings("unchecked")
-                @Override
-                public ListenableFuture<?> apply(ShardedRequestTask input) throws Exception {
+                protected Object getLastVersion() {
                     VolumeVersionCache.Version last;
                     if (lease.isPresent() && lease.get().getLease().getRemaining() > 0L) {
                         last = lease.get();
@@ -455,55 +499,25 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                             version.getLock().readLock().unlock();
                         }
                     }
-                    final int cmp = last.getVersion().compareTo(input.task().getShard().getVersion());
-                    if (cmp < 0) {
-                        // I'm out of date
-                        version.getLock().readLock().lock();
-                        try {
-                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
-                            if (!latest.isPresent() || latest.get().equals(last)) {
-                                return version.getFuture();
-                            }
-                        } finally {
-                            version.getLock().readLock().unlock();
-                        }
-                        // missed an update, try again
-                        return apply(input);
-                    } else if ((cmp > 0) || (last instanceof VolumeVersionCache.PastVersion)) {
-                        // request is out of date
-                        input.setException(new OutdatedVersionException(input.task().getShard()));
-                    }
-                    final Message.ClientRequest<?> translated = 
-                            input.isDone() ? null : translator.apply(input.task().getRequest());
-                    return LoggingFutureListener.listen(
-                            logger, 
-                            PendingShardedTask.create(
-                                    input, 
-                                    new SoftReference<Message.ClientRequest<?>>(translated), 
-                                    SettableFuturePromise.<Message.ServerResponse<?>>create()));
+                    return last;
                 }
             }
 
-            protected final class PendingShardedTaskProcessor extends TaskProcessor<PendingShardedTask> {
-            
-                private final MessageResponsePrefixTranslator translator;
+            protected final class PendingShardedTaskProcessor extends TaskProcessor<MessageResponsePrefixTranslator, PendingShardedTask, ListenableFuture<?>> {
+
+                private Optional<VolumeVersionCache.LeasedVersion> lease;
                 
                 protected PendingShardedTaskProcessor(
                         MessageResponsePrefixTranslator translator) {
-                    super();
-                    this.translator = translator;
+                    super(translator);
+                    this.lease = Optional.absent();
                 }
                 
-                public MessageResponsePrefixTranslator translator() {
-                    return translator;
-                }
-                
-                @SuppressWarnings("unchecked")
                 @Override
                 public ListenableFuture<?> apply(
                         PendingShardedTask input) throws Exception {
                     assert (input.isDone());
-                    ShardedRequestTask task = ((PendingShardedTask) input).getSharded();
+                    ShardedRequestTask task = input.getSharded();
                     if (task.isDone()) {
                         return task;
                     } else if (input.isCancelled()) {
@@ -517,38 +531,21 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                         task.setException(e);
                         return task;
                     }
-                    VolumeVersionCache.Version last;
-                    if (lease.isPresent() && lease.get().getLease().getRemaining() > 0L) {
-                        last = lease.get();
-                    } else {
-                        version.getLock().readLock().lock();
-                        try {
-                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
-                            if (!latest.isPresent()) {
-                                return version.getFuture();
-                            }
-                            if (latest.get() instanceof VolumeVersionCache.LeasedVersion) {
-                                if (lease != latest) {
-                                    lease = (Optional<VolumeVersionCache.LeasedVersion>) latest;
-                                }
-                            } else if (lease.isPresent()) {
-                                lease = Optional.absent();
-                            }
-                            last = latest.get();
-                        } finally {
-                            version.getLock().readLock().unlock();
-                        }
+                    Object last = getLastVersion();
+                    if (last instanceof ListenableFuture<?>) {
+                        return (ListenableFuture<?>) last;
                     }
-                    if (task.task().getShard().getVersion().equals(last.getVersion())) {
-                        if (last instanceof VolumeVersionCache.LeasedVersion) {
-                            if (((VolumeVersionCache.LeasedVersion) last).getLease().getRemaining() > 0L) {
-                                task.set(ShardedServerResponseMessage.valueOf(task.task().getShard(), translator.apply(response)));
+                    VolumeVersionCache.Version lastVersion = (VolumeVersionCache.Version) last;
+                    if (task.task().getShard().getVersion().equals(lastVersion.getVersion())) {
+                        if (lastVersion instanceof VolumeVersionCache.LeasedVersion) {
+                            if (((VolumeVersionCache.LeasedVersion) lastVersion).getLease().getRemaining() > 0L) {
+                                task.set(ShardedServerResponseMessage.valueOf(task.task().getShard(), translator().apply(response)));
                                 return task;
                             } else {
                                 version.getLock().readLock().lock();
                                 try {
                                     Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
-                                    if (!latest.isPresent() || latest.get().equals(last)) {
+                                    if (!latest.isPresent() || latest.get().equals(lastVersion)) {
                                         return version.getFuture();
                                     }
                                 } finally {
@@ -559,13 +556,13 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                             }
                         }
                     } else {
-                        assert (task.task().getShard().getVersion().longValue() < last.getVersion().longValue());
+                        assert (task.task().getShard().getVersion().longValue() < lastVersion.getVersion().longValue());
                     }
                     Object result = null;
                     version.getLock().readLock().lock();
                     try {
                         Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
-                        if (last.equals(latest.orNull())) {
+                        if (lastVersion.equals(latest.orNull())) {
                             VolumeVersionCache.RecentHistory history = version.getRecentHistory(task.task().getShard().getVersion());
                             assert (!history.getPast().isEmpty());
                             for (VolumeVersionCache.PastVersion version: history.getPast()) {
@@ -599,7 +596,7 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                     if (result instanceof UnsignedLong) {
                         UnsignedLong v = (UnsignedLong) result;
                         if (v.longValue() > task.task().getShard().getVersion().longValue()) {
-                            ZNodeName remaining = ZNodePath.fromString(((Records.PathGetter) task.task().getRequest().record()).getPath()).suffix(translator.getPrefix().from());
+                            ZNodeName remaining = ZNodePath.fromString(((Records.PathGetter) task.task().getRequest().record()).getPath()).suffix(translator().getPrefix().from());
                             if (!(remaining instanceof EmptyZNodeLabel)) {
                                 ListenableFuture<? extends VolumeVersion<?>> state = versionToState.apply(VersionedId.valueOf(v, version.getId()));
                                 if (!state.isDone()) {
@@ -615,16 +612,43 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                     }
                     if (!task.isDone()) {
                         if (result instanceof UnsignedLong) { 
-                            task.set(ShardedServerResponseMessage.valueOf(VersionedId.valueOf((UnsignedLong) result, version.getId()), translator.apply(response)));
+                            task.set(ShardedServerResponseMessage.valueOf(VersionedId.valueOf((UnsignedLong) result, version.getId()), translator().apply(response)));
                         } else {
                             task.setException((Exception) result);
                         }
                     }
                     return task;
                 }
+                
+                @SuppressWarnings("unchecked")
+                protected Object getLastVersion() {
+                    VolumeVersionCache.Version last;
+                    if (lease.isPresent() && lease.get().getLease().getRemaining() > 0L) {
+                        last = lease.get();
+                    } else {
+                        version.getLock().readLock().lock();
+                        try {
+                            Optional<? extends VolumeVersionCache.Version> latest = version.getLatest();
+                            if (!latest.isPresent()) {
+                                return version.getFuture();
+                            }
+                            if (latest.get() instanceof VolumeVersionCache.LeasedVersion) {
+                                if (lease != latest) {
+                                    lease = (Optional<VolumeVersionCache.LeasedVersion>) latest;
+                                }
+                            } else if (lease.isPresent()) {
+                                lease = Optional.absent();
+                            }
+                            last = latest.get();
+                        } finally {
+                            version.getLock().readLock().unlock();
+                        }
+                    }
+                    return last;
+                }
             }
 
-            protected abstract class TaskProcessorActor<V, T extends TaskProcessor<V>> extends WaitingActor<ListenableFuture<?>,ListenableFuture<?>> {
+            protected abstract class TaskProcessorActor<V, T extends TaskProcessor<?,V,?>> extends WaitingActor<ListenableFuture<?>,ListenableFuture<?>> {
 
                 private final T processor;
                 
@@ -683,12 +707,20 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                         MessageResponsePrefixTranslator translator) {
                     super(new PendingShardedTaskProcessor(translator));
                 }
+                
+                public void handleNotification(Message.ServerResponse<IWatcherEvent> notification) {
+                    Notification task = LoggingFutureListener.listen(logger, 
+                            new Notification(notification, 
+                                    SettableFuturePromise.<Optional<ShardedServerResponseMessage<IWatcherEvent>>>create()));
+                    task.run();
+                    send(task);
+                }
 
                 @SuppressWarnings("unchecked")
                 @Override
                 protected boolean apply(ListenableFuture<?> input) throws Exception {
-                    assert (input.isDone());
                     if (input instanceof PendingShardedTask) {
+                        assert (input.isDone());
                         PendingShardedTask task = (PendingShardedTask) input;
                         ListenableFuture<?> future = processor().apply(task);
                         if (!(future instanceof ShardedRequestTask)) {
@@ -697,11 +729,118 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                         }
                         task.getSharded().processor = null;
                     } else {
-                        // pass on all notifications
-                        Message.ServerResponse<IWatcherEvent> response = (Message.ServerResponse<IWatcherEvent>) Futures.getUnchecked(input);
-                        listeners.handleNotification(ShardedServerResponseMessage.valueOf(VersionedId.valueOf(UnsignedLong.ZERO, version.getId()), (Message.ServerResponse<IWatcherEvent>) processor().translator().apply(response)));
+                        Notification notification = (Notification) input;
+                        if (!notification.isDone()) {
+                            wait(notification);
+                            return false;
+                        }
+                        Optional<ShardedServerResponseMessage<IWatcherEvent>> response = notification.get();
+                        if (response.isPresent()) {
+                            listeners.handleNotification(response.get());
+                        }
                     }
                     return mailbox.remove(input);
+                }
+                
+                protected final class Notification extends PromiseTask<Message.ServerResponse<IWatcherEvent>, Optional<ShardedServerResponseMessage<IWatcherEvent>>> implements Runnable, FutureCallback<Boolean> {
+                    
+                    public Notification(
+                            Message.ServerResponse<IWatcherEvent> task,
+                            Promise<Optional<ShardedServerResponseMessage<IWatcherEvent>>> delegate) {
+                        super(task, delegate);
+                    }
+                    
+                    @Override
+                    public void run() {
+                        version.getLock().readLock().lock();
+                        try {
+                            if (isDone()) {
+                                return;
+                            }
+                            if (version.hasPendingVersion()) {
+                                version.getFuture().addListener(this, MoreExecutors.directExecutor());
+                                return;
+                            }
+                            Iterator<VersionedValue<VolumeVersionCache.VersionState>> states = version.getVersionState().iterator();
+                            switch (states.next().getValue()) {
+                            case UNKNOWN:
+                                break;
+                            case XALPHA:
+                            {
+                                onSuccess(Boolean.TRUE);
+                                return;
+                            }
+                            case XOMEGA:
+                            {
+                                onSuccess(Boolean.FALSE);
+                                return;
+                            }
+                            default:
+                                throw new AssertionError();
+                            }
+                            if (!states.hasNext()) {
+                                onSuccess(Boolean.TRUE);
+                            }
+                            switch (states.next().getValue()) {
+                            case XALPHA:
+                            {
+                                onSuccess(Boolean.TRUE);
+                                return;
+                            }
+                            case XOMEGA:
+                            {
+                                ZNodeName remaining = ZNodePath.fromString(task().record().getPath()).suffix(processor().translator().getPrefix().from());
+                                if (!(remaining instanceof EmptyZNodeLabel)) {
+                                    try {
+                                        Futures.addCallback(
+                                                Futures.transform(
+                                                versionToState.apply(
+                                                        VersionedId.valueOf(version.getVersionState().getFirst().getVersion(), version.getId())),
+                                                        new Contains(remaining)), 
+                                                this);
+                                    } catch (Exception e) {
+                                        setException(e);
+                                    }
+                                } else {
+                                    onSuccess(Boolean.TRUE);
+                                }
+                                break;
+                            }
+                            default:
+                                throw new AssertionError();
+                            }
+                        } finally {
+                            version.getLock().readLock().unlock();
+                        }
+                    }
+
+                    @Override
+                    public void onSuccess(Boolean result) {
+                        @SuppressWarnings("unchecked")
+                        Optional<ShardedServerResponseMessage<IWatcherEvent>> translated = result.booleanValue() ? 
+                                Optional.of(ShardedServerResponseMessage.valueOf(VersionedId.valueOf(UnsignedLong.ZERO, version.getId()), (Message.ServerResponse<IWatcherEvent>) processor().translator().apply(task()))) :
+                                Optional.<ShardedServerResponseMessage<IWatcherEvent>>absent();
+                        set(translated);
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        setException(t);
+                    }
+                    
+                    private final class Contains implements Function<VolumeVersion<?>, Boolean> {
+
+                        private final ZNodeName remaining;
+                        
+                        private Contains(ZNodeName remaining) {
+                            this.remaining = remaining;
+                        }
+                        
+                        @Override
+                        public Boolean apply(VolumeVersion<?> input) {
+                            return Boolean.valueOf(VolumeBranches.contains(((AssignedVolumeBranches) input).getState().getValue().getBranches().keySet(), remaining));
+                        }
+                    }
                 }
             }
         }

@@ -275,8 +275,7 @@ public final class RecreateWatches<O extends Operation.ProtocolResponse<?>,T ext
         }
         
         protected void injectNotification(WatchEvent event) throws KeeperException {
-            T executor = getExecutor();
-            executor.handleConnectionRead(event.toMessage());
+            getExecutor().handleConnectionRead(event.toMessage());
         }
 
         @Override

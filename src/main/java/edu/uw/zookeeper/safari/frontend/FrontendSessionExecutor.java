@@ -411,6 +411,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                     return Optional.of(volumeFuture);
                 }
                 final AssignedVolumeBranches volume = volumeFuture.get();
+                logger.trace("Processing notifications for new version {} for volume {} ({})", volume.getState().getVersion(), volume.getDescriptor().getId(), this);
                 OptionalNode<Watch> node = watches.get(volume.getDescriptor().getPath());
                 Queue<OptionalNode<Watch>> nodes = Queues.newArrayDeque();
                 if (node != null) {
@@ -433,7 +434,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                                 handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeDataChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
                             }
                         }
-                        if (node.isPresent() && (node.get().getType() != Watcher.WatcherType.Data)) {
+                        if (node.get().getType() != Watcher.WatcherType.Data) {
                             handleNotification(new IWatcherEvent(Watcher.Event.EventType.NodeChildrenChanged.getIntValue(), Watcher.Event.KeeperState.SyncConnected.getIntValue(), node.path().toString()));
                         }
                     }
@@ -557,6 +558,11 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                                 Optional.<Operation.ProtocolRequest<?>>absent(),
                                 (Records.Response) event))); 
             }
+        }
+        
+        @Override
+        public synchronized String toString() {
+            return MoreObjects.toStringHelper(this).addValue(FrontendSessionExecutor.this).toString();
         }
     }
     
@@ -900,7 +906,7 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                         ShardedServerResponseMessage<?> response = (ShardedServerResponseMessage<?>) result;
                         Optional<? extends ListenableFuture<?>> future = notifications.handleRequest(task.task().first().record(), response);
                         if (future.isPresent()) {
-                            new Callback(future.get());
+                            new Callback(LoggingFutureListener.listen(logger, future.get())).run();
                         } else {
                             return Optional.of((Records.Response) response.record());
                         }
@@ -922,7 +928,6 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                 
                 public Callback(ListenableFuture<?> future) {
                     this.future = future;
-                    future.addListener(this, MoreExecutors.directExecutor());
                 }
                 
                 @Override
@@ -934,6 +939,8 @@ public class FrontendSessionExecutor extends AbstractSessionExecutor implements 
                             delegate.setException(e);
                         }
                         OperationResponseTask.this.run();
+                    } else {
+                        future.addListener(this, MoreExecutors.directExecutor());
                     }
                 }
             }

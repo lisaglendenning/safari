@@ -178,6 +178,63 @@ public class SequentialEphemeralSnapshotTrieTest extends AbstractMainTest {
         return data;
     }
     
+    public static void snapshot(final SimpleNameTrie<ValueNode<Optional<Long>>> data, final Materializer<StorageZNode<?>,Message.ServerResponse<?>> backend, final Materializer<StorageZNode<?>,Message.ServerResponse<?>> frontend) throws Exception {
+        // first create sessions in frontend client
+        PrefixCreator.call(frontend).get();
+        Set<Long> sessions = Sets.newHashSet();
+        for (ValueNode<Optional<Long>> node: data) {
+            if (node.get().isPresent()) {
+                Long session = node.get().get();
+                if (sessions.add(session)) {
+                    Operations.unlessProtocolError(frontend.create(SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.pathOf(session)).call().get());
+                }
+            }
+        }
+        // second, snapshot values in backend client
+        for (Long session: sessions) {
+            Operations.unlessProtocolError(backend.create(SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.pathOf(session)).call().get());
+        }
+        for (ValueNode<Optional<Long>> node: data) {
+            if (node.get().isPresent()) {
+                Long session = node.get().get();
+                ZNodeLabel label = SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.Ephemeral.labelOf(node.path().suffix(ZNodePath.root()));
+                Operations.unlessProtocolError(backend.create(SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.pathOf(session).join(label)).call().get());
+            }
+        }
+    }
+
+    public static void validate(final SimpleNameTrie<ValueNode<Optional<Long>>> data, final LockableZNodeCache<StorageZNode<?>,?,?> cache, final Pair<SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>>,? extends Set<AbsoluteZNodePath>> result) {
+        // check that computed set of leaves equals the actual trie leaves
+        ImmutableSet.Builder<AbsoluteZNodePath> leaves = ImmutableSet.builder();
+        for (SequentialNode<AbsoluteZNodePath> node: result.first()) {
+            if (node.isEmpty() && !node.path().isRoot()) {
+                leaves.add((AbsoluteZNodePath) node.path());
+            }
+        }
+        assertEquals(leaves.build(), result.second());
+        
+        // check that the leaves are equal to the sequential data leaves
+        leaves = ImmutableSet.builder();
+        for (ValueNode<Optional<Long>> node: data) {
+            if (node.isEmpty() && !node.path().isRoot() && Sequential.maybeFromString(node.path().label().toString()).isPresent()) {
+                leaves.add((AbsoluteZNodePath) node.path());
+            }
+        }
+        assertEquals(leaves.build(), result.second());
+        
+        // check that the value of leaves points to the correct snapshot path
+        cache.lock().readLock().lock();
+        try {
+            for (AbsoluteZNodePath path: result.second()) {
+                SequentialNode<AbsoluteZNodePath> leaf = result.first().get(path);
+                SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.Ephemeral ephemeral = (SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.Ephemeral) cache.cache().get(leaf.getValue());
+                assertEquals(leaf.path(), ZNodePath.root().join(ZNodeName.fromString(ephemeral.name())));
+            }
+        } finally {
+            cache.lock().readLock().unlock();
+        }
+    }
+
     @Test(timeout=10000)
     public void test() throws Exception {
         final SimpleNameTrie<ValueNode<Optional<Long>>> data = createSmallTestData();
@@ -210,62 +267,5 @@ public class SequentialEphemeralSnapshotTrieTest extends AbstractMainTest {
         callWithService(
                 injector, 
                 callable);
-    }
-    
-    public void snapshot(final SimpleNameTrie<ValueNode<Optional<Long>>> data, final Materializer<StorageZNode<?>,Message.ServerResponse<?>> backend, final Materializer<StorageZNode<?>,Message.ServerResponse<?>> frontend) throws Exception {
-        // first create sessions in frontend client
-        PrefixCreator.call(frontend).get();
-        Set<Long> sessions = Sets.newHashSet();
-        for (ValueNode<Optional<Long>> node: data) {
-            if (node.get().isPresent()) {
-                Long session = node.get().get();
-                if (sessions.add(session)) {
-                    Operations.unlessProtocolError(frontend.create(SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.pathOf(session)).call().get());
-                }
-            }
-        }
-        // second, snapshot values in backend client
-        for (Long session: sessions) {
-            Operations.unlessProtocolError(backend.create(SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.pathOf(session)).call().get());
-        }
-        for (ValueNode<Optional<Long>> node: data) {
-            if (node.get().isPresent()) {
-                Long session = node.get().get();
-                ZNodeLabel label = SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.Ephemeral.labelOf(node.path().suffix(ZNodePath.root()));
-                Operations.unlessProtocolError(backend.create(SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.pathOf(session).join(label)).call().get());
-            }
-        }
-    }
-    
-    public void validate(final SimpleNameTrie<ValueNode<Optional<Long>>> data, final LockableZNodeCache<StorageZNode<?>,?,?> cache, final Pair<SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>>,? extends Set<AbsoluteZNodePath>> result) {
-        // check that computed set of leaves equals the actual trie leaves
-        ImmutableSet.Builder<AbsoluteZNodePath> leaves = ImmutableSet.builder();
-        for (SequentialNode<AbsoluteZNodePath> node: result.first()) {
-            if (node.isEmpty() && !node.path().isRoot()) {
-                leaves.add((AbsoluteZNodePath) node.path());
-            }
-        }
-        assertEquals(leaves.build(), result.second());
-        
-        // check that the leaves are equal to the sequential data leaves
-        leaves = ImmutableSet.builder();
-        for (ValueNode<Optional<Long>> node: data) {
-            if (node.isEmpty() && !node.path().isRoot() && Sequential.maybeFromString(node.path().label().toString()).isPresent()) {
-                leaves.add((AbsoluteZNodePath) node.path());
-            }
-        }
-        assertEquals(leaves.build(), result.second());
-        
-        // check that the value of leaves points to the correct snapshot path
-        cache.lock().readLock().lock();
-        try {
-            for (AbsoluteZNodePath path: result.second()) {
-                SequentialNode<AbsoluteZNodePath> leaf = result.first().get(path);
-                SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.Ephemeral ephemeral = (SequentialEphemeralSnapshotTrieTestSchema.Ephemerals.Sessions.Session.Values.Ephemeral) cache.cache().get(leaf.getValue());
-                assertEquals(leaf.path(), ZNodePath.root().join(ZNodeName.fromString(ephemeral.name())));
-            }
-        } finally {
-            cache.lock().readLock().unlock();
-        }
     }
 }

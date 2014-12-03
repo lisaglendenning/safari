@@ -7,6 +7,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
+
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
@@ -58,6 +59,7 @@ import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.Identifier;
 import edu.uw.zookeeper.safari.SafariModule;
 import edu.uw.zookeeper.safari.VersionedId;
+import edu.uw.zookeeper.safari.VersionedValue;
 import edu.uw.zookeeper.safari.region.RegionRoleService;
 import edu.uw.zookeeper.safari.schema.DirectoryEntryListener;
 import edu.uw.zookeeper.safari.schema.SchemaClientService;
@@ -390,7 +392,7 @@ public final class XalphaCreator<O extends Operation.ProtocolResponse<?>> extend
         @Override
         public ListenableFuture<Long> apply(VersionedId input) throws Exception {
             VolumeVersionCache.CachedVolume volume = volumes.apply(input.getValue());
-            ListenableFuture<VolumeVersionCache.Version> future;
+            ListenableFuture<Pair<? extends VolumeVersionCache.Version, VersionedValue<VolumeVersionCache.VersionState>>> future;
             volume.getLock().readLock().lock();
             try {
                 VolumeVersionCache.Version version = volume.get(input.getVersion());

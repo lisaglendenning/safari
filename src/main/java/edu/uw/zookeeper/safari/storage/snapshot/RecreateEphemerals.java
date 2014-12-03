@@ -68,7 +68,7 @@ import edu.uw.zookeeper.protocol.proto.Records.Request;
 import edu.uw.zookeeper.protocol.proto.Stats;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
-import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralIterator.CommittedChildIterator;
+import edu.uw.zookeeper.safari.storage.snapshot.SequentialEphemeralSnapshotIterator.SequentialChildIterator;
 
 public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T extends ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> & Connection.Listener<? super Operation.Response>> extends RecreateSessionValues<T,StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.Sessions.Session.Values.Ephemeral> {
 
@@ -81,7 +81,7 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
             WatchListeners cacheEvents,
             Service service,
             Logger logger) {
-        SequentialEphemeralIterator iterator = SequentialEphemeralIterator.create(
+        SequentialEphemeralSnapshotIterator iterator = SequentialEphemeralSnapshotIterator.create(
                 snapshot.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.LABEL), 
                 sequentialTrie, 
                 sequentials, 
@@ -95,7 +95,7 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
     protected static <O extends Operation.ProtocolResponse<?>,T extends ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> & Connection.Listener<? super Operation.Response>> ListenableFuture<ZNodePath> listen(
             ZNodePath snapshot,
             SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>> sequentials,
-            Map<ZNodePath, CommittedChildIterator> iterators,
+            Map<ZNodePath, SequentialChildIterator> iterators,
             ImmutableList<? extends WatchMatchServiceListener> listeners,
             Function<? super Long, ? extends T> executors,
             Materializer<StorageZNode<?>,O> materializer,
@@ -117,13 +117,13 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
             ZNodePath snapshot,
             SchemaElementLookup schema,
             SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>> sequentials,
-            Map<ZNodePath, CommittedChildIterator> committed,
+            Map<ZNodePath, SequentialChildIterator> committed,
             FutureCallback<?> callback,
             Function<? super Long, ? extends T> executors,
             Materializer<StorageZNode<?>,O> materializer) {
         ImmutableMap.Builder<ZNodePath, SequentialParentIterator> parents = ImmutableMap.builder();
         synchronized (committed) {
-            for (Map.Entry<ZNodePath, CommittedChildIterator> entry: committed.entrySet()) {
+            for (Map.Entry<ZNodePath, SequentialChildIterator> entry: committed.entrySet()) {
                 parents.put(entry.getKey(), SequentialParentIterator.create(entry.getValue()));
             }
         }
@@ -432,16 +432,16 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
          * Assumes it has exclusive access to the iterator.
          */
         public static SequentialParentIterator create(
-                CommittedChildIterator iterator) {
+                SequentialChildIterator iterator) {
             return new SequentialParentIterator(
                     iterator);
         }
         
         private final PriorityQueue<WaitingChild> waiting;
-        private final CommittedChildIterator committed;
+        private final SequentialChildIterator committed;
         
         protected SequentialParentIterator(
-                CommittedChildIterator committed) {
+                SequentialChildIterator committed) {
             this.committed = committed;
             this.waiting = new PriorityQueue<WaitingChild>(committed.parent().size());
         }
@@ -458,7 +458,7 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
             WaitingChild next;
             while ((next = waiting.peek()) != null) {
                 while (!next.isDone() && committed.hasNext()) {
-                    CommittedChildIterator.NextChild<?> child = committed.peek();
+                    SequentialChildIterator.NextChild<?> child = committed.peek();
                     if (child.getNode() == next.task()) {
                         next.set(Boolean.valueOf(child.getCommitted().isDone()));
                     }
