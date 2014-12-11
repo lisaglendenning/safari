@@ -43,8 +43,8 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 /**
  * Builds a label trie rooted at the destination snapshot prefix such that the
  * leaves are all the sequential ephemerals in the snapshot, children nodes
- * are sorted by sequence, and the value stored at each leaf is corresponding
- * path of the ephemeral snapshot.
+ * are sorted by sequence, and the value stored at each leaf is the 
+ * corresponding path of the ephemeral snapshot.
  */
 public final class SequentialEphemeralSnapshotTrie<O extends Operation.ProtocolResponse<?>> extends ListenableFutureActor<ZNodePath, List<O>, SubmittedRequests<? extends Records.Request, O>> implements Callable<ListenableFuture<Pair<SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>>,? extends Set<AbsoluteZNodePath>>>> {
 

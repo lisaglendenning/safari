@@ -13,24 +13,27 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import com.google.common.base.Functions;
+import com.google.common.base.MoreObjects;
+import com.google.common.base.Optional;
+import com.google.common.base.Predicate;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Maps;
 import com.google.common.collect.PeekingIterator;
 import com.google.common.collect.Queues;
-import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.Service;
 
-import edu.uw.zookeeper.client.ClientExecutor;
 import edu.uw.zookeeper.client.LoggingWatchMatchListener;
 import edu.uw.zookeeper.client.PathToQuery;
 import edu.uw.zookeeper.client.PathToRequests;
 import edu.uw.zookeeper.client.Watchers;
 import edu.uw.zookeeper.common.AbstractPair;
+import edu.uw.zookeeper.common.Processor;
 import edu.uw.zookeeper.common.Promise;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
@@ -47,7 +50,6 @@ import edu.uw.zookeeper.data.WatchMatcher;
 import edu.uw.zookeeper.data.ZNodeName;
 import edu.uw.zookeeper.data.ZNodePath;
 import edu.uw.zookeeper.protocol.Operation;
-import edu.uw.zookeeper.protocol.proto.Records;
 import edu.uw.zookeeper.safari.storage.schema.EscapedConverter;
 import edu.uw.zookeeper.safari.storage.schema.StorageSchema;
 import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
@@ -55,7 +57,7 @@ import edu.uw.zookeeper.safari.storage.schema.StorageZNode;
 
 public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNodeCreatedListener<StorageZNode<?>> {
     
-    public static <O extends Operation.ProtocolResponse<?>> SequentialEphemeralSnapshotIterator create(
+    public static <O extends Operation.ProtocolResponse<?>> SequentialEphemeralSnapshotIterator listen(
             ZNodePath ephemerals,
             SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>> trie,
             Set<AbsoluteZNodePath> leaves,
@@ -64,9 +66,9 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
             Service service,
             Logger logger) {
         // initialize iterators for each parent of sequential ephemerals
-        final Map<ZNodePath, SequentialChildIterator> iterators = 
+        final Map<ZNodePath, SequentialChildIterator<?>> iterators = 
                 Collections.synchronizedMap(
-                        Maps.<ZNodePath, SequentialChildIterator>newHashMapWithExpectedSize(
+                        Maps.<ZNodePath, SequentialChildIterator<?>>newHashMapWithExpectedSize(
                                 leaves.size()));
         for (AbsoluteZNodePath path: leaves) {
             SequentialNode<AbsoluteZNodePath> parent = trie.get(path).parent().get();
@@ -86,13 +88,14 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
                         iterators, 
                         logger), 
                 logger);
+        instance.listen();
         return instance;
     }
 
-    private final Map<ZNodePath, SequentialChildIterator> iterators;
+    private final Map<ZNodePath, SequentialChildIterator<?>> iterators;
     
     protected SequentialEphemeralSnapshotIterator(
-            Map<ZNodePath, SequentialChildIterator> iterators,
+            Map<ZNodePath, SequentialChildIterator<?>> iterators,
             LockableZNodeCache<StorageZNode<?>,?,?> cache,
             Service service,
             WatchListeners cacheEvents,
@@ -109,7 +112,7 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
     /**
      * @return synchronized map
      */
-    public Map<ZNodePath, SequentialChildIterator> iterators() {
+    public Map<ZNodePath, SequentialChildIterator<?>> iterators() {
         return iterators;
     }
 
@@ -118,7 +121,7 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
         super.stopping(from);
         Exception t = new CancellationException();
         synchronized (iterators) {
-            for (SequentialChildIterator v: Iterables.consumingIterable(iterators.values())) {
+            for (SequentialChildIterator<?> v: Iterables.consumingIterable(iterators.values())) {
                 v.onFailure(t);
             }
         }
@@ -128,7 +131,7 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
     public void failed(Service.State from, Throwable failure) {
         super.failed(from, failure);
         synchronized (iterators) {
-            for (SequentialChildIterator v: Iterables.consumingIterable(iterators.values())) {
+            for (SequentialChildIterator<?> v: Iterables.consumingIterable(iterators.values())) {
                 v.onFailure(failure);
             }
         }
@@ -186,33 +189,53 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
     /**
      * Sets a watch on the next uncommitted sequential child.
      * 
+     * Assumes another listener will query on commit notification.
+     * 
      * Iterator functions are not thread safe.
      */
-    public static final class SequentialChildIterator extends AbstractIterator<SequentialChildIterator.NextChild<?>> implements PeekingIterator<SequentialChildIterator.NextChild<?>>, FutureCallback<ZNodePath> {
+    public static final class SequentialChildIterator<O extends Operation.ProtocolResponse<?>> extends AbstractIterator<SequentialChildIterator.NextChild<?>> implements PeekingIterator<SequentialChildIterator.NextChild<?>>, FutureCallback<ZNodePath> {
 
-        public static <O extends Operation.ProtocolResponse<?>> SequentialChildIterator create(
+        public static <O extends Operation.ProtocolResponse<?>> SequentialChildIterator<O> create(
                 SequentialNode<AbsoluteZNodePath> parent,
                 Materializer<StorageZNode<?>,O> materializer) {
-            return new SequentialChildIterator(
-                    WatchCommit.getCommitData(materializer),
+            @SuppressWarnings("unchecked")
+            final PathToQuery<?,O> query = PathToQuery.forFunction(
+                    materializer,
+                    Functions.compose(
+                            PathToRequests.forRequests(
+                                    Operations.Requests.sync(), 
+                                    Operations.Requests.getData().setWatch(true)), 
+                            JoinToPath.forName(
+                                    StorageZNode.CommitZNode.LABEL)));
+            return new SequentialChildIterator<O>(
+                    query,
                     parent, 
                     materializer.cache());
         }
 
-        private final AsyncFunction<? super ZNodePath,?> watchCommit;
+        private static final Predicate<Map<?,?>> IS_SEQUENTIAL_EPHEMERAL_CHILD = new Predicate<Map<?,?>>() {
+            @Override
+            public boolean apply(Map<?,?> input) {
+                return input.isEmpty();
+            }
+        };
+
+        private final Processor<? super List<O>, Optional<Operation.Error>> processor;
+        private final PathToQuery<?,O> query;
         private final LockableZNodeCache<StorageZNode<?>,?,?> cache;
         private final SequentialNode<AbsoluteZNodePath> parent;
         private final Iterator<SequentialNode<AbsoluteZNodePath>> children;
         private final Deque<NextChild<Promise<AbsoluteZNodePath>>> pending;
         
         protected SequentialChildIterator(
-                AsyncFunction<? super ZNodePath,?> watchCommit,
+                PathToQuery<?,O> query,
                 SequentialNode<AbsoluteZNodePath> parent,
                 LockableZNodeCache<StorageZNode<?>,?,?> cache) {
             this.cache = cache;
             this.parent = parent;
-            this.watchCommit = watchCommit;
-            this.children = parent.values().iterator();
+            this.query = query;
+            this.processor = Watchers.MaybeErrorProcessor.maybeNoNode();
+            this.children = Iterators.filter(parent.values().iterator(), IS_SEQUENTIAL_EPHEMERAL_CHILD);
             this.pending = Queues.newArrayDeque();
         }
         
@@ -276,7 +299,6 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
                         } else {
                             Promise<AbsoluteZNodePath> future = SettableFuturePromise.create();
                             NextChild<Promise<AbsoluteZNodePath>> child = NextChild.create(next, future);
-                            pending.add(child);
                             new WatchChild(child).run();
                             return child;
                         }
@@ -285,6 +307,11 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
             } finally {
                 cache.lock().readLock().unlock();
             }
+        }
+        
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this).addValue(parent).toString();
         }
         
         public static final class NextChild<V extends ListenableFuture<AbsoluteZNodePath>> extends AbstractPair<SequentialNode<AbsoluteZNodePath>, V> {
@@ -308,12 +335,13 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
             }
         }
         
-        protected final class WatchChild implements Runnable, FutureCallback<Object> {
+        protected final class WatchChild extends Watchers.SimpleForwardingCallback<Optional<Operation.Error>, Watchers.SetExceptionCallback<Object, AbsoluteZNodePath>> implements Runnable {
             
             private final NextChild<Promise<AbsoluteZNodePath>> child;
             
             protected WatchChild(
                     NextChild<Promise<AbsoluteZNodePath>> child) {
+                super(Watchers.SetExceptionCallback.create(child.getCommitted()));
                 this.child = child;
             }
             
@@ -324,53 +352,22 @@ public final class SequentialEphemeralSnapshotIterator extends Watchers.CacheNod
                         pending.remove(child);
                     }
                 } else {
+                    synchronized (SequentialChildIterator.this) {
+                        pending.add(child);
+                    }
                     try {
-                        Futures.addCallback(
-                                watchCommit.apply(child.getNode().getValue()), 
-                                this);
+                        Watchers.Query.call(processor, this, query.apply(child.getNode().getValue()));
                     } catch (Exception e) {
                         onFailure(e);
+                    } finally {
+                        child.getCommitted().addListener(this, MoreExecutors.directExecutor());
                     }
-                    child.getCommitted().addListener(this, MoreExecutors.directExecutor());
                 }
             }
 
             @Override
-            public void onSuccess(Object result) {
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                child.getCommitted().setException(t);
-            }
-        }
-        
-        protected static final class WatchCommit<O extends Operation.ProtocolResponse<?>> implements AsyncFunction<ZNodePath, List<O>> {
-
-            public static <O extends Operation.ProtocolResponse<?>> WatchCommit<O> getCommitData(
-                    ClientExecutor<? super Records.Request,O,?> client) {
-                @SuppressWarnings("unchecked")
-                PathToQuery<?,O> query = PathToQuery.forFunction(
-                        client,
-                        Functions.compose(
-                                PathToRequests.forRequests(
-                                        Operations.Requests.sync(), 
-                                        Operations.Requests.getData().setWatch(true)), 
-                                JoinToPath.forName(
-                                        StorageZNode.CommitZNode.LABEL)));
-                return new WatchCommit<O>(query);
-            }
-            
-            private final PathToQuery<?,O> query;
-            
-            protected WatchCommit(
-                    PathToQuery<?,O> query) {
-                this.query = query;
-            }
-            
-            @Override
-            public ListenableFuture<List<O>> apply(ZNodePath input) throws Exception {
-                return Futures.allAsList(query.apply(input).call());
+            public void onSuccess(Optional<Operation.Error> result) {
+                // TODO
             }
         }
     }

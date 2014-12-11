@@ -81,7 +81,7 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
             WatchListeners cacheEvents,
             Service service,
             Logger logger) {
-        SequentialEphemeralSnapshotIterator iterator = SequentialEphemeralSnapshotIterator.create(
+        SequentialEphemeralSnapshotIterator iterator = SequentialEphemeralSnapshotIterator.listen(
                 snapshot.join(StorageSchema.Safari.Volumes.Volume.Log.Version.Snapshot.Ephemerals.LABEL), 
                 sequentialTrie, 
                 sequentials, 
@@ -95,7 +95,7 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
     protected static <O extends Operation.ProtocolResponse<?>,T extends ClientExecutor<? super Records.Request, ? extends Operation.ProtocolResponse<?>,?> & Connection.Listener<? super Operation.Response>> ListenableFuture<ZNodePath> listen(
             ZNodePath snapshot,
             SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>> sequentials,
-            Map<ZNodePath, SequentialChildIterator> iterators,
+            Map<ZNodePath, SequentialChildIterator<?>> iterators,
             ImmutableList<? extends WatchMatchServiceListener> listeners,
             Function<? super Long, ? extends T> executors,
             Materializer<StorageZNode<?>,O> materializer,
@@ -117,13 +117,13 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
             ZNodePath snapshot,
             SchemaElementLookup schema,
             SimpleLabelTrie<SequentialNode<AbsoluteZNodePath>> sequentials,
-            Map<ZNodePath, SequentialChildIterator> committed,
+            Map<ZNodePath, SequentialChildIterator<?>> committed,
             FutureCallback<?> callback,
             Function<? super Long, ? extends T> executors,
             Materializer<StorageZNode<?>,O> materializer) {
         ImmutableMap.Builder<ZNodePath, SequentialParentIterator> parents = ImmutableMap.builder();
         synchronized (committed) {
-            for (Map.Entry<ZNodePath, SequentialChildIterator> entry: committed.entrySet()) {
+            for (Map.Entry<ZNodePath, SequentialChildIterator<?>> entry: committed.entrySet()) {
                 parents.put(entry.getKey(), SequentialParentIterator.create(entry.getValue()));
             }
         }
@@ -432,16 +432,16 @@ public final class RecreateEphemerals<O extends Operation.ProtocolResponse<?>,T 
          * Assumes it has exclusive access to the iterator.
          */
         public static SequentialParentIterator create(
-                SequentialChildIterator iterator) {
+                SequentialChildIterator<?> iterator) {
             return new SequentialParentIterator(
                     iterator);
         }
         
         private final PriorityQueue<WaitingChild> waiting;
-        private final SequentialChildIterator committed;
+        private final SequentialChildIterator<?> committed;
         
         protected SequentialParentIterator(
-                SequentialChildIterator committed) {
+                SequentialChildIterator<?> committed) {
             this.committed = committed;
             this.waiting = new PriorityQueue<WaitingChild>(committed.parent().size());
         }
