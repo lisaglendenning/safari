@@ -98,7 +98,7 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                         VolumesSchemaRequests.create(
                                 control.materializer()), states),
                 LogManager.getLogger(VolumeOperationCoordinator.class));
-        final ListenableFuture<Boolean> future = ChainedFutures.run(
+        ChainedFutures.ChainedResult<Boolean, ?, ?, ?> result = 
                 ChainedFutures.result(
                         new Processor<FutureChain.FutureDequeChain<? extends ListenableFuture<?>>, Boolean>() {
                             @Override
@@ -113,8 +113,8 @@ public final class VolumeOperationCoordinator extends ToStringListenableFuture.S
                             }
                         },
                     ChainedFutures.arrayDeque(
-                            apply)));
-        return new VolumeOperationCoordinator(apply, future);
+                            apply));
+        return new VolumeOperationCoordinator(apply, ChainedFutures.run(result));
     }
 
     protected final Apply call;

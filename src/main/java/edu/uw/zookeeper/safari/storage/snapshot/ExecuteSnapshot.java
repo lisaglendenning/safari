@@ -242,7 +242,7 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                 anonymous,
                 sessions,
                 zxid);
-        return ChainedFutures.run(
+        final ChainedFutures.ChainedResult<Long, ?, ?, ?> result = 
                 ChainedFutures.result(
                         new Processor<FutureChain.FutureDequeChain<ExecuteSnapshot.Action<?>>, Long>() {
                             @Override
@@ -262,7 +262,8 @@ public final class ExecuteSnapshot<O extends Operation.ProtocolResponse<?>> impl
                         },
                         ChainedFutures.deque(
                                 snapshot, 
-                                steps)));
+                                steps));
+        return ChainedFutures.run(result);
     }
     
     protected final ConnectionClientExecutor<? super Records.Request, O, SessionListener, ?> fromClient;

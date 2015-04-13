@@ -327,22 +327,23 @@ public final class VolumeOperationExecutor<T extends ConnectionClientExecutor<? 
         protected VolumeOperationTask(
                 VolumeOperationDirective task) {
             super(task, SettableFuturePromise.<Boolean>create());
-            this.chain = ChainedFutures.task(
+            final ChainedFutures.ChainedResult<Boolean, ?, ?, ?> result = 
                     ChainedFutures.result(
-                            new Processor<FutureChain.FutureDequeChain<? extends ListenableFuture<?>>, Boolean>() {
-                                @Override
-                                public Boolean apply(
-                                        FutureDequeChain<? extends ListenableFuture<?>> input)
-                                        throws Exception {
-                                    Iterator<? extends ListenableFuture<?>> previous = input.descendingIterator();
-                                    while (previous.hasNext()) {
-                                        previous.next().get();
-                                    }
-                                    return (Boolean) input.getLast().get();
-                                }
-                            },
-                            ChainedFutures.arrayDeque(this)),
-                    this);
+                    new Processor<FutureChain.FutureDequeChain<? extends ListenableFuture<?>>, Boolean>() {
+                        @Override
+                        public Boolean apply(
+                                FutureDequeChain<? extends ListenableFuture<?>> input)
+                                throws Exception {
+                            Iterator<? extends ListenableFuture<?>> previous = input.descendingIterator();
+                            while (previous.hasNext()) {
+                                previous.next().get();
+                            }
+                            return (Boolean) input.getLast().get();
+                        }
+                    },
+                    ChainedFutures.arrayDeque(this));
+            this.chain = ChainedFutures.task(
+                    result,this);
         }
         
         @Override

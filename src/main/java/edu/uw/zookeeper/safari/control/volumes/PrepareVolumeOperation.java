@@ -232,12 +232,13 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
         
         public static ListenableFuture<Optional<VersionedId>> create(
                 VolumesSchemaRequests<?>.VolumeSchemaRequests volume) {
-            return ChainedFutures.run(
+            final ChainedFutures.ChainedResult<Optional<VersionedId>, ?, ?, ?> result = 
                     ChainedFutures.result(
                             ChainedFutures.<Optional<VersionedId>>castLast(),
                             ChainedFutures.apply(
                                     new LookupParent(volume),
-                                    ChainedFutures.deque(Lists.<ListenableFuture<?>>newLinkedList()))));
+                                    ChainedFutures.deque(Lists.<ListenableFuture<?>>newLinkedList())));
+            return ChainedFutures.run(result);
         }
         
         protected final VolumesSchemaRequests<?>.VolumeSchemaRequests volume;
