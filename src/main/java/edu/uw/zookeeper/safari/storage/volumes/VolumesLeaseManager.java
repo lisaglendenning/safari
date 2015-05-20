@@ -148,7 +148,7 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
         return instance;
     }
     
-    @Configurable(arg="lease", path="volume", key="lease", value="60 seconds", help="time")
+    @Configurable(arg="lease", path="volume", value="60 seconds", help="time")
     public static abstract class ConfigurableLeaseDuration {
 
         public static Configurable getConfigurable() {
@@ -160,12 +160,12 @@ public final class VolumesLeaseManager extends Watchers.CacheNodeCreatedListener
             return TimeValue.fromString(
                     configuration.withConfigurable(configurable)
                         .getConfigOrEmpty(configurable.path())
-                            .getString(configurable.key()));
+                            .getString(configurable.arg()));
         }
 
         public static Configuration set(Configuration configuration, TimeValue value) {
             Configurable configurable = getConfigurable();
-            return configuration.withConfig(ConfigFactory.parseMap(ImmutableMap.<String,Object>builder().put(ConfigUtil.joinPath(configurable.path(), configurable.key()), value.toString()).build()));
+            return configuration.withConfig(ConfigFactory.parseMap(ImmutableMap.<String,Object>builder().put(ConfigUtil.joinPath(configurable.path(), configurable.arg()), value.toString()).build()));
         }
         
         protected ConfigurableLeaseDuration() {}

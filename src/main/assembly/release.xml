@@ -28,6 +28,11 @@
             <source>${project.build.directory}/classes/main.py</source>
             <fileMode>0755</fileMode>
         </file>
+        <file>
+            <outputDirectory>/etc</outputDirectory>
+            <source>${project.basedir}/src/main/resources/reference.conf</source>
+            <destName>safari.conf</destName>
+        </file>
     </files>
 	<fileSets>
         <fileSet>

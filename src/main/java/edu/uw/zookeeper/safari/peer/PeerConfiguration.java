@@ -63,7 +63,7 @@ public class PeerConfiguration extends AbstractModule {
         return id;
     }
     
-    @Configurable(arg="peerAddress", path="peer", key="peerAddress", value=":2281", help="address:port")
+    @Configurable(arg="peerAddress", path="peer", value=":2281", help="address:port")
     public static abstract class PeerAddressConfiguration {
 
         public static Configurable getConfigurable() {
@@ -75,7 +75,7 @@ public class PeerConfiguration extends AbstractModule {
             String value = 
                     configuration.withConfigurable(configurable)
                     .getConfigOrEmpty(configurable.path())
-                        .getString(configurable.key());
+                        .getString(configurable.arg());
             try {
                 return ServerInetAddressView.fromString(value);
             } catch (UnknownHostException e) {
@@ -88,7 +88,7 @@ public class PeerConfiguration extends AbstractModule {
             return configuration.withConfig(
                     ConfigFactory.parseMap(
                             ImmutableMap.<String,Object>builder()
-                            .put(ConfigUtil.joinPath(configurable.path(), configurable.key()), value.toString())
+                            .put(ConfigUtil.joinPath(configurable.path(), configurable.arg()), value.toString())
                             .build()));
         }
         

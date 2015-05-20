@@ -22,6 +22,9 @@
 			<resource>
 				<directory>src/main/resources</directory>
 				<filtering>true</filtering>
+				<excludes>
+                    <exclude>reference.conf</exclude>
+                </excludes>
 			</resource>
 		</resources>
 		<plugins>
@@ -107,6 +110,7 @@
 							<excludes>
 								<exclude>main.py</exclude>
 								<exclude>log4j2.xml</exclude>
+                                <exclude>reference.conf</exclude>
 							</excludes>
 						</configuration>
 					</execution>
@@ -117,6 +121,7 @@
 						<configuration>
 							<excludes>
 								<exclude>log4j2.xml</exclude>
+                                <exclude>reference.conf</exclude>
 							</excludes>
 						</configuration>
 					</execution>

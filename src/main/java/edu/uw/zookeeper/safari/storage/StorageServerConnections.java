@@ -1,7 +1,5 @@
 package edu.uw.zookeeper.safari.storage;
 
-import static com.google.common.base.Preconditions.checkArgument;
-
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Properties;
@@ -18,6 +16,7 @@ import com.google.inject.Singleton;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigUtil;
 
+import edu.uw.zookeeper.Cfg;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
 import edu.uw.zookeeper.client.ServerViewFactory;
@@ -52,7 +51,7 @@ public class StorageServerConnections extends AbstractModule {
             Configuration configuration) {
         ServerInetAddressView address;
         if (cfg.get().isPresent()) {
-            address = ClientAddressFromCfg.fromProperties(cfg.get().get());
+            address = StorageServerAddressConfiguration.fromProperties(cfg.get().get());
         } else {
             address = StorageServerAddressConfiguration.get(configuration);
         }
@@ -88,6 +87,26 @@ public class StorageServerConnections extends AbstractModule {
         public static Configurable getConfigurable() {
             return StorageServerAddressConfiguration.class.getAnnotation(Configurable.class);
         }
+
+        public static ServerInetAddressView fromProperties(Properties properties) {
+            ServerInetAddressView server;
+            int clientPort = Integer.parseInt(Cfg.Key.CLIENT_PORT.getValue(properties));
+            String clientAddress = Cfg.Key.CLIENT_PORT_ADDRESS.getValue(properties);
+            try {
+                if (clientAddress == null) {
+                    server = ServerInetAddressView.of(
+                            InetAddress.getByName("127.0.0.1"), 
+                            clientPort);
+                } else {
+                    server = ServerInetAddressView.fromString(
+                            String.format("%s:%d", clientAddress, 
+                                    clientPort));
+                }
+            } catch (UnknownHostException e) {
+                throw new IllegalArgumentException(e);
+            }
+            return server;
+        }
         
         public static ServerInetAddressView get(Configuration configuration) {
             Configurable configurable = getConfigurable();
@@ -108,27 +127,5 @@ public class StorageServerConnections extends AbstractModule {
         }
         
         protected StorageServerAddressConfiguration() {}
-    }
-
-    public static abstract class ClientAddressFromCfg {
-
-        public static ServerInetAddressView fromProperties(Properties properties) {
-            ServerInetAddressView clientAddress;
-            int clientPort = Integer.parseInt(properties.getProperty("clientPort"));
-            String clientPortAddress = properties.getProperty("clientPortAddress", "").trim();
-            try {
-                if (clientPortAddress.isEmpty()) {
-                        clientAddress = ServerInetAddressView.of(
-                                InetAddress.getByName("127.0.0.1"), clientPort);
-                } else {
-                    checkArgument(clientPort > 0);
-                    clientAddress = ServerInetAddressView.fromString(
-                            String.format("%s:%d", clientPortAddress, clientPort));
-                }
-            } catch (UnknownHostException e) {
-                throw new IllegalArgumentException(e);
-            }
-            return clientAddress;
-        }
     }
 }

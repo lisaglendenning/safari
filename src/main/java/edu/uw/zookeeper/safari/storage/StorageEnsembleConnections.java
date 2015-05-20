@@ -2,17 +2,15 @@ package edu.uw.zookeeper.safari.storage;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.Map;
+import java.util.Enumeration;
 import java.util.Properties;
-import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.regex.Matcher;
 
 import org.apache.logging.log4j.LogManager;
 
-import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Sets;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
@@ -20,6 +18,7 @@ import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigUtil;
 
+import edu.uw.zookeeper.Cfg;
 import edu.uw.zookeeper.EnsembleView;
 import edu.uw.zookeeper.ServerInetAddressView;
 import edu.uw.zookeeper.client.EnsembleViewFactory;
@@ -55,7 +54,7 @@ public class StorageEnsembleConnections extends AbstractModule {
             Configuration configuration) {
         EnsembleView<ServerInetAddressView> ensemble;
         if (cfg.get().isPresent()) {
-            ensemble = EnsembleFromCfg.fromProperties(cfg.get().get());
+            ensemble = StorageEnsembleViewConfiguration.fromProperties(cfg.get().get());
         } else {
             ensemble = StorageEnsembleViewConfiguration.get(configuration);
         }
@@ -97,15 +96,63 @@ public class StorageEnsembleConnections extends AbstractModule {
         return factory;
     }
 
-    @Configurable(path="storage", key="ensemble", arg="ensemble", help="address:port,...")
+    @Configurable(path="storage", arg="ensemble", help="address:port,...")
     public static abstract class StorageEnsembleViewConfiguration {
-    
+
+        public static EnsembleView<ServerInetAddressView> fromProperties(Properties properties) {
+            ImmutableSet.Builder<ServerInetAddressView> servers = ImmutableSet.builder();
+            for (Enumeration<?> names = properties.propertyNames(); names.hasMoreElements();) {
+                String k = (String) names.nextElement();
+                Matcher m = Cfg.Server.matcher(k);
+                if (m.matches()) {
+                    String v = properties.getProperty(k);
+                    ServerInetAddressView server;
+                    if (Cfg.Key.DYNAMIC_CONFIG_FILE.hasValue(properties)) {
+                        Cfg.DynamicServer value = Cfg.DynamicServer.valueOf(v);
+                        try {
+                            server = ServerInetAddressView.fromString(
+                                    String.format("%s:%d", value.getAddress(), 
+                                            value.getClientPort()));
+                        } catch (UnknownHostException e) {
+                            throw new IllegalArgumentException(e);
+                        }
+                    } else {
+                        // note we assume that (1) clientPort is specified,
+                        // (2) all servers have the same port
+                        int clientPort = Integer.parseInt(Cfg.Key.CLIENT_PORT.getValue(properties));
+                        Cfg.StaticServer value = Cfg.StaticServer.valueOf(v);
+                        try {
+                            if (value.getHostname() == Cfg.StaticServer.DEFAULT_HOSTNAME) {
+                                server = ServerInetAddressView.of(
+                                        InetAddress.getByName("127.0.0.1"), 
+                                        clientPort);
+                            } else {
+                                server = ServerInetAddressView.fromString(
+                                        String.format("%s:%d", value.getHostname(), 
+                                                clientPort));
+                            }
+                        } catch (UnknownHostException e) {
+                            throw new IllegalArgumentException(e);
+                        }
+                    }
+                    servers.add(server);
+                }
+            }
+            EnsembleView<ServerInetAddressView> ensemble = EnsembleView.copyOf(servers.build());
+            if (ensemble.isEmpty()) {
+                // assume static standalone
+                ServerInetAddressView server = StorageServerConnections.StorageServerAddressConfiguration.fromProperties(properties);
+                ensemble = EnsembleView.copyOf(server);
+            }
+            return ensemble;
+        }
+        
         public static EnsembleView<ServerInetAddressView> get(Configuration configuration) {
             Configurable configurable = getConfigurable();
             Config config = configuration.withConfigurable(configurable)
                     .getConfigOrEmpty(configurable.path());
-            return (config.hasPath(configurable.key())) ? ServerInetAddressView.ensembleFromString(
-                        config.getString(configurable.key())) : null;
+            return (config.hasPath(configurable.arg())) ? ServerInetAddressView.ensembleFromString(
+                        config.getString(configurable.arg())) : null;
         }
         
         public static Configuration set(Configuration configuration, EnsembleView<ServerInetAddressView> value) {
@@ -113,7 +160,7 @@ public class StorageEnsembleConnections extends AbstractModule {
             return configuration.withConfig(
                     ConfigFactory.parseMap(
                             ImmutableMap.<String,Object>builder()
-                            .put(ConfigUtil.joinPath(configurable.path(), configurable.key()), 
+                            .put(ConfigUtil.joinPath(configurable.path(), configurable.arg()), 
                                     EnsembleView.toString(value)).build()));
         }
         
@@ -122,43 +169,6 @@ public class StorageEnsembleConnections extends AbstractModule {
         }
         
         protected StorageEnsembleViewConfiguration() {}
-    }
-
-    public static abstract class EnsembleFromCfg {
-
-        public static EnsembleView<ServerInetAddressView> fromProperties(Properties properties) {
-            Set<Map.Entry<Object, Object>> serverProperties = Sets.filter(properties.entrySet(),
-                    new Predicate<Map.Entry<Object, Object>>(){
-                        @Override
-                        public boolean apply(Map.Entry<Object, Object> input) {
-                            // TODO Auto-generated method stub
-                            return input.getKey().toString().trim().startsWith("server.");
-                        }});
-            ImmutableSet.Builder<ServerInetAddressView> servers = ImmutableSet.builder();
-            for (Map.Entry<Object, Object> property: serverProperties) {
-                String[] fields = property.getValue().toString().trim().split(":");
-                ServerInetAddressView server;
-                try {
-                    if (fields.length == 1) {
-                        server = ServerInetAddressView.of(
-                                InetAddress.getByName("127.0.0.1"), 
-                                Integer.parseInt(fields[0]));
-                    } else if (fields.length >= 2) {
-                        server = ServerInetAddressView.fromString(
-                                String.format("%s:%s", fields[0], fields[1]));
-                    } else {
-                        throw new IllegalArgumentException(String.valueOf(property));
-                    }
-                    servers.add(server);
-                } catch (UnknownHostException e) {
-                    throw new IllegalArgumentException(e);
-                }
-            }
-            EnsembleView<ServerInetAddressView> ensemble = EnsembleView.copyOf(servers.build());
-            return ensemble;
-        }
-        
-        protected EnsembleFromCfg() {}
     }
 
     @Configurable(path="storage", key="timeout", value="30 seconds", help="time")

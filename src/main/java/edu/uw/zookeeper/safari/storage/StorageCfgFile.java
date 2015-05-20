@@ -1,7 +1,6 @@
 package edu.uw.zookeeper.safari.storage;
 
-import java.io.File;
-import java.io.FileInputStream;
+import java.io.IOException;
 import java.util.Properties;
 
 import com.google.common.base.MoreObjects;
@@ -12,6 +11,7 @@ import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.typesafe.config.Config;
 
+import edu.uw.zookeeper.Cfg;
 import edu.uw.zookeeper.common.Configurable;
 import edu.uw.zookeeper.common.Configuration;
 
@@ -48,17 +48,9 @@ public class StorageCfgFile implements Supplier<Optional<Properties>> {
         Optional<Properties> value;
         if (config.hasPath(configurable.key())) {
             try {
-                FileInputStream cfg = new FileInputStream(
-                            new File(config.getString(configurable.key())));
-                Properties properties = new Properties();
-                try {
-                    properties.load(cfg);
-                    value = Optional.of(properties);
-                } finally {
-                    cfg.close();
-                }
-            } catch (Exception e) {
-                throw new IllegalArgumentException(config.getString(configurable.key()));
+                value = Optional.of(Cfg.load(config.getString(configurable.key())));
+            } catch (IOException e) {
+                throw new IllegalArgumentException(e);
             }
         } else {
             value = Optional.absent();
