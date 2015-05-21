@@ -2,8 +2,10 @@ package edu.uw.zookeeper.safari.storage;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.Enumeration;
 import java.util.Properties;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.regex.Matcher;
 
 import org.apache.logging.log4j.LogManager;
 
@@ -90,20 +92,45 @@ public class StorageServerConnections extends AbstractModule {
 
         public static ServerInetAddressView fromProperties(Properties properties) {
             ServerInetAddressView server;
-            int clientPort = Integer.parseInt(Cfg.Key.CLIENT_PORT.getValue(properties));
-            String clientAddress = Cfg.Key.CLIENT_PORT_ADDRESS.getValue(properties);
-            try {
-                if (clientAddress == null) {
-                    server = ServerInetAddressView.of(
-                            InetAddress.getByName("127.0.0.1"), 
-                            clientPort);
-                } else {
-                    server = ServerInetAddressView.fromString(
-                            String.format("%s:%d", clientAddress, 
-                                    clientPort));
+
+            if (Cfg.Key.DYNAMIC_CONFIG_FILE.hasValue(properties)) {
+                server = null;
+                // assume standalone
+                for (Enumeration<?> names = properties.propertyNames(); names.hasMoreElements();) {
+                    String k = (String) names.nextElement();
+                    Matcher m = Cfg.Server.matcher(k);
+                    if (m.matches()) {
+                        String v = properties.getProperty(k);
+                        Cfg.DynamicServer value = Cfg.DynamicServer.valueOf(v);
+                        try {
+                            server = ServerInetAddressView.fromString(
+                                    String.format("%s:%d", value.getAddress(), 
+                                            value.getClientPort()));
+                        } catch (UnknownHostException e) {
+                            throw new IllegalArgumentException(e);
+                        }
+                        break;
+                    }
                 }
-            } catch (UnknownHostException e) {
-                throw new IllegalArgumentException(e);
+                if (server == null) {
+                    throw new IllegalArgumentException();
+                }
+            } else {
+                int clientPort = Integer.parseInt(Cfg.Key.CLIENT_PORT.getValue(properties));
+                String clientAddress = Cfg.Key.CLIENT_PORT_ADDRESS.getValue(properties);
+                try {
+                    if (clientAddress == null) {
+                        server = ServerInetAddressView.of(
+                                InetAddress.getByName("127.0.0.1"), 
+                                clientPort);
+                    } else {
+                        server = ServerInetAddressView.fromString(
+                                String.format("%s:%d", clientAddress, 
+                                        clientPort));
+                    }
+                } catch (UnknownHostException e) {
+                    throw new IllegalArgumentException(e);
+                }
             }
             return server;
         }
