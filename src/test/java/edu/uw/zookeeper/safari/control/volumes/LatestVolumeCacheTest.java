@@ -36,6 +36,17 @@ import edu.uw.zookeeper.safari.schema.volumes.VolumeVersion;
 
 @RunWith(JUnit4.class)
 public class LatestVolumeCacheTest extends AbstractMainTest {
+
+    public static Module module() {
+        VolumeWatchers module = VolumeWatchers.create();
+        return new Module(
+                module.getKey(),
+                ImmutableList.<com.google.inject.Module>of(
+                    VolumeDescriptorCache.module(),
+                    VolumeBranchesCache.module(),
+                    LatestVolumeCache.module(),
+                    module));
+    }
     
     @Test(timeout=20000)
     public void test() throws Exception {
@@ -43,7 +54,7 @@ public class LatestVolumeCacheTest extends AbstractMainTest {
         final Component<?> server = ControlModules.newControlSingletonEnsemble(root);
         final Component<?> client = ControlModules.newControlClient(
                 ImmutableList.of(root, server),
-                ImmutableList.of(Module.create()),
+                ImmutableList.of(module()),
                 ControlModules.ControlClientProvider.class);
         final Callable<Void> callable = new Callable<Void>() {
             @Override
