@@ -40,6 +40,7 @@ import edu.uw.zookeeper.common.PromiseTask;
 import edu.uw.zookeeper.common.SettableFuturePromise;
 import edu.uw.zookeeper.common.TimeValue;
 import edu.uw.zookeeper.data.AbsoluteZNodePath;
+import edu.uw.zookeeper.data.AbstractZNodeLabel;
 import edu.uw.zookeeper.data.Acls;
 import edu.uw.zookeeper.data.Materializer;
 import edu.uw.zookeeper.data.Name;
@@ -362,7 +363,7 @@ public class SnapshotWatchesTest extends AbstractMainTest {
                         for (StorageZNode<?> child: session.get(SnapshotWatchesTestSchema.Watches.Session.Values.LABEL).values()) {
                             SnapshotWatchesTestSchema.Watches.Session.Values.Watch watch = (SnapshotWatchesTestSchema.Watches.Session.Values.Watch) child;
                             assertEquals(Watcher.WatcherType.Data, watch.data().get());
-                            ZNodePath path = prefix.join(ZNodeLabel.fromString(watch.name()));
+                            ZNodePath path = prefix.join(AbstractZNodeLabel.fromString(watch.name()));
                             builder.put(Long.valueOf(session.name().longValue()), path);
                             Long ephemeral = getEphemeral.apply(path);
                             if (ephemeral != null) {
