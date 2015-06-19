@@ -364,7 +364,7 @@ public final class ShardedClientExecutor<C extends ProtocolConnection<? super Me
                     ZNodePath path = future.get();
                     processor = new ShardProcessor(id, path);
                     ShardProcessor existing = processors.put(id, processor);
-                    assert (existing != null);
+                    assert (existing == null);
                 }
                 if (mailbox.remove(input)) {
                     input.processor = processor;
