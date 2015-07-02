@@ -176,6 +176,11 @@ public final class PrepareVolumeOperation<O extends Operation.ProtocolResponse<?
                         BoundVolumeOperator.valueOf(operator, parameters))));
     }
     
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this).addValue(volume.getVolume()).addValue(operator).addValue(arguments).toString();
+    }
+    
     public static final class LookupLatestVersion<O extends Operation.ProtocolResponse<?>> extends SimpleToStringListenableFuture<List<O>> implements Callable<Optional<UnsignedLong>> {
 
         public static <O extends Operation.ProtocolResponse<?>> ListenableFuture<UnsignedLong> create(

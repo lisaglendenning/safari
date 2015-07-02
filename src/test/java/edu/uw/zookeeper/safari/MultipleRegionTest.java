@@ -64,16 +64,16 @@ import edu.uw.zookeeper.safari.storage.volumes.VolumesLeaseManager;
 @RunWith(JUnit4.class)
 public class MultipleRegionTest extends AbstractMainTest {
 
-    @Test(timeout=30000)
+    @Test(timeout=35000)
     public void testStartAndStop() throws Exception {
-        final long pause = 4000L;
+        final long pause = 5000L;
         final int num_regions = 2;
         pauseWithComponents(SafariModules.newSingletonSafariRegions(num_regions), pause);
     }
 
-    @Test(timeout=40000)
+    @Test(timeout=45000)
     public void testClientConnect() throws Exception {
-        final long pause = 4000L;
+        final long pause = 5000L;
         final int num_regions = 2;
         
         List<Component<?>> components = SafariModules.newSingletonSafariRegions(num_regions);
@@ -121,11 +121,14 @@ public class MultipleRegionTest extends AbstractMainTest {
                                 SubmitGenerator.create(requests, client.injector().getInstance(ConnectionClientExecutorService.Builder.class).getConnectionClientExecutor()), logger);
                 while (operations.hasNext()) {
                      futures.add(operations.next().second());
+                     if ((operations.getCount() == operations.getLimit()) || (operations.getCount() % logInterval == 0)) {
+                         ListenableFuture<Message.ServerResponse<?>> response;
+                         while ((response = futures.poll()) != null) {
+                             assertFalse(response.get(timeOut.value(), timeOut.unit()).record() instanceof Operation.Error);
+                         }
+                     }
                 }
-                ListenableFuture<Message.ServerResponse<?>> response;
-                while ((response = futures.poll()) != null) {
-                    assertFalse(response.get(timeOut.value(), timeOut.unit()).record() instanceof Operation.Error);
-                }
+                assertTrue(futures.isEmpty());
                 return null;
             }
         };
@@ -134,7 +137,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                 callable);
     }
 
-    @Test(timeout=45000)
+    @Test(timeout=60000)
     public void testTransfer() throws Exception {
         final int num_regions = 2;
         final long pause = 6000L;
@@ -185,7 +188,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                 callable);
     }
 
-    @Test(timeout=75000)
+    @Test(timeout=120000)
     public void testSplitMerge() throws Exception {
         final int num_regions = 2;
         final long pause = 6000L;
@@ -241,6 +244,7 @@ public class MultipleRegionTest extends AbstractMainTest {
                                 toRegion.injector().getInstance(Key.get(Identifier.class, edu.uw.zookeeper.safari.region.Region.class)),
                                 branch)).get();
                 Identifier leaf = ((SplitParameters) operation.getOperator().getParameters()).getLeaf();
+                logger.info("Split leaf is {}", leaf);
                 commit(operation, control, regions);
                 
                 operation = PrepareVolumeOperation.create(
@@ -261,11 +265,16 @@ public class MultipleRegionTest extends AbstractMainTest {
     
     protected void committed(VolumeLogEntryPath entry, SchemaClientService<ControlZNode<?>,?> control) throws InterruptedException, ExecutionException {
         assertTrue(VolumeEntryResponse.voted(entry, control.materializer(), control.cacheEvents(), logger).get().booleanValue());
+        logger.info("{} voted", entry);
         assertTrue(VolumeEntryResponse.committed(entry, control.materializer(), control.cacheEvents(), logger).get().booleanValue());
+        logger.info("{} committed", entry);
     }
     
     protected void commit(VolumeOperation<?> operation, SchemaClientService<ControlZNode<?>,?> control, Iterable<? extends Component<?>> regions) throws Exception {
-        committed(VolumeOperationCoordinatorEntry.newEntry(operation, control.materializer()).get(), control);
+        logger.info("Proposing {}", operation);
+        VolumeLogEntryPath entry = VolumeOperationCoordinatorEntry.newEntry(operation, control.materializer()).get();
+        logger.info("Proposed {}", entry);
+        committed(entry, control);
         for (Component<?> component: regions) {
             List<Identifier> ids;
             switch (operation.getOperator().getOperator()) {
